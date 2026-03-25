@@ -60,3 +60,18 @@ Alle Python ontwikkeling van het team (`sender.py`, `receiver.py`, `poller.py` e
   ```
   _(Of je kan simpelweg losse scripts triggeren via `docker-compose exec kassa-integratie python scriptnaam.py`)_
 - Afhankelijkheden (zoals `pika`) voeg je toe aan `integratie/requirements.txt`. (Vergeet na het toevoegen niet de container te herbouwen via `docker-compose build`).
+
+## 🔄 5. CI/CD & Updates (Lokaal Deployen)
+
+Dit project maakt gebruik van GitHub Actions voor onze **Continuous Integration (CI)**.
+Bij elke `push` naar de `dev` of `prod` branch worden de tests (`pytest`), type checking (`mypy`, statische types controleren) en linting (`flake8`, controleren van code syntax) automatisch in de cloud uitgevoerd. Hierdoor ben je zeker dat de code naar behoren werkt.
+
+Omdat we momenteel geen externe server of clouddienst gebruiken, doen we de **deployment simpelweg lokaal**. 
+Wil je de nieuwste, geteste code van het team hebben en de integratie starten? Dan open je je terminal in de hoofdmap en voer je dit in:
+
+```bash
+git pull
+docker-compose up -d --build
+```
+
+*(Dit commando trekt je laatste wijzigingen binnen, bouwt de integratiecontainers opnieuw op basis van je requirements/code en laat ze netjes op de achtergrond draaien, dit alles vanzelf!)*
