@@ -1,0 +1,36 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - dev
+      - prod
+
+jobs:
+  test:
+    name: Test (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r kassa/integratie/requirements.txt
+
+      - name: Install test/lint tools
+        run: pip install pytest flake8 mypy
+
+      - name: Linting
+        run: flake8 kassa/integratie/
+
+      - name: Type Checking
+        run: mypy kassa/integratie/
+
+      - name: Unit Tests
+        run: pytest kassa/integratie/tests/ -v
+
