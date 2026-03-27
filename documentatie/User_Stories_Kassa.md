@@ -1,98 +1,139 @@
-# Uitgewerkte User stories
+**Uitgewerkte User Stories**
 
-**Team KassaModule (Odoo POs)**
+Team KassaModule (Odoo POS)
 
-**Versie:** Definitief (Technische Revisie)
+Versie: Definitief (Technische Revisie)
 
-**Project:** Integratieproject Desideriushogeschool 2026
+Project: Integratieproject Desideriushogeschool 2026
 
-**Datum:** 25 maart 2026
+Datum: 25 maart 2026
 
-EPIC 1: PROFIELEN & INSCHRIJVINGEN (INKOMENDE FLOWS)
+# **EPIC 1: PROFIELEN & INSCHRIJVINGEN (INKOMENDE FLOWS)**
 
-# story 1: Nieuwe Inschrijvingen automatisch inladen
+## **Story 1: Nieuwe Inschrijvingen automatisch inladen**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automatisch in mijn kassasysteem verschijnen, zodat ik bezoekers bij aankomst direct kan opzoeken zonder hun gegevens handmatig te hoeven overtypen._
 
 **ACCEPTATIECRITERIA:**
 
 - Het receiver.py script luistert op de achtergrond naar new_registration berichten vanuit het CRM via de RabbitMQ queue.incoming.
-- Zodra er een inschrijving binnenkomt, maakt de kassa stilletjes een nieuw klantprofiel aan in de lokale database.
-- Het systeem onthoudt het unieke klantnummer, zodat we de klant overal in het systeem kunnen herkennen.
+- Elk inkomend bericht wordt gevalideerd tegen het XSD-schema. Is het bericht ongeldig? Dan wordt het weggegooid en een system_error verstuurd naar queue.errors.
+- De kassa controleert via het unieke x_user_id of de klant al bestaat. Bestaat hij? Update zijn gegevens. Bestaat hij niet? Maak een nieuw profiel aan met alle gegevens uit het bericht (naam, e-mail, leeftijd, optioneel bedrijfsnaam en BTW-nummer).
+- Na succesvolle verwerking wordt een basic_ack gestuurd naar RabbitMQ zodat het bericht niet opnieuw aangeboden wordt.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat het kassasysteem is opgestart en verbonden is.
+**Gegeven** dat receiver.py verbonden is met RabbitMQ op queue.incoming
 
-**Wanneer** er een new_registration bericht vanuit het CRM binnenkomt.
+**En** er een geldig new_registration XML-bericht binnenkomt met user_id, email, name, age en optioneel company_name en vat_number
 
-**Dan** maakt de kassa direct een profiel aan voor deze bezoeker, klaar voor gebruik aan de inkom.
+**En** er bestaat nog geen klant in Odoo met dit x_user_id
+
+**Wanneer** receiver.py het bericht verwerkt
+
+**Dan** wordt er een nieuw klantprofiel aangemaakt in Odoo (res.partner) met alle velden correct ingevuld
+
+**En** stuurt receiver.py een basic_ack naar RabbitMQ
+
+**Gegeven** dat hetzelfde bericht binnenkomt maar de klant al bestaat in Odoo
+
+**Wanneer** receiver.py het bericht verwerkt
+
+**Dan** worden de bestaande gegevens overschreven — er wordt geen duplicaat aangemaakt
+
+**Gegeven** dat een bericht binnenkomt dat niet voldoet aan schema_nieuwe_inschrijving.xsd
+
+**Wanneer** receiver.py de XSD-validatie uitvoert
+
+**Dan** wordt het bericht weggegooid, een system_error met code invalid_xml_format verstuurd naar queue.errors, en toch een basic_ack gestuurd
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Zorg dat het receiver.py script luistert naar de inkomende RabbitMQ wachtrij.
-2.  Haal de klantgegevens en het unieke user_id uit het inkomende XML-bericht.
-3.  Gebruik de Odoo API om te controleren of de klant al bestaat. Zo niet, maak een nieuw profiel aan in de database.
+1.  Zorg dat het ontvangstscript continu luistert op de inkomende wachtrij voor nieuwe berichten.
+2.  Controleer elk binnenkomend bericht op de correcte structuur via het bijhorende XSD-schema. Is het bericht fout? Gooi het weg en stuur een foutmelding naar de Controlroom.
+3.  Zoek de klant op in Odoo via zijn uniek klantnummer. Bestaat hij al? Update zijn gegevens. Bestaat hij nog niet? Maak een nieuw profiel aan met alle gegevens uit het bericht.
+4.  Bevestig aan de wachtrij dat het bericht verwerkt is, zodat het niet opnieuw aangeboden wordt.
 
-# story 2: Klantgegevens up-to-date houden
+## **Story 2: Klantgegevens up-to-date houden**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als bezoeker wil ik dat wijzigingen in mijn profiel (zoals een nieuw e-mailadres of bedrijfsnaam) direct worden doorgegeven aan de kassa, zodat mijn facturen of kassatickets altijd de juiste gegevens bevatten._
 
 **ACCEPTATIECRITERIA:**
 
-- Als iemand zijn gegevens aanpast in het centrale CRM, krijgt de kassa hier bericht van.
-- De kassa zoekt de betreffende klant op in zijn eigen systeem.
-- Oude gegevens worden direct overschreven met de nieuwe, actuele gegevens.
+- Als iemand zijn gegevens aanpast in het centrale CRM, krijgt de kassa via een profile_update bericht bericht van.
+- De kassa zoekt de betreffende klant op via zijn uniek x_user_id.
+- De velden naam, e-mail, leeftijd, bedrijfsnaam en BTW-nummer worden direct overschreven met de nieuwe waarden.
+- Wordt de klant niet gevonden? Dan wordt een system_error met code profile_not_found verstuurd naar queue.errors en toch een basic_ack gestuurd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker al in de kassa staat.
+**Gegeven** dat een klantprofiel met x_user_id = X bestaat in Odoo
 
-**Wanneer** er een update-bericht vanuit het CRM binnenkomt met nieuwe gegevens.
+**Wanneer** er een profile_update bericht binnenkomt met diezelfde x_user_id en gewijzigde gegevens
 
-**Dan** past de kassa het lokale profiel direct aan met de nieuwe naam of het nieuwe e- mailadres.
+**Dan** worden de velden name, email, age en eventueel company_name en vat_number overschreven in het bestaande Odoo-profiel
+
+**Gegeven** dat een profile_update bericht binnenkomt met een x_user_id dat niet bestaat in Odoo
+
+**Wanneer** receiver.py het bericht verwerkt
+
+**Dan** wordt een system_error met code profile_not_found verstuurd naar queue.errors
+
+**En** stuurt receiver.py toch een basic_ack naar RabbitMQ
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Vang het profile_update bericht op in het receiver-script.
-2.  Gebruik de Odoo API om de klant op te zoeken via zijn externe ID (x_user_id).
-3.  Stuur een update-actie naar de database om de veranderde velden te overschrijven.
+1.  Herken het profielwijzigingsbericht in het ontvangstscript en valideer de structuur via het XSD-schema.
+2.  Zoek de klant op in Odoo via zijn uniek klantnummer.
+3.  Overschrijf de gewijzigde gegevens (naam, e-mail, bedrijfsnaam, BTW-nummer, leeftijd) in het lokale profiel.
+4.  Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
 
-# story 3: Geannuleerde inschrijvingen blokkeren
+## **Story 3: Geannuleerde inschrijvingen blokkeren**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
-_Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa op "inactief" worden gezet, zodat zij niet per ongeluk toch nog naar binnen kunnen of om betaling worden gevraagd._
+_Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa op "inactief" worden gezet, zodat zij niet per ongeluk toch nog aan de kassa gekoppeld kunnen worden._
 
 **ACCEPTATIECRITERIA:**
 
-- De kassa ontvangt annuleringen exclusief vanuit het CRM-systeem.
-
-- Bij een annulering zoekt de kassa het profiel op en blokkeert of deactiveert dit voor het betreffende evenement.
+- De kassa ontvangt annuleringen exclusief vanuit het CRM-systeem via een cancel_registration bericht.
+- Bij een annulering zoekt de kassa het profiel op via x_user_id en zet de active flag in Odoo op False.
+- Wordt de klant niet gevonden? Dan wordt een system_error met code profile_not_found verstuurd naar queue.errors en toch een basic_ack gestuurd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker in de kassa geregistreerd staat voor een evenement.
+**Gegeven** dat een klantprofiel met x_user_id = X bestaat in Odoo
 
-**Wanneer** deze bezoeker zijn inschrijving annuleert.
+**Wanneer** het CRM een cancel_registration bericht stuurt met diezelfde x_user_id
 
-**Dan** markeert het kassasysteem het profiel als inactief, zodat de medewerker weet dat deze persoon niet meer verwacht wordt.
+**Dan** wordt de active flag van dat klantprofiel in Odoo op False gezet
+
+**En** stuurt receiver.py een basic_ack naar RabbitMQ
+
+**Gegeven** dat een cancel_registration bericht binnenkomt met een x_user_id dat niet bestaat in Odoo
+
+**Wanneer** receiver.py het bericht verwerkt
+
+**Dan** wordt een system_error met code profile_not_found verstuurd naar queue.errors
+
+**En** stuurt receiver.py toch een basic_ack naar RabbitMQ
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Herken het cancel_registration bericht zodra het binnenkomt.
-2.  Zoek de specifieke klant op via de API.
-3.  Zet het Odoo-profiel op 'inactief' zodat de kassa dit account niet meer als actieve bezoeker beschouwt.
+1.  Herken het annuleringsbericht in het ontvangstscript en valideer de structuur via het XSD-schema.
+2.  Zoek de klant op in Odoo via zijn uniek klantnummer.
+3.  Zet het klantprofiel op inactief zodat de medewerker weet dat deze persoon niet meer verwacht wordt.
+4.  Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
 
-EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)
+# **EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)**
 
-# story 4: Anoniem een drankje kopen
+## **Story 4: Anoniem een drankje kopen**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als kassamedewerker wil ik bestellingen aan de bar supersnel kunnen afrekenen voor mensen zonder account, zodat de wachtrijen kort blijven._
 
@@ -100,429 +141,577 @@ _Als kassamedewerker wil ik bestellingen aan de bar supersnel kunnen afrekenen v
 
 - De medewerker slaat producten aan zonder een klant te selecteren.
 - De bestelling wordt succesvol afgerekend en er rolt een bonnetje uit.
-- De kassa geeft op de achtergrond aan het centrale systeem door dat er een verkoop is gedaan, maar vermeldt expliciet dat dit een "anonieme aankoop" is.
+- poller.py pikt de afgeronde bestelling op en verstuurt een consumption_order met is_anonymous=true en is_company_linked=false naar pos.payments, gevolgd door een payment_registered bericht.
+- De bestelling wordt in Odoo gemarkeerd als verzonden (x_rabbitmq_sent=True) na succesvolle doorstuur.
+- Lukt het versturen niet? Dan worden beide berichten opgeslagen in outbox.json.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker een biertje bestelt en geen badge of account heeft.
+**Gegeven** dat er een afgeronde pos.order in Odoo staat met state=done, x_rabbitmq_sent=False en geen gekoppelde partner_id
 
-**Wanneer** de barman de bestelling als betaald markeert.
+**Wanneer** poller.py deze order detecteert
 
-**Dan** stuurt de kassa de financiële data door naar de administratie, maar laat het klant- gedeelte helemaal leeg.
+**Dan** wordt een consumption_order XML verstuurd naar pos.payments met is_anonymous=true en is_company_linked=false
+
+**En** wordt daarna een payment_registered XML verstuurd naar dezelfde queue
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
+
+**Gegeven** dat RabbitMQ niet bereikbaar is op het moment van versturen
+
+**Wanneer** poller.py de berichten probeert te sturen
+
+**Dan** worden beide berichten opgeslagen in outbox.json
+
+**En** wordt x_rabbitmq_sent niet op True gezet
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Laat het poller.py script periodiek checken op nieuwe, afgeronde bestellingen in Odoo.
-2.  Controleer of de bestelling géén gekoppelde klant heeft.
-3.  Bouw in dat geval de uitgaande XML zónder het klantblok (is_anonymous=true) en stuur deze naar de uitgaande wachtrij. Markeert de order lokaal als verzonden.
+1.  Laat het pollerscript elke paar seconden controleren of er nieuwe afgeronde bestellingen zijn in Odoo die nog niet doorgestuurd zijn.
+2.  Controleer per bestelling of er een klant aan gekoppeld is. Is dat niet het geval? Markeer de bestelling als anoniem (is_anonymous=true, is_company_linked=false).
+3.  Bouw het uitgaande bericht op conform het XSD-schema en stuur het naar de juiste wachtrij richting het CRM. Stuur daarna ook het betalingsbericht door.
+4.  Markeer de bestelling in Odoo als verzonden zodat ze niet opnieuw opgepikt wordt.
+5.  Lukt het versturen niet? Sla beide berichten tijdelijk op in de lokale buffer.
 
-# story 5: Bestellen op bedrijfsnaam (met badge)
+## **Story 5: Bestellen op bedrijfsnaam (met badge)**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
-_Als zakelijke bezoeker wil ik dat mijn bestellingen aan de bar direct geregistreerd worden op mijn naam, zodat de rekening netjes naar mijn werkgever gaat of van mijn badge- tegoed af gaat._
+_Als zakelijke bezoeker wil ik dat mijn bestellingen aan de bar direct geregistreerd worden op mijn naam, zodat de rekening netjes naar mijn werkgever gaat of van mijn badge-tegoed af gaat._
 
 **ACCEPTATIECRITERIA:**
 
 - De bestelling wordt in de kassa gekoppeld aan een geïdentificeerde klant.
-- Na het afrekenen stuurt de kassa een consumption_order bericht en een payment_registered bericht (met payment_context=consumption) naar het CRM.
-- Als de klant afrekent met digitaal tegoed (badge), verlaagt poller.py lokaal het saldo (x_wallet_balance) in Odoo én geeft dit door aan de website via een wallet_balance_update bericht.
+- Na het afrekenen stuurt poller.py een consumption_order bericht met is_anonymous=false en is_company_linked=true, en een payment_registered bericht met payment_context=consumption naar pos.payments.
+- Als de klant afrekent met digitaal tegoed (Badge Wallet), verlaagt poller.py lokaal het saldo (x_wallet_balance) in Odoo én stuurt een wallet_balance_update bericht naar frontend.payments.
+- De bestelling wordt in Odoo gemarkeerd als verzonden (x_rabbitmq_sent=True) na succesvolle doorstuur.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een klant met een account een bestelling plaatst.
+**Gegeven** dat er een afgeronde pos.order in Odoo staat met state=done, x_rabbitmq_sent=False en een gekoppelde partner_id van een bedrijfsklant (is_company=True)
 
-**Wanneer** de bestelling succesvol is verwerkt in de kassa.
+**Wanneer** poller.py deze order detecteert
 
-**Dan** wordt de administratie in het CRM bijgewerkt, en als er tegoed is gebruikt, daalt het virtuele saldo direct.
+**Dan** wordt een consumption_order XML verstuurd naar pos.payments met is_anonymous=false en is_company_linked=true
+
+**En** wordt daarna een payment_registered XML verstuurd naar dezelfde queue
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
+
+**Gegeven** dat de betaalmethode van de order Badge Wallet was
+
+**Wanneer** poller.py de order verwerkt
+
+**Dan** wordt het x_wallet_balance veld van de klant in Odoo verlaagd met het bestelbedrag
+
+**En** wordt een wallet_balance_update XML verstuurd naar frontend.payments
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Haal de ordergegevens en de bedrijfslink van de klant op via de API in poller.py.
-2.  Verstuur de consumption_order en payment_registered berichten naar het CRM via de routing key kassa.payments.consumption.
+1.  Laat het pollerscript elke paar seconden controleren of er nieuwe afgeronde bestellingen zijn die nog niet doorgestuurd zijn.
+2.  Controleer of er een klant gekoppeld is aan de bestelling en of het een bedrijfsklant is.
+3.  Bouw het bestellingsbericht op conform het XSD-schema met de juiste klantinfo en stuur naar de wachtrij richting het CRM. Stuur daarna ook het betalingsbericht door.
+4.  Controleer of er betaald werd met badge-tegoed. Zo ja, verlaag het lokale saldo in Odoo en stuur een saldo-update naar de website.
+5.  Markeer de bestelling als verzonden in Odoo.
 
-3\. Check of de betaalmethode "Badge Wallet" was. Zo ja, trek het bedrag lokaal af van het Odoo saldo en push een saldo-update XML naar de Drupal wachtrij.
+## **Story 6: Inkomticket betalen aan de deur**
 
-# story 6: Inkomticket betalen aan de deur
-
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als bezoeker die zijn ticket nog niet online betaald heeft, wil ik dit veilig aan de inkombalie kunnen doen, zodat ik alsnog naar binnen mag en de website weet dat ik betaald heb._
 
 **ACCEPTATIECRITERIA:**
 
 - De kassamedewerker zoekt de openstaande inschrijving op en rekent deze af.
-- Het kassasysteem vertelt de website (Drupal) direct dat deze persoon betaald heeft.
-- Het systeem vertelt het CRM dat het inschrijvingsgeld binnen is (zonder eigen factuur te maken).
+- Het kassasysteem verstuurt een payment_registered bericht met payment_context=registration naar pos.payments via routing key kassa.payments.registration.
+- Tegelijkertijd wordt een payment_status bericht verstuurd naar frontend.payments zodat Drupal de betaalstatus kan updaten.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker aan de kassa staat met een onbetaalde registratie.
+**Gegeven** dat er een afgeronde pos.order staat in Odoo voor een inschrijvingsbetaling met state=done en x_rabbitmq_sent=False
 
-**Wanneer** de bezoeker contant of met pin betaalt.
+**Wanneer** poller.py deze order detecteert
 
-**Dan** synchroniseert de kassa direct met de website en de administratie dat deze persoon betaald heeft.
+**Dan** wordt een payment_registered XML verstuurd naar pos.payments met payment_context=registration via routing key kassa.payments.registration
+
+**En** wordt een payment_status XML verstuurd naar frontend.payments
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Vang deze betaling in de scripts apart af (het gaat om registraties, niet om drankjes).
-2.  Stuur een betaalbevestiging naar het CRM waarbij je expliciet aangeeft dat het de context 'registration' heeft.
-3.  Stuur direct daarnaast een "betaald"-status bericht naar de frontend-wachtrij.
+1.  Herken in het pollerscript dat het om een inschrijvingsbetaling gaat in plaats van een consumptie.
+2.  Bouw het betalingsbericht op met de context 'registration' en stuur naar de wachtrij richting het CRM.
+3.  Stuur tegelijkertijd een betaald-statusbericht naar de wachtrij richting de website.
+4.  Markeer de bestelling als verzonden in Odoo.
 
-# story 7: Factuur vragen voor een drankje
+## **Story 7: Factuur vragen voor een drankje**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
-_Als particuliere bezoeker wil ik aan de bar kunnen vragen om een officiële factuur van mijn aankoop, zodat ik deze kan inbrengen als onkosten._
+_Als geidentificeerde bezoeker wil ik aan de bar kunnen vragen om een officiële factuur van mijn aankoop, zodat ik deze kan inbrengen als onkosten._
 
 **ACCEPTATIECRITERIA:**
 
-- De kassa maakt zelf geen facturen, maar verzamelt enkel de adresgegevens van de klant.
-- Zodra de bestelling is afgerond, stuurt de kassa een speciaal "factuur-verzoek" naar het CRM.
+- De kassa maakt zelf geen facturen, maar verzamelt de naam, het adres en optioneel het BTW-nummer van de klant.
+- Zodra de bestelling is afgerond, stuurt de kassa een invoice_request bericht naar pos.payments richting het CRM.
+- Heeft de bezoeker nog geen account? Dan kan de kassa geen factuurverzoek aanmaken — de bezoeker moet eerst zelf een account aanmaken op de website.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een particuliere bezoeker na het afrekenen om een factuur vraagt.
+**Gegeven** dat er een afgeronde pos.order staat in Odoo die gemarkeerd is voor facturatie, met een gekoppelde klant met adresgegevens
 
-**Wanneer** de medewerker dit registreert in de kassa.
+**Wanneer** poller.py deze order detecteert
 
-**Dan** verzendt de kassa de benodigde gegevens automatisch naar de systemen die de factuur genereren.
+**Dan** wordt een invoice_request XML opgebouwd met naam, adres en optioneel BTW-nummer van de klant
+
+**En** wordt dit bericht verstuurd naar pos.payments
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Herken vanuit de Odoo interface of een bestelling is gemarkeerd voor een factuur.
-2.  Haal de benodigde adresgegevens van de klant op via de API.
-3.  Bouw een specifiek invoice_request bericht en plaats dit op de wachtrij richting het CRM.
+1.  Herken in het pollerscript dat een bestelling gemarkeerd is voor facturatie.
+2.  Haal de adresgegevens van de klant op uit Odoo (naam, adres, optioneel BTW-nummer).
+3.  Bouw het factuurverzoekbericht op conform het XSD-schema en stuur naar de wachtrij richting het CRM.
+4.  Markeer de bestelling als verzonden in Odoo.
 
-# story 8: Een aankoop ongedaan maken (Terugbetaling)
+## **Story 8: Een aankoop ongedaan maken (Terugbetaling)**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annuleren en het geld teruggeven, zodat de klant niet te veel betaalt._
 
 **ACCEPTATIECRITERIA:**
 
-- De medewerker slaat een "min-bedrag" (refund) aanslaat in de kassa.
-- De kassa geeft aan de boekhouding door dat deze specifieke transactie is teruggedraaid.
-- Als de klant met digitaal tegoed had betaald, stelt de kassa dit saldo weer automatisch naar boven bij.
+- De medewerker registreert een terugbetaling (negatief bedrag) in de kassa.
+- De kassa verstuurt een refund_processed bericht naar pos.payments, gekoppeld aan het originele transactienummer.
+- Als de klant oorspronkelijk met badge-tegoed had betaald, wordt het x_wallet_balance in Odoo verhoogd en een wallet_balance_update verstuurd naar frontend.payments.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een klant klaagt over een verkeerde bestelling.
+**Gegeven** dat er een afgeronde pos.order staat in Odoo met een negatief totaalbedrag en x_rabbitmq_sent=False
 
-**Wanneer** de kassa een terugbetaling registreert.
+**Wanneer** poller.py deze order detecteert
 
-**Dan** wordt het CRM geïnformeerd en krijgt de klant zijn digitale tegoed terug.
+**Dan** wordt een refund_processed XML verstuurd naar pos.payments, gekoppeld aan het originele transactie-ID
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
+
+**Gegeven** dat de originele betaling via Badge Wallet was
+
+**Wanneer** poller.py de terugbetaling verwerkt
+
+**Dan** wordt het x_wallet_balance veld van de klant in Odoo verhoogd met het terugbetaalde bedrag
+
+**En** wordt een wallet_balance_update XML verstuurd naar frontend.payments
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Detecteer bestellingen met een negatief totaalbedrag in de backend.
-2.  Stuur een refund-bericht naar het CRM, en link dit aan het originele transactie-ID.
-3.  Controleer de betaalmethode: als dit de badge-wallet was, voer dan een API-actie uit om het klantensaldo weer te verhogen.
+1.  Herken in het pollerscript bestellingen met een negatief totaalbedrag als terugbetalingen.
+2.  Bouw het terugbetalingsbericht op conform het XSD-schema, gekoppeld aan het originele transactienummer, en stuur naar de wachtrij richting het CRM.
+3.  Controleer of de originele betaling via badge-tegoed was. Zo ja, verhoog het lokale saldo in Odoo en stuur een saldo-update naar de website.
+4.  Markeer de terugbetaling als verzonden in Odoo.
 
-EPIC 3: BADGES & SALDO (IOT & WALLET)
+# **EPIC 3: BADGES & SALDO (IOT & WALLET)**
 
-# story 9: De fysieke badge gebruiken aan de bar
+## **Story 9: De fysieke badge gebruiken aan de bar**
 
-**MVP status: secundair (Niet strikt MVP)**
+_MVP status: secundair (Niet strikt MVP)_
 
 _Als kassamedewerker wil ik dat de kassa de klant direct herkent zodra de scanner zijn badge leest, zodat ik geen namen hoef in te typen en direct kan verkopen._
 
 **ACCEPTATIECRITERIA:**
 
-- Zodra de scanner een badge ziet, ontvangt de kassa het scannummer.
-- De kassa zoekt het scannummer razendsnel op in de eigen database.
+- Zodra de scanner een badge ziet, ontvangt receiver.py het badge_scanned bericht op queue.incoming.
+- De kassa zoekt het badge_id op in Odoo via het x_badge_id veld op res.partner en haalt het bijhorende klantprofiel op.
+- Wordt de badge niet herkend? Dan start de foutafhandeling van Story 12.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een klant met een gekoppelde badge aan de bar verschijnt.
+**Gegeven** dat een badge_scanned bericht binnenkomt op queue.incoming met een badge_id dat overeenkomt met een x_badge_id in Odoo
 
-**Wanneer** de badge gescand wordt door de hardware.
+**Wanneer** receiver.py het bericht verwerkt
 
-**Dan** opent het kassascherm direct het juiste profiel.
+**Dan** wordt het bijhorende klantprofiel opgehaald uit Odoo
+
+**En** stuurt receiver.py een basic_ack naar RabbitMQ
+
+**Gegeven** dat een badge_scanned bericht binnenkomt met een badge_id dat niet bestaat in Odoo
+
+**Wanneer** receiver.py de lookup uitvoert
+
+**Dan** wordt de verwerking van Story 12 gestart
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Zorg dat het receiver-script luistert naar scanberichten vanuit de IoT-hardware.
-2.  Gebruik de database API om lokaal de klant bij deze badge te zoeken.
-3.  Zorg dat the gevonden klantinformatie op het POS-scherm van de medewerker verschijnt.
+1.  Zorg dat het ontvangstscript luistert naar scanberichten van de IoT-scanner via de inkomende wachtrij en valideer het bericht via het XSD-schema.
+2.  Zoek het badge-ID op in Odoo en haal het bijhorende klantprofiel op.
+3.  Wordt de badge niet herkend? Verwijs door naar de foutafhandeling van Story 12.
+4.  Bevestig aan de wachtrij dat het bericht verwerkt is.
 
-# story 10: Een nieuwe badge uitgeven
+## **Story 10: Een nieuwe badge uitgeven**
 
-**MVP status: secundair (Niet strikt MVP)**
+_MVP status: secundair (Niet strikt MVP)_
 
 _Als baliemedewerker wil ik bij aankomst van een gast een blanco badge kunnen pakken en deze aan zijn account koppelen, zodat hij direct kan betalen op het evenement._
 
 **ACCEPTATIECRITERIA:**
 
-- De medewerker voert in het systeem het nummer van de badge in bij de klant.
-- De kassa vertelt de overige systemen direct dat deze badge vanaf nu bij deze persoon hoort.
+- De medewerker voert het badge-ID in bij de klant in Odoo (x_badge_id veld op res.partner wordt ingevuld).
+- De kassa verstuurt een badge_assigned bericht naar pos.payments zodat alle systemen de nieuwe koppeling kennen.
+- Is het badge-ID al gekoppeld aan een andere klant? Dan wordt een foutmelding verstuurd naar de Controlroom.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker zich aanmeldt en een badge krijgt.
+**Gegeven** dat een medewerker een nieuw badge_id koppelt aan een bestaand klantprofiel in Odoo (x_badge_id wordt ingevuld)
 
-**Wanneer** de medewerker de badge linkt in het kassasysteem.
+**Wanneer** poller.py deze wijziging detecteert
 
-**Dan** wordt deze koppeling direct wereldkundig gemaakt binnen de hele IT-infrastructuur.
+**Dan** wordt een badge_assigned XML verstuurd naar pos.payments
+
+**En** wordt de actie als verzonden gemarkeerd in Odoo
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Zorg voor een detectiemechanisme dat signaleert wanneer er een nieuw badgenummer in een klantprofiel wordt opgeslagen.
-2.  Bouw het badge_assigned bericht op en stuur dit naar de centrale wachtrij.
+1.  Detecteer in het pollerscript wanneer een nieuw badge-ID wordt opgeslagen bij een klantprofiel in Odoo.
+2.  Bouw het badge-koppelingssbericht op conform het XSD-schema.
+3.  Stuur het bericht naar de wachtrij richting het CRM zodat alle systemen de nieuwe koppeling kennen.
+4.  Markeer de actie als verzonden in Odoo.
 
-# story 11: Digitaal tegoed (Top-up) kopen
+## **Story 11: Digitaal tegoed (Top-up) kopen**
 
-**MVP status: secundair (Niet strikt MVP)**
+_MVP status: secundair (Niet strikt MVP)_
 
 _Als bezoeker wil ik met cash of mijn bankpas virtueel geld op mijn badge kunnen zetten, zodat ik later op de avond makkelijk drankjes kan afrekenen._
 
 **ACCEPTATIECRITERIA:**
 
-- De medewerker slaat een "Top-up" product (0% BTW) aan.
-- Het bedrag wordt virtueel opgeteld bij het saldo van de bezoeker.
-- Er wordt direct een wallet_balance_update bericht naar de frontend (Drupal) gestuurd.
+- De medewerker slaat een Top-up product (0% BTW) aan in Odoo POS.
+- Het bedrag wordt opgeteld bij het x_wallet_balance van de klant in Odoo.
+- Er wordt een consumption_order bericht verstuurd naar pos.payments richting het CRM.
+- Er wordt een wallet_balance_update bericht verstuurd naar frontend.payments richting de website.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bezoeker 20 euro wil opladen.
+**Gegeven** dat er een afgeronde pos.order staat in Odoo met een product van 0% BTW en x_rabbitmq_sent=False
 
-**Wanneer** de medewerker de aankoop succesvol afrondt.
+**En** de order heeft een gekoppelde klant met een x_badge_id
 
-**Dan** registreert de kassa de tegoedverhoging en informeert de website.
+**Wanneer** poller.py deze order detecteert
+
+**Dan** wordt het x_wallet_balance van de klant in Odoo verhoogd met het aankoopbedrag
+
+**En** wordt een consumption_order XML verstuurd naar pos.payments
+
+**En** wordt een wallet_balance_update XML verstuurd naar frontend.payments
+
+**En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Laat poller.py via get_tax_rate() detecteren of een product 0% BTW heeft, en voeg in dat geval automatisch de tag item_type=wallet_topup toe aan het consumption_order bericht.
-2.  Gebruik de Odoo API om het lokale portefeuille-saldo van de klant te verhogen.
-3.  Verstuur het consumption_order bericht naar het CRM (pos.payments queue) en push een wallet_balance_update bericht naar de website (frontend.payments queue).
+1.  Herken in het pollerscript een Top-up aankoop op basis van het 0% BTW-tarief van het product.
+2.  Verhoog het lokale badge-saldo van de klant in Odoo met het aangekochte bedrag.
+3.  Bouw het bestellingsbericht op conform het XSD-schema en stuur naar de wachtrij richting het CRM.
+4.  Stuur tegelijkertijd een saldo-updatebericht naar de wachtrij richting de website.
+5.  Markeer de bestelling als verzonden in Odoo.
 
-# story 12: Wat als we een badge niet kennen?
+## **Story 12: Wat als we een badge niet kennen?**
 
-**MVP status: secundair (Niet strikt MVP)**
+_MVP status: secundair (Niet strikt MVP)_
 
 _Als kassamedewerker wil ik dat het systeem niet vastloopt als een bezoeker per ongeluk een badge scant die niet in ons systeem staat._
 
 **ACCEPTATIECRITERIA:**
 
-- Als een badge onbekend is, probeert de kassa dit niet eindeloos opnieuw.
-- Het systeem slaat onzichtbaar alarm bij de IT-dienst en stopt daar.
+- Als een badge onbekend is, stopt de kassa de verwerking zonder te crashen of eindeloos te herhalen.
+- Er wordt een system_error bericht met code badge_not_found verstuurd naar queue.errors, met de originele message_id van het scanbericht als related_message_id.
+- Het scanbericht krijgt een basic_ack zodat het niet opnieuw aangeboden wordt door RabbitMQ.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een onbekende of defecte badge wordt gescand.
+**Gegeven** dat een badge_scanned bericht binnenkomt met een badge_id dat niet bestaat in Odoo
 
-**Wanneer** het kassasysteem deze niet herkent in de database.
+**Wanneer** receiver.py de lookup uitvoert
 
-**Dan** gooit hij een waarschuwing naar IT en laat de kassa gewoon verder werken.
+**Dan** wordt een system_error XML met code badge_not_found verstuurd naar queue.errors, met de originele message_id van het scanbericht als related_message_id
+
+**En** stuurt receiver.py een basic_ack naar RabbitMQ zodat het bericht niet opnieuw aangeboden wordt
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Als de database lookup tijdens een scan geen klant oplevert, laat het script dan niet crashen.
-2.  Stuur een badge_not_found alert naar de monitoringswachtrij.
-3.  Sluit het oorspronkelijke scanbericht expliciet af, zodat RabbitMQ niet in een oneindige loop terechtkomt.
+1.  Als de database lookup tijdens een scan geen klant oplevert, stop dan de verwerking zonder te crashen.
+2.  Bouw een foutbericht op met de code badge_not_found en voeg het originele scanbericht-ID toe als referentie.
+3.  Stuur het foutbericht naar de monitoringswachtrij richting de Controlroom.
+4.  Bevestig aan de wachtrij dat het scanbericht verwerkt is zodat het niet opnieuw aangeboden wordt.
 
-EPIC 4: FOUTEN & SYSTEEMMONITORING (RESILIENCE & CONTROLROOM)
+# **EPIC 4: FOUTEN & SYSTEEMMONITORING (RESILIENCE & CONTROLROOM)**
 
-# story 13: Zonder internet toch blijven verkopen
+## **Story 13: Zonder internet toch blijven verkopen**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als festivalorganisator eis ik dat de barren gewoon drank kunnen blijven verkopen, zelfs als het centrale netwerk er even uit ligt._
 
 **ACCEPTATIECRITERIA:**
 
-- Als de kassa geen contact heeft met het hoofdnetwerk, bewaart hij bestellingen lokaal in een geheugenbestandje.
-- Zodra het netwerk terug is, worden de bewaarde bestellingen alsnog verstuurd.
+- Als de kassa geen contact heeft met RabbitMQ, bewaart hij berichten lokaal in outbox.json (max 500 berichten).
+- Zodra het netwerk hersteld is, worden de gebufferde berichten alsnog verstuurd in volgorde en wordt outbox.json leeggemaakt.
+- Heartbeat-berichten worden nooit gebufferd — die worden bij falen gewoon weggegooid.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat de netwerkverbinding is weggevallen.
+**Gegeven** dat RabbitMQ niet bereikbaar is
 
-**Wanneer** de kassa berichten wil doorsturen.
+**Wanneer** sender.py een bericht probeert te versturen
 
-**Dan** slaat hij ze tijdelijk op de eigen computer op en verstuurt hij ze pas als de verbinding is hersteld.
+**Dan** wordt het bericht opgeslagen in outbox.json
+
+**En** bevat outbox.json na deze actie maximaal 500 berichten
+
+**Gegeven** dat de verbinding met RabbitMQ hersteld is en outbox.json berichten bevat
+
+**Wanneer** sender.py opnieuw verbinding maakt
+
+**Dan** worden alle gebufferde berichten alsnog verstuurd in volgorde
+
+**En** wordt outbox.json leeggemaakt na succesvolle verzending
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Zorg voor gedegen foutafhandeling (try/except) rondom het verzenden van berichten.
-2.  Als verzenden naar RabbitMQ mislukt, schrijf de payload dan veilig weg in een lokaal bestand (outbox).
-3.  Schrijf een opstart- of herstelfunctie die deze outbox leegmaakt en verstuurt zodra de connectie weer actief is.
+1.  Zorg voor foutafhandeling bij het versturen van berichten naar RabbitMQ.
+2.  Lukt het versturen niet? Sla het bericht op in de lokale buffer (outbox.json), met een maximum van 500 berichten.
+3.  Controleer bij het herstellen van de verbinding of er berichten in de buffer staan en stuur deze alsnog door in volgorde.
+4.  Heartbeat-berichten worden nooit gebufferd — die worden bij falen gewoon weggegooid.
 
-# story 14: Kassa beschermen tegen foute data
+## **Story 14: Kassa beschermen tegen foute data**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als beheerder wil ik dat de kassa onleesbare of onbekende berichten vanuit andere systemen netjes negeert en rapporteert, zodat de kassa niet crasht._
 
 **ACCEPTATIECRITERIA:**
 
-- Elk inkomend bericht wordt streng gecontroleerd.
-- Klopt de structuur niet? Dan gooit hij het bericht weg en stuurt hij een storingsmelding naar het dashboard.
+- Elk inkomend bericht wordt gevalideerd via het bijhorende XSD-schema.
+- Klopt de structuur niet? Dan wordt het bericht weggegooid en een system_error met code invalid_xml_format verstuurd naar queue.errors.
+- Is het berichttype onbekend? Dan wordt een system_error met code unknown_message_type verstuurd naar queue.errors.
+- In beide gevallen krijgt het bericht een basic_ack zodat de queue niet geblokkeerd wordt.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een ander team per ongeluk foute data naar ons stuurt.
+**Gegeven** dat een inkomend bericht op queue.incoming niet voldoet aan het XSD-schema
 
-**Wanneer** de kassa dit probeert te lezen en faalt.
+**Wanneer** receiver.py de validatie uitvoert
 
-**Dan** breekt het proces netjes af en alarmeert het de beheerders.
+**Dan** wordt het bericht weggegooid en een system_error met code invalid_xml_format verstuurd naar queue.errors
+
+**En** stuurt receiver.py een basic_ack zodat het bericht de queue niet blokkeert
+
+**Gegeven** dat een inkomend bericht een onbekend type heeft
+
+**Wanneer** receiver.py het berichttype controleert
+
+**Dan** wordt het bericht weggegooid en een system_error met code unknown_message_type verstuurd naar queue.errors
+
+**En** stuurt receiver.py een basic_ack
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Controleer de structuur (XML parsing) van inkomende berichten voordat je ze doorgeeft aan de logica.
-2.  Vang foute formaten of onbekende berichtsoorten op.
-3.  Weiger het corrupte bericht veilig en stuur een foutrapportage naar de Controlroom.
+1.  Controleer elk inkomend bericht eerst op geldige XML-structuur via het bijhorende XSD-schema.
+2.  Is het berichttype onbekend of klopt de structuur niet? Gooi het bericht weg en stuur een foutmelding met de juiste foutcode naar de Controlroom.
+3.  Bevestig aan de wachtrij dat het bericht verwerkt is zodat het niet blijft herhalen.
 
-# story 15: systeem-hartslag (We zijn nog levend!)
+## **Story 15: Systeem-hartslag (We zijn nog levend!)**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als monitoringsdienst wil ik elke seconde een "levenssignaal" ontvangen van de kassa, zodat we direct kunnen zien of alles nog werkt._
 
 **ACCEPTATIECRITERIA:**
 
-- Een onzichtbaar programma in de kassa stuurt elke seconde een statusbericht (online of degraded).
-- Dit bericht gaat direct naar de Controlroom, zonder tussenstops.
+- Een onzichtbaar programma in de kassa stuurt elke seconde een statusbericht (online of degraded) naar queue.heartbeats — rechtstreeks, niet via kassa.exchange.
+- De status is degraded als: Odoo niet bereikbaar is via XML-RPC, de vorige RabbitMQ-verbinding mislukte, of er meer dan 5 fouten waren in de laatste 60 seconden.
+- De status offline wordt nooit actief verstuurd — een ontbrekende heartbeat is zelf het offline-signaal voor de Controlroom.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat de kassa is ingeschakeld.
+**Gegeven** dat heartbeat.py actief is als daemon-thread
 
-**Wanneer** de klok een seconde wegtikt.
+**Wanneer** er één seconde verstreken is
 
-**Dan** verzendt de kassa volautomatisch een status-update.
+**Dan** wordt de Odoo XML-RPC API gecontroleerd op bereikbaarheid
+
+**En** wordt de status bepaald als online of degraded
+
+**En** wordt een heartbeat XML verstuurd naar queue.heartbeats — rechtstreeks, niet via kassa.exchange
+
+**Gegeven** dat Odoo niet bereikbaar is via XML-RPC
+
+**Wanneer** heartbeat.py de statuscheck uitvoert
+
+**Dan** wordt degraded verstuurd als status in het heartbeat-bericht
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Bouw een apart, lichtgewicht Python-script dat in een lus draait (met een pauze van 1 seconde).
-2.  Voer een snelle technische check uit om te zien of Odoo lokaal nog gezond reageert.
-3.  Genereer een heartbeat-bericht en schiet dit rechtstreeks de monitoring-wachtrij in.
+1.  Laat het heartbeat-script elke seconde automatisch draaien als achtergrondproces.
+2.  Controleer elke seconde of Odoo nog bereikbaar is en of er niet te veel fouten zijn geweest (meer dan 5 in 60 seconden).
+3.  Bepaal op basis daarvan de status: online of degraded.
+4.  Bouw het heartbeat-bericht op conform het XSD-schema en stuur rechtstreeks naar queue.heartbeats — niet via de normale uitgangsroute.
 
-# story 16: Geen oude hartslagen nasturen
+## **Story 16: Geen oude hartslagen nasturen**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
-_Als monitoringsdienst eis ik dat de kassa géén oude levenssignalen verstuurt na een netwerkstoring, we willen enkel de actuele status weten._
+_Als monitoringsdienst eis ik dat de kassa geen oude levenssignalen verstuurt na een netwerkstoring, we willen enkel de actuele status weten._
 
 **ACCEPTATIECRITERIA:**
 
-- "Hartslagen" worden absoluut nooit lokaal bewaard bij internetuitval.
-- Mislukte hartslagen worden genegeerd.
+- Heartbeats worden nooit lokaal bewaard bij verbindingsproblemen.
+- Mislukte heartbeats worden weggegooid en een seconde later opnieuw geprobeerd.
+- Dit geldt uitsluitend voor heartbeats — gewone berichten (consumption_order, payment_registered, ...) worden wel gebufferd in outbox.json.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat het internet is uitgevallen.
+**Gegeven** dat RabbitMQ niet bereikbaar is
 
-**Wanneer** de kassa een hartslag wil sturen.
+**Wanneer** heartbeat.py een heartbeat probeert te versturen
 
-**Dan** gooit hij deze bij falen direct weg zonder hem te bewaren voor later.
+**Dan** wordt de heartbeat weggegooid — er wordt niets opgeslagen in outbox.json
+
+**En** probeert heartbeat.py één seconde later opnieuw
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Houd de code van dit script bewust gescheiden van de buffer-logica van de reguliere kassa- berichten.
-2.  Vang verbindingsfouten lokaal op, sla niks op, en probeer het gewoon een seconde later nog eens.
+1.  Houd de heartbeat-logica volledig gescheiden van de buffer-logica van gewone berichten.
+2.  Mislukt een hartslag door verbindingsproblemen? Gooi hem weg en probeer een seconde later opnieuw.
+3.  Sla nooit een mislukte hartslag op in de lokale buffer.
 
-# story 16b: Dubbele berichten stil negeren (Idempotentie)
+## **Story 16b: Dubbele berichten stil negeren (Idempotentie)**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als systeembeheerder wil ik dat de kassa elk inkomend bericht maar één keer verwerkt, zodat klantprofielen of saldo's niet corrupt raken als RabbitMQ een bericht dubbel aflevert._
 
 **ACCEPTATIECRITERIA:**
 
-- Het receiver.py script houdt een interne cache (LRU) bij van recent verwerkte message_id's.
+- Het receiver.py script houdt een interne cache (LRU via OrderedDict, max 10.000 items) bij van recent verwerkte message_id's.
 - Als een inkomend bericht een ID heeft dat al in de cache staat, wordt de verwerking overgeslagen.
-- Het duplicaat krijgt direct een succesvolle ACK naar RabbitMQ, zodat het stil uit de wachtrij verdwijnt zonder foutmelding.
+- Het duplicaat krijgt direct een basic_ack naar RabbitMQ, zodat het stil uit de wachtrij verdwijnt zonder foutmelding.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een bericht met een specifiek message_id al succesvol is verwerkt.
+**Gegeven** dat een bericht met message_id = X al eerder succesvol is verwerkt door receiver.py
 
-**Wanneer** RabbitMQ exact hetzelfde bericht per ongeluk nog eens aflevert.
+**En** de message_id staat nog in de interne OrderedDict cache
 
-**Dan** herkent de receiver dit, voert geen database-acties uit en stuurt een ACK om het bericht te verwijderen.
+**Wanneer** RabbitMQ hetzelfde bericht met message_id = X opnieuw aflevert
+
+**Dan** wordt de verwerking overgeslagen — er worden geen Odoo-acties uitgevoerd
+
+**En** stuurt receiver.py direct een basic_ack naar RabbitMQ
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Implementeer een OrderedDict in receiver.py met een maximale grootte (bijv. 10.000 items).
-2.  Controleer bij elk inkomend bericht of het message_id in deze dictionary zit.
-3.  Zo ja: retourneer direct een ch.basic_ack en stop de logica.
+1.  Houd in het ontvangstscript een interne lijst bij van recent verwerkte bericht-ID's (max 10.000 items).
+2.  Controleer bij elk nieuw bericht of het ID al in de lijst staat.
+3.  Staat het er al in? Bevestig aan de wachtrij dat het bericht verwerkt is en stop verdere verwerking.
+4.  Staat het er nog niet in? Voeg het toe aan de lijst en verwerk het bericht normaal.
 
-# story 16c: Lokale buffer beschermen tegen overstroming (offline_queue_full)
+## **Story 16c: Lokale buffer beschermen tegen overstroming (offline_queue_full)**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
 _Als IT-beheerder wil ik gewaarschuwd worden als de kassa langdurig offline is en de lokale buffer vol raakt, zodat we weten dat er transactiedata verloren dreigt te gaan._
 
 **ACCEPTATIECRITERIA:**
 
 - De kassa mag maximaal 500 berichten lokaal opslaan in de outbox.json buffer.
-- Bij het bereiken van deze limiet, weigert de kassa nieuwe berichten lokaal op te slaan.
-- Er wordt direct een system_error met de code offline_queue_full gegenereerd.
+- Bij het bereiken van deze limiet weigert de kassa nieuwe berichten lokaal op te slaan.
+- Er wordt direct een system_error met de code offline_queue_full gegenereerd en verstuurd naar queue.errors zodra de verbinding hersteld is.
+- De kassa blijft gewoon verkopen — enkel het doorsturen stopt.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat het RabbitMQ netwerk langdurig plat ligt en er al 500 bestellingen in de outbox zitten.
+**Gegeven** dat outbox.json al 500 berichten bevat
 
-**Wanneer** de kassamedewerker een 501e bestelling afrekent.
+**En** RabbitMQ is niet bereikbaar
 
-**Dan** gooit het systeem het nieuwe bericht veilig weg en stuurt het (zodra mogelijk) een alarm naar de Controlroom.
+**Wanneer** sender.py een 501e bericht probeert te bufferen
+
+**Dan** wordt het bericht weggegooid — outbox.json blijft op 500
+
+**En** wordt een system_error met code offline_queue_full verstuurd naar queue.errors zodra de verbinding hersteld is
+
+**En** blijft de kassa gewoon verkopen — enkel het doorsturen stopt
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Definieer BUFFER_MAX_MESSAGES = 500 in sender.py.
-2.  Controleer de lijstgrootte bij het wegschrijven in \_buffer_message(). Als limiet bereikt is, return zonder te schrijven.
-3.  Roep send_error_to_queue("offline_queue_full", ...) aan om de monitoring in te lichten.
+1.  Controleer bij elk wegschrijven naar de lokale buffer of het maximum van 500 berichten al bereikt is.
+2.  Is de buffer vol? Gooi het nieuwe bericht weg zonder het op te slaan.
+3.  Stuur een foutbericht met de code offline_queue_full naar de Controlroom zodat IT gewaarschuwd wordt.
+4.  De kassa blijft gewoon verkopen — enkel het doorsturen stopt.
 
-EPIC 5: UITGEBREIDE RANDGEVALLEN (TECHNICAL SAD PATHS)
+# **EPIC 5: UITGEBREIDE RANDGEVALLEN (TECHNICAL SAD PATHS)**
 
-# story 17: Foutieve betaling met virtueel saldo blokkeren
+## **Story 17: Foutieve betaling met virtueel saldo blokkeren**
 
-**MVP status: secundair (Niet strikt MVP)**
+_MVP status: secundair (Niet strikt MVP)_
 
-_Als financieel beheerder wil ik dat de kassa een betaling met digitaal tegoed snoeihard blokkeert als er géén klant aan de bestelling gekoppeld is, om spook-afschrijvingen te voorkomen._
+_Als financieel beheerder wil ik dat de kassa een betaling met digitaal tegoed snoeihard blokkeert als er geen klant aan de bestelling gekoppeld is, om spook-afschrijvingen te voorkomen._
 
 **ACCEPTATIECRITERIA:**
 
-- Als een "Anonieme verkoop" wordt afgerekend via de Wallet, ziet de achterliggende software dit en trekt nergens saldo vanaf.
-- Er klinkt een digitaal alarm bij IT wegens een procedurefout.
+- Als een anonieme verkoop wordt afgerekend via de Badge Wallet, detecteert de kassa deze inconsistentie en trekt nergens saldo vanaf.
+- Er wordt een system_error bericht verstuurd naar queue.errors.
+- De bestelling wordt gemarkeerd als afgehandeld zodat hij niet blijft herhalen.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een barman een anonieme verkoop abusievelijk afrekent via digitaal saldo.
+**Gegeven** dat een pos.order in Odoo geen gekoppelde partner_id heeft
 
-**Wanneer** de kassa dit wilt verwerken.
+**En** de betaalmethode van de order is Badge Wallet
 
-**Dan** verandert het geen saldo's, slaat alarm, en voorkomt dat het script vastloopt.
+**Wanneer** poller.py deze order verwerkt
+
+**Dan** wordt er geen saldo afgetrokken van enig klantprofiel
+
+**En** wordt een system_error verstuurd naar queue.errors
+
+**En** wordt de order gemarkeerd als afgehandeld zodat hij niet blijft herhalen
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Voeg een extra veiligheidscontrole toe in het verwerkingsscript, vlak voordat er saldo wordt verlaagd.
-2.  Indien betaalmethode=Badge, maar de klant is Anoniem: stop de berekening direct.
-3.  Stuur een foutmelding naar de monitoring, maar markeer de order wél als afgehandeld zodat hij niet blijft hangen.
+1.  Controleer vlak voor elke saldo-afschrijving of er een klant gekoppeld is aan de bestelling.
+2.  Is de bestelling anoniem maar wordt er toch via badge-tegoed betaald? Stop de afschrijving onmiddellijk.
+3.  Stuur een foutmelding naar de Controlroom.
+4.  Markeer de bestelling als afgehandeld zodat ze niet blijft hangen.
 
-# story 18: Verbindingsfouten direct alarmeren
+## **Story 18: Verbindingsfouten direct alarmeren**
 
-**MVP status: MVP**
+_MVP status: MVP_
 
-_Als IT-beheerder wil ik dat een database-crash van de kassa direct als foutmelding naar het centrale dashboard rolt, zodat wij problemen snel kunnen oplossen._
+_Als IT-beheerder wil ik dat verbindingsfouten met Odoo direct als foutmelding naar het centrale dashboard rollen, zodat wij problemen snel kunnen oplossen._
 
 **ACCEPTATIECRITERIA:**
 
-- Zodra het interne systeem de eigen database niet kan bereiken, detecteert hij dit.
-- Hij stuurt een gedetailleerd foutbericht en pauzeert even om een oneindige loop te voorkomen.
+- Zodra het script de Odoo XML-RPC API niet kan bereiken, wordt dit gedetecteerd.
+- Er wordt een system_error bericht met code odoo_api_error verstuurd naar queue.errors.
+- Het script pauzeert één seconde voor een nieuwe poging om een oneindige foutenlus te voorkomen.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat de interne kassa-database vastloopt.
+**Gegeven** dat poller.py of receiver.py een Odoo XML-RPC aanroep uitvoert
 
-**Wanneer** de software data wil ophalen en wordt geweigerd.
+**En** Odoo is niet bereikbaar of gooit een exception
 
-**Dan** pauzeert de verwerking en alarmeert het de beheerders.
+**Wanneer** de fout wordt opgevangen
+
+**Dan** wordt een system_error met code odoo_api_error verstuurd naar queue.errors
+
+**En** pauzeert het script één seconde voor een nieuwe poging zodat er geen oneindige foutenlus ontstaat
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1.  Vang generieke verbindingsfouten tussen het script en de Odoo-omgeving netjes op.
-2.  Bouw en verstuur een odoo_api_error naar de monitoring queue.
-3.  Voeg een korte rustpauze toe of wijs inkomende berichten veilig af om de boel niet verder te overbelasten.
+1.  Zorg voor foutafhandeling rondom alle communicatie met Odoo.
+2.  Lukt het ophalen of wegschrijven van data niet? Bouw een foutbericht op met de code odoo_api_error en stuur naar de monitoringswachtrij.
+3.  Pauzeer de verwerking kort zodat het systeem niet in een oneindige foutenlus terechtkomt.
