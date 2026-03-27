@@ -20,17 +20,16 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -r kassa/integratie/requirements.txt
-
-      - name: Install test/lint tools
-        run: pip install pytest flake8 mypy
+        run: |
+          pip install -r integratie/requirements-dev.txt
+          pip install pytest
 
       - name: Linting
-        run: flake8 kassa/integratie/
+        run: flake8 integratie/
 
       - name: Type Checking
-        run: mypy kassa/integratie/
+        run: mypy integratie/
 
       - name: Unit Tests
-        run: pytest kassa/integratie/tests/ -v
+        run: pytest integratie/tests/ -v
 
