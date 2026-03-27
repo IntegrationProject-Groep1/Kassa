@@ -2,11 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY integratie/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Kopieer de rest van de actuele code naar de container
-COPY . .
+COPY integratie/ .
+
+# De toegewezen poort voor Kassa is 30030-30039
+EXPOSE 30030
 
 # Start met een simpele keep-alive loop zodat het team de bestanden kan ontwikkelen
 CMD ["python", "main.py"]
