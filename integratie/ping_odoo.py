@@ -3,7 +3,6 @@ import os
 import sys
 
 
-
 def ping_odoo():
     url = os.environ.get("ODOO_URL")
     db = os.environ.get("ODOO_DB")
