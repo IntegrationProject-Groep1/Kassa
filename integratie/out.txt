@@ -1,0 +1,5 @@
+Failed with vhost /: ConnectionClosedByBroker: (530) "NOT_ALLOWED - access to vhost '/' refused for user 'kassa_rabbitmq'"
+Failed with vhost /kassa: ConnectionClosedByBroker: (530) 'NOT_ALLOWED - vhost /kassa not found'
+Success with vhost: kassa
+Failed with vhost /kassa_rabbitmq: ConnectionClosedByBroker: (530) 'NOT_ALLOWED - vhost /kassa_rabbitmq not found'
+Failed with vhost kassa_rabbitmq: ConnectionClosedByBroker: (530) 'NOT_ALLOWED - vhost kassa_rabbitmq not found'

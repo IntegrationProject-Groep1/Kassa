@@ -52,12 +52,17 @@ def create_test_order():
         product_id = product_ids[0]
         print(f"✅ Found product: {product_id}")
         
-        # Create order
+        # Create order with all required fields
         order_data = {
             'session_id': session_id,
             'partner_id': False,  # Anonymous order
             'name': f"TEST-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            'date_order': datetime.now().isoformat(),
+            'date_order': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'amount_tax': 0.0,
+            'amount_total': 10.00,
+            'amount_paid': 10.00,  # Required: amount already paid
+            'amount_return': 0.0,
+            'company_id': 1,  # Default company
         }
         
         order_id = models.execute_kw(
@@ -74,6 +79,8 @@ def create_test_order():
             'product_id': product_id,
             'qty': 1,
             'price_unit': 10.00,
+            'price_subtotal': 10.00,
+            'price_subtotal_incl': 10.00,  # Include tax
         }
         
         line_id = models.execute_kw(
@@ -83,6 +90,22 @@ def create_test_order():
         )
         
         print(f"✅ Added order line: {line_id}")
+        
+        # Mark order as paid using the action method
+        try:
+            models.execute_kw(
+                db, uid, password,
+                'pos.order', 'action_pos_order_paid',
+                [order_id]
+            )
+        except:
+            # Fallback: write the status directly
+            models.execute_kw(
+                db, uid, password,
+                'pos.order', 'write',
+                [order_id],
+                {'state': 'paid'}
+            )
         
         # Mark order as paid
         models.execute_kw(
