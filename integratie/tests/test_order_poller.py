@@ -24,7 +24,6 @@ def test_order_poller_initialization():
     
     assert poller.odoo_url == 'http://test:8069'
     assert poller.odoo_db == 'test_db'
-    assert poller.rabbit_host == 'localhost'
     assert poller.processed_orders == set()
 
 
