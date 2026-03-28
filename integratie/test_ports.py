@@ -3,10 +3,11 @@
 import pika
 import socket
 import time
+import os
 
-RABBIT_HOST = "integrationproject-2526s2-dag01.westeurope.cloudapp.azure.com"
-RABBIT_USER = "kassa_rabbitmq"
-RABBIT_PASS = "RCFD2Qgr8vkhC1wjGwR$"
+RABBIT_HOST = os.environ.get("RABBIT_HOST")
+RABBIT_USER = os.environ.get("RABBIT_USER")
+RABBIT_PASS = os.environ.get("RABBIT_PASS")
 
 # Try multiple ports in order
 ports_to_try = [

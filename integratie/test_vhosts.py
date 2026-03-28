@@ -1,10 +1,16 @@
 import pika
+import os
 
 def test_vhost(vhost):
-    credentials = pika.PlainCredentials('kassa_rabbitmq', 'RCFD2Qgr8vkhC1wjGwR$')
+    user = os.environ.get("RABBIT_USER")
+    password = os.environ.get("RABBIT_PASS")
+    host = os.environ.get("RABBIT_HOST")
+    port = int(os.environ.get("RABBIT_PORT", 30000))
+    
+    credentials = pika.PlainCredentials(user, password)
     params = pika.ConnectionParameters(
-        host='integrationproject-2526s2-dag01.westeurope.cloudapp.azure.com',
-        port=30000,
+        host=host,
+        port=port,
         virtual_host=vhost,
         credentials=credentials
     )

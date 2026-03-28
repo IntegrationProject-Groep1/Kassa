@@ -3,9 +3,9 @@
 import pika
 import os
 
-RABBIT_HOST = os.environ.get("RABBIT_HOST", "integrationproject-2526s2-dag01.westeurope.cloudapp.azure.com")
-RABBIT_USER = os.environ.get("RABBIT_USER", "kassa_rabbitmq")
-RABBIT_PASS = os.environ.get("RABBIT_PASS", "RCFD2Qgr8vkhC1wjGwR$")
+RABBIT_HOST = os.environ.get("RABBIT_HOST")
+RABBIT_USER = os.environ.get("RABBIT_USER")
+RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_PORT = int(os.environ.get("RABBIT_PORT", 30000))
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "kassa")
 
