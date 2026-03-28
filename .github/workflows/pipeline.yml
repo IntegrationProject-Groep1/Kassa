@@ -1,7 +1,9 @@
-name: CI/CD Pipeline
+name: CI Pipeline
 
 on:
   push:
+    tags:
+      - 'v*' # CI ook uitvoeren bij release tags (zodat deploy.yml erop kan wachten)
     branches:
       - dev
       - prod
@@ -38,4 +40,3 @@ jobs:
 
       - name: Unit Tests
         run: pytest integratie/tests/ -v
-
