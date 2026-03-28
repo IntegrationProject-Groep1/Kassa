@@ -1,0 +1,43 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.pytest_cache
+.mypy_cache
+*.egg-info/
+dist/
+build/
+
+# IDEs and Editors
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+*/.coverage
+htmlcov/
+
+# Misc
+.dockerignore
+README.md
+documentatie/
+docker-compose.yml
+.github/

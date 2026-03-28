@@ -1,17 +1,40 @@
 import time
 import sys
+import threading
+from order_poller import OrderPoller
 
 def main():
-    print("Kassa Integration Service Gestart.", flush=True)
-    print("Wachtend op verdere code van het team. Container blijft actief...", flush=True)
+    print("🚀 Kassa Integration Service Started", flush=True)
     
-    # Simpele keep-alive loop
+    # Initialize and start Order Poller
+    print("📦 Starting Order Poller...", flush=True)
+    poller = OrderPoller()
+    
+    if not poller.connect_odoo():
+        print("❌ Failed to connect to Odoo", flush=True)
+        sys.exit(1)
+    
+    # Non-blocking RabbitMQ connection
+    poller.connect_rabbitmq()
+    
+    print("✅ Order Poller initialized successfully", flush=True)
+    print(f"   RabbitMQ Status: {'✅ Connected' if poller.rabbit_available else '⚠️ Offline (using outbox fallback)'}", flush=True)
+    print("✅ All services running. Press Ctrl+C to stop.", flush=True)
+    
+    # Run poller in a thread
+    poller_thread = threading.Thread(target=poller.poll, kwargs={'interval': 5})
+    poller_thread.daemon = True
+    poller_thread.start()
+    
+    # Keep main thread alive
     try:
         while True:
             time.sleep(60)
     except KeyboardInterrupt:
-        print("Service wordt afgesloten...")
+        print("\n🛑 Service shutdown requested...", flush=True)
         sys.exit(0)
 
 if __name__ == "__main__":
     main()
+
+

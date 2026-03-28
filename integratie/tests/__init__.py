@@ -1,0 +1,3 @@
+"""
+Integration service tests
+"""
