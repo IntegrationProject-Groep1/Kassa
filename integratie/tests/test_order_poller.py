@@ -24,7 +24,7 @@ def test_order_poller_initialization():
     
     assert poller.odoo_url == 'http://test:8069'
     assert poller.odoo_db == 'test_db'
-    assert poller.processed_orders == set()
+    assert len(poller.processed_orders) == 0
 
 
 def test_outbox_directory_creation():

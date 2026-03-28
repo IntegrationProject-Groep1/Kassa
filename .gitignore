@@ -60,4 +60,4 @@ docker-compose.override.yml
 .git/
 .gitattributes
 documentatie/
-README.md
+README.mdintegratie/out.txt

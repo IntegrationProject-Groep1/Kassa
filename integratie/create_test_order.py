@@ -62,7 +62,7 @@ def create_test_order():
             'amount_total': 10.00,
             'amount_paid': 10.00,  # Required: amount already paid
             'amount_return': 0.0,
-            'company_id': 1,  # Default company
+            'company_id': int(os.environ.get('ODOO_COMPANY_ID', 1)),  # Default company configurable
         }
         
         order_id = models.execute_kw(
@@ -98,7 +98,8 @@ def create_test_order():
                 'pos.order', 'action_pos_order_paid',
                 [order_id]
             )
-        except:
+        except Exception as e:
+            print(f"⚠️  'action_pos_order_paid' failed: {e}. Falling back to direct write.")
             # Fallback: write the status directly
             models.execute_kw(
                 db, uid, password,
@@ -106,13 +107,6 @@ def create_test_order():
                 [order_id],
                 {'state': 'paid'}
             )
-        
-        # Mark order as paid
-        models.execute_kw(
-            db, uid, password,
-            'pos.order', 'action_pos_order_paid',
-            [order_id]
-        )
         
         print(f"✅ Order marked as PAID!")
         print(f"\n🎉 Test order created successfully!")

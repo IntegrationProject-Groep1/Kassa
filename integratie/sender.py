@@ -97,18 +97,30 @@ def flush_buffer() -> None:
         logger.info(f"✅ Successfully flushed {len(succeeded)} buffered messages")
 
 
+_connection = None
+_channel = None
+
 def connect_to_rabbitmq():
-    """Establish connection to RabbitMQ"""
+    """Establish connection to RabbitMQ if not already connected"""
+    global _connection, _channel
+    
+    if _connection and not _connection.is_closed:
+        return _connection, _channel
+        
     credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
         host=RABBIT_HOST,
         port=RABBIT_PORT,
         virtual_host=RABBIT_VHOST,
         credentials=credentials,
-        heartbeat=600,
+        heartbeat=60,
         blocked_connection_timeout=10
     )
-    return pika.BlockingConnection(params)
+    
+    _connection = pika.BlockingConnection(params)
+    _channel = _connection.channel()
+    setup_exchange(_channel)
+    return _connection, _channel
 
 
 def setup_exchange(channel):
@@ -122,10 +134,9 @@ def setup_exchange(channel):
 
 def send_message(routing_key: str, message_xml: str) -> None:
     """Send message via kassa.exchange using routing key. Buffer on error."""
+    global _connection, _channel
     try:
-        conn = connect_to_rabbitmq()
-        channel = conn.channel()
-        setup_exchange(channel)
+        conn, channel = connect_to_rabbitmq()
         
         channel.basic_publish(
             exchange=EXCHANGE_NAME,
@@ -134,12 +145,13 @@ def send_message(routing_key: str, message_xml: str) -> None:
             properties=pika.BasicProperties(delivery_mode=2)  # Persistent
         )
         
-        conn.close()
         logger.info(f"✅ Sent: routing_key={routing_key}")
         
     except Exception as e:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(f"⚠️  Send failed ({type(e).__name__}), buffering message...")
+        _connection = None  # Force reconnect on next try
+        _channel = None
         _buffer_message(routing_key, message_xml)
 
 
@@ -320,19 +332,29 @@ def build_refund_processed_xml(
 def send_error_to_queue(
     error_code: str, related_message_id, error_description: str
 ) -> None:
-    """Send system_error message to kassa.errors queue"""
+    """Send system_error message to kassa.errors queue. Does not buffer on failure."""
     root = ET.Element("message")
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
     ET.SubElement(body, "error_description").text = error_description[:500]
-    
+
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
-    
+
     error_xml = _to_xml(root)
-    
+
     try:
-        send_message("kassa.errors", error_xml)
+        global _connection, _channel
+        conn, channel = connect_to_rabbitmq()
+
+        channel.basic_publish(
+            exchange=EXCHANGE_NAME,
+            routing_key="kassa.errors",
+            body=error_xml.encode("utf-8"),
+            properties=pika.BasicProperties(delivery_mode=2)  # Persistent
+        )
     except Exception as err:
-        logger.error(f"❌ Could not send error message: {err}")
+        logger.error(f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+        _connection = None
+        _channel = None

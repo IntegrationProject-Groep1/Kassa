@@ -1,5 +1,6 @@
 import time
 import sys
+import os
 import threading
 from order_poller import OrderPoller
 import sender
@@ -24,7 +25,7 @@ def main():
     print("✅ All services running. Press Ctrl+C to stop.", flush=True)
     
     # Run poller in a thread
-    poller_thread = threading.Thread(target=poller.poll, kwargs={'interval': 5})
+    poller_thread = threading.Thread(target=poller.poll, kwargs={'interval': int(os.environ.get("POLL_INTERVAL", 5))})
     poller_thread.daemon = True
     poller_thread.start()
     

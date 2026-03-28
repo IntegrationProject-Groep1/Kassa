@@ -4,7 +4,6 @@ RabbitMQ Diagnostic Script
 Helps troubleshoot connectivity issues to Azure RabbitMQ endpoint
 """
 import socket
-import sys
 import os
 import time
 

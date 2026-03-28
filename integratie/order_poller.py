@@ -8,6 +8,7 @@ import os
 import time
 import logging
 from pathlib import Path
+import collections
 import sender  # Import the sender module
 
 # Logging setup
@@ -27,7 +28,7 @@ class OrderPoller:
         self.odoo_pass = os.environ.get("ODOO_PASS")
         
         self.odoo_uid = None
-        self.processed_orders = set()
+        self.processed_orders = collections.OrderedDict()
         
         # Outbox folder setup
         self.outbox_dir = Path("/app/outbox")
@@ -141,12 +142,25 @@ class OrderPoller:
                     line = line_detail[0]
                     product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
                     
+                    # Fetch tax details
+                    vat_rate = 0.0
+                    tax_ids = line.get('tax_ids', [])
+                    if tax_ids:
+                        tax_details = models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'account.tax', 'read',
+                            [tax_ids, ['amount']]
+                        )
+                        if tax_details:
+                            # Use the highest tax rate or the first one
+                            vat_rate = max(t['amount'] for t in tax_details) / 100.0
+                    
                     items.append({
                         'id': str(line_id),
                         'description': product_name,
                         'quantity': int(line['qty']),
                         'unit_price': float(line['price_unit']),
-                        'vat_rate': 0.21,  # Default 21% VAT
+                        'vat_rate': float(vat_rate),
                         'currency': 'eur'
                     })
             
@@ -158,8 +172,16 @@ class OrderPoller:
                     is_company_linked = True
                     company_id = str(customer_info['id'])
                 elif customer_info.get('parent_id'):
-                    is_company_linked = True
-                    company_id = str(customer_info['parent_id'][0])
+                    # Explicitly check if the parent is a company
+                    parent_id_val = customer_info['parent_id'][0]
+                    parent_detail = models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'read',
+                        [parent_id_val, ['is_company']]
+                    )
+                    if parent_detail and parent_detail[0].get('is_company'):
+                        is_company_linked = True
+                        company_id = str(parent_id_val)
 
             # Build consumption_order XML using sender builder
             xml_message = sender.build_consumption_order_xml(
@@ -176,7 +198,11 @@ class OrderPoller:
             sender.send_typed_message('consumption_order', xml_message)
             
             # Mark as processed
-            self.processed_orders.add(order_id)
+            self.processed_orders[order_id] = True
+            # Evict oldest if we exceed 10,000 to prevent memory leaks
+            if len(self.processed_orders) > 10000:
+                self.processed_orders.popitem(last=False)
+                
             status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
             logger.info(f"📦 Order {order_id}: {status_text}")
             return True
