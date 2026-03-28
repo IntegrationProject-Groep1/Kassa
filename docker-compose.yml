@@ -22,7 +22,7 @@ services:
       - db-data:/var/lib/postgresql/data
 
   kassa-integratie:
-    build: ./integratie
+    build: .
     container_name: kassa-integratie
     environment:
       - ODOO_URL=${ODOO_URL}

@@ -2,35 +2,33 @@ name: CI/CD Pipeline
 
 on:
   push:
+    tags:
+      - 'v*' # Trigger bij een nieuwe release tag (bijv. v1.0.1)
     branches:
       - dev
-      - main
       - prod
   pull_request:
     branches:
       - dev
       - main
+      - prod
 
 jobs:
   test:
     name: Test & Lint (Python 3.12)
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Python 3.12
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        working-directory: ./integratie
-        run: pip install -r requirements.txt
-
-      - name: Install test/lint tools
-        run: pip install pytest pytest-cov flake8 mypy
+        run: pip install -r integratie/requirements-dev.txt
 
       - name: Linting (flake8)
         working-directory: ./integratie
@@ -47,26 +45,38 @@ jobs:
         run: pytest tests/ -v --cov=. --cov-report=html
         continue-on-error: true
 
-  build:
-    name: Build Docker Image
+  build-and-push:
+    name: Build and Push Docker Image
+    needs: [test]
+    # Alleen uitvoeren bij een push naar prod of een release tag — NIET bij PRs of dev
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
-    needs: test
-    
-    if: success() || failure()
-    
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      # Forceer repository naam naar lowercase voor Docker (GHCR vereist dit)
+      - name: Lowercase repo name
+        id: repo_name
+        run: |
+          echo "value=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
 
-      - name: Build Docker Image
-        uses: docker/build-push-action@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
-          push: false
-          tags: kassa-integratie:latest
-
-
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo_name.outputs.value }}:latest
+            ghcr.io/${{ steps.repo_name.outputs.value }}:${{ github.ref_name }}
