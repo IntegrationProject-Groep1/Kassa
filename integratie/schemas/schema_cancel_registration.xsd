@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- schema_cancel_registration.xsd – v2.0                          -->
+<!-- Team Kassa | Integratieproject Desideriushogeschool 2026        -->
+<!-- Flow 4: cancel_registration – deactivate customer profile       -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="message_id" type="xs:string"/>
+      <xs:element name="type"       type="xs:string" fixed="cancel_registration"/>
+      <xs:element name="source"     type="xs:string"/>
+      <xs:element name="timestamp"  type="xs:dateTime"/>
+      <xs:element name="version"    type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header" type="HeaderType"/>
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="user_id"    type="xs:string"/>
+              <xs:element name="session_id" type="xs:string" minOccurs="0"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>
