@@ -348,22 +348,22 @@ def build_refund_processed_xml(
 
 
 def send_error_to_queue(
-    error_code: str, related_message_id, error_description: str
+    error_code: str, related_message_id: str | None, error_description: str
 ) -> None:
     """Send system_error message to kassa.errors queue. Does not buffer on failure."""
     root = ET.Element("message")
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
-    ET.SubElement(body, "error_description").text = error_description[:500]
-
+    
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
+        
+    ET.SubElement(body, "description").text = error_description[:500]
 
     error_xml = _to_xml(root)
 
     try:
-        pass
         conn, channel = connect_to_rabbitmq()
 
         channel.basic_publish(
@@ -375,4 +375,3 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
-        pass

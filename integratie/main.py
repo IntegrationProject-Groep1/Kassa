@@ -1,11 +1,32 @@
-import time
-import sys
+# main.py – Kassa Integration Service entry point
+# Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
+#
+# Starts all integration components in separate daemon threads:
+#   - receiver   → listens on queue.incoming (RabbitMQ)
+#   - poller     → polls Odoo for new POS orders  (when available)
+#   - heartbeat  → sends periodic heartbeat        (when available)
+
 import os
+import sys
 import threading
+import time
 import xmlrpc.client
 import requests
-from order_poller import OrderPoller
+
+import receiver
 import sender
+from order_poller import OrderPoller
+
+
+def _run_receiver() -> None:
+    """Start the RabbitMQ receiver in a thread. Retries on connection failure."""
+    retry_delay = 5  # seconds between retries
+    while True:
+        try:
+            receiver.start_listening()
+        except Exception as exc:
+            print(f"[MAIN] Receiver crashed: {exc} – retrying in {retry_delay}s…", flush=True)
+            time.sleep(retry_delay)
 
 
 def wait_for_odoo(odoo_url, timeout=120):
@@ -173,9 +194,7 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
 
 def main():
     print("🚀 Kassa Integration Service Started", flush=True)
-    print(
-        "📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)",
-        flush=True)
+    print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
 
     odoo_url = os.environ.get("ODOO_URL")
     odoo_db = os.environ.get("ODOO_DB")
@@ -198,6 +217,15 @@ def main():
         print("❌ POS module installation failed. Exiting.", flush=True)
         sys.exit(1)
 
+    # ── Receiver thread ────────────────────────────────────────────────────────
+    receiver_thread = threading.Thread(
+        target=_run_receiver,
+        name="receiver",
+        daemon=True,
+    )
+    receiver_thread.start()
+    print("✅ Receiver thread started", flush=True)
+
     # Step 4: Initialize and start Order Poller
     print("📦 Starting Order Poller...", flush=True)
     poller = OrderPoller()
@@ -211,7 +239,6 @@ def main():
     sender.flush_buffer()
 
     print("✅ Order Poller initialized successfully", flush=True)
-    print("✅ All services running. Press Ctrl+C to stop.", flush=True)
 
     # Run poller in a thread
     poller_thread = threading.Thread(
@@ -221,13 +248,16 @@ def main():
                     "POLL_INTERVAL", 5))})
     poller_thread.daemon = True
     poller_thread.start()
+    print("✅ Poller thread started", flush=True)
+
+    print("✅ All services running. Press Ctrl+C to stop.", flush=True)
 
     # Keep main thread alive
     try:
         while True:
             time.sleep(60)
     except KeyboardInterrupt:
-        print("\n🛑 Service shutdown requested...", flush=True)
+        print("\n🛑 Service shutdown requested – stopping service.", flush=True)
         sys.exit(0)
 
 
