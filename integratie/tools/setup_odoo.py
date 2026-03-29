@@ -105,15 +105,19 @@ def main() -> None:
     # ── Authenticate ──────────────────────────────────────────────────────────
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common", allow_none=True)
     try:
-        version = common.version()["server_version"]
+        version_info = common.version()
+        if not isinstance(version_info, dict):
+            raise RuntimeError("Unexpected response from Odoo version()")
+        version = str(version_info.get("server_version", "unknown"))
     except Exception as exc:
         print(f"[SETUP] ERROR: cannot reach Odoo at {ODOO_URL} – {exc}")
         sys.exit(1)
 
-    _uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
-    if not _uid:
+    authenticated_uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    if not isinstance(authenticated_uid, int) or authenticated_uid <= 0:
         print("[SETUP] ERROR: authentication failed – check ODOO_USER / ODOO_PASS / ODOO_DB")
         sys.exit(1)
+    _uid = authenticated_uid
 
     print(f"[SETUP] Connected  (Odoo {version}, UID={_uid})")
     print()
