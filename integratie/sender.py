@@ -45,17 +45,21 @@ def _buffer_message(routing_key: str, message_xml: str) -> None:
     """Store message in local buffer when RabbitMQ is unavailable"""
     entry = {"routing_key": routing_key, "xml": message_xml}
     entries = _read_buffer()
-    
+
     if len(entries) >= BUFFER_MAX_MESSAGES:
-        logger.warning(f"⚠️  Buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}")
-        send_error_to_queue("offline_queue_full", None,
-                          f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+        logger.warning(
+            f"⚠️  Buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}")
+        send_error_to_queue(
+            "offline_queue_full",
+            None,
+            f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
         return
-    
+
     entries.append(entry)
     BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
     BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
-    logger.info(f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
+    logger.info(
+        f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
 
 def _read_buffer() -> list:
@@ -74,39 +78,46 @@ def flush_buffer() -> None:
     entries = _read_buffer()
     if not entries:
         return
-    
+
     logger.info(f"🔄 Flushing {len(entries)} buffered messages...")
     succeeded = []
-    
+
     for entry in entries:
         try:
             send_message(entry["routing_key"], entry["xml"])
             succeeded.append(entry)
         except Exception as e:
-            logger.warning(f"⚠️  Buffer resend failed for {entry.get('routing_key', '?')}: {e}")
+            logger.warning(
+                f"⚠️  Buffer resend failed for {entry.get('routing_key', '?')}: {e}")
             break  # Stop on first error, retry later
-    
+
     remaining = [e for e in entries if e not in succeeded]
-    
+
     if remaining:
-        BUFFER_FILE.write_text(json.dumps(remaining, ensure_ascii=False, indent=2))
+        BUFFER_FILE.write_text(
+            json.dumps(
+                remaining,
+                ensure_ascii=False,
+                indent=2))
     else:
         BUFFER_FILE.unlink(missing_ok=True)
-    
+
     if succeeded:
-        logger.info(f"✅ Successfully flushed {len(succeeded)} buffered messages")
+        logger.info(
+            f"✅ Successfully flushed {len(succeeded)} buffered messages")
 
 
 _connection = None
 _channel = None
 
+
 def connect_to_rabbitmq():
     """Establish connection to RabbitMQ if not already connected"""
     global _connection, _channel
-    
+
     if _connection and not _connection.is_closed:
         return _connection, _channel
-        
+
     credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
         host=RABBIT_HOST,
@@ -116,7 +127,7 @@ def connect_to_rabbitmq():
         heartbeat=60,
         blocked_connection_timeout=10
     )
-    
+
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
     setup_exchange(_channel)
@@ -137,19 +148,20 @@ def send_message(routing_key: str, message_xml: str) -> None:
     global _connection, _channel
     try:
         conn, channel = connect_to_rabbitmq()
-        
+
         channel.basic_publish(
             exchange=EXCHANGE_NAME,
             routing_key=routing_key,
             body=message_xml.encode("utf-8"),
             properties=pika.BasicProperties(delivery_mode=2)  # Persistent
         )
-        
+
         logger.info(f"✅ Sent: routing_key={routing_key}")
-        
+
     except Exception as e:
         # Buffer on any error (connection refused, timeout, etc.)
-        logger.warning(f"⚠️  Send failed ({type(e).__name__}), buffering message...")
+        logger.warning(
+            f"⚠️  Send failed ({type(e).__name__}), buffering message...")
         _connection = None  # Force reconnect on next try
         _channel = None
         _buffer_message(routing_key, message_xml)
@@ -181,7 +193,10 @@ def _make_header(root, msg_type, correlation_id=None):
 
 def _to_xml(root) -> str:
     """Convert XML element tree to string"""
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+    return ET.tostring(
+        root,
+        encoding="utf-8",
+        xml_declaration=True).decode("utf-8")
 
 
 # ============================================================================
@@ -198,12 +213,13 @@ def build_consumption_order_xml(
     _make_header(root, "consumption_order")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
-    
+
     if not is_anonymous:
         cust = ET.SubElement(body, "customer")
         ET.SubElement(cust, "id").text = str(customer_id)
         ET.SubElement(cust, "user_id").text = str(user_id) if user_id else ""
-        ET.SubElement(cust, "is_company_linked").text = str(is_company_linked).lower()
+        ET.SubElement(cust, "is_company_linked").text = str(
+            is_company_linked).lower()
         if company_id:
             ET.SubElement(cust, "company_id").text = str(company_id)
         ET.SubElement(cust, "email").text = str(email) if email else ""
@@ -211,7 +227,7 @@ def build_consumption_order_xml(
             addr = ET.SubElement(cust, "address")
             for k, v in address.items():
                 ET.SubElement(addr, k).text = str(v) if v else ""
-    
+
     items_el = ET.SubElement(body, "items")
     for i in (items or []):
         el = ET.SubElement(items_el, "item")
@@ -224,7 +240,7 @@ def build_consumption_order_xml(
         ET.SubElement(el, "vat_rate").text = str(i["vat_rate"])
         if i.get("item_type"):
             ET.SubElement(el, "item_type").text = i["item_type"]
-    
+
     return _to_xml(root)
 
 
@@ -238,24 +254,24 @@ def build_payment_registered_xml(
     _make_header(root, "payment_registered", correlation_id)
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "payment_context").text = payment_context
-    
+
     if user_id:
         ET.SubElement(body, "user_id").text = user_id
-    
+
     inv = ET.SubElement(body, "invoice")
     if invoice_id:
         ET.SubElement(inv, "id").text = invoice_id
     ET.SubElement(inv, "status").text = invoice_status
-    
+
     ap = ET.SubElement(inv, "amount_paid")
     ap.text = str(amount_paid)
     ap.set("currency", "eur")
     ET.SubElement(inv, "due_date").text = due_date
-    
+
     trx = ET.SubElement(body, "transaction")
     ET.SubElement(trx, "id").text = trx_id
     ET.SubElement(trx, "payment_method").text = payment_method
-    
+
     return _to_xml(root)
 
 
@@ -267,18 +283,18 @@ def build_invoice_request_xml(
     _make_header(root, "invoice_request", correlation_id)
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = user_id
-    
+
     inv = ET.SubElement(body, "invoice_data")
     ET.SubElement(inv, "name").text = invoice_data["name"]
     ET.SubElement(inv, "email").text = invoice_data["email"]
-    
+
     addr = ET.SubElement(inv, "address")
     for k, v in invoice_data["address"].items():
         ET.SubElement(addr, k).text = v
-    
+
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
-    
+
     return _to_xml(root)
 
 
@@ -305,27 +321,29 @@ def build_refund_processed_xml(
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "refund_type").text = refund_type
-    
+
     if user_id:
         ET.SubElement(body, "user_id").text = user_id
-    
+
     refund = ET.SubElement(body, "refund")
     amt = ET.SubElement(refund, "amount")
     amt.text = str(refund_amount)
     amt.set("currency", "eur")
     ET.SubElement(refund, "method").text = refund_method
     ET.SubElement(refund, "reason").text = refund_reason
-    
+
     if description:
         ET.SubElement(refund, "description").text = description
-    
-    ET.SubElement(body, "original_transaction_id").text = original_transaction_id
-    
+
+    ET.SubElement(
+        body,
+        "original_transaction_id").text = original_transaction_id
+
     if new_wallet_balance is not None:
         wb = ET.SubElement(body, "new_wallet_balance")
         wb.text = f"{new_wallet_balance:.2f}"
         wb.set("currency", "eur")
-    
+
     return _to_xml(root)
 
 
@@ -345,7 +363,7 @@ def send_error_to_queue(
     error_xml = _to_xml(root)
 
     try:
-        global _connection, _channel
+        pass
         conn, channel = connect_to_rabbitmq()
 
         channel.basic_publish(
@@ -355,6 +373,6 @@ def send_error_to_queue(
             properties=pika.BasicProperties(delivery_mode=2)  # Persistent
         )
     except Exception as err:
-        logger.error(f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
-        _connection = None
-        _channel = None
+        logger.error(
+            f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+        pass

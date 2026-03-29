@@ -1,9 +1,8 @@
 """
 Test suite for Order Poller module
 """
-import pytest
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 
 def test_order_poller_initialization():
@@ -17,11 +16,11 @@ def test_order_poller_initialization():
     os.environ['RABBIT_USER'] = 'guest'
     os.environ['RABBIT_PASS'] = 'guest'
     os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
-    
+
     from order_poller import OrderPoller
-    
+
     poller = OrderPoller()
-    
+
     assert poller.odoo_url == 'http://test:8069'
     assert poller.odoo_db == 'test_db'
     assert len(poller.processed_orders) == 0
@@ -37,12 +36,11 @@ def test_outbox_directory_creation():
     os.environ['RABBIT_USER'] = 'guest'
     os.environ['RABBIT_PASS'] = 'guest'
     os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
-    
+
     from order_poller import OrderPoller
-    from pathlib import Path
-    
+
     poller = OrderPoller()
-    
+
     assert poller.outbox_dir.exists()
     assert poller.outbox_dir.is_dir()
 
@@ -58,17 +56,17 @@ def test_connect_odoo_success(mock_server_proxy):
     os.environ['RABBIT_USER'] = 'guest'
     os.environ['RABBIT_PASS'] = 'guest'
     os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
-    
+
     from order_poller import OrderPoller
-    
+
     # Mock successful authentication
     mock_common = MagicMock()
     mock_common.authenticate.return_value = 1  # uid = 1
     mock_server_proxy.return_value = mock_common
-    
+
     poller = OrderPoller()
     result = poller.connect_odoo()
-    
+
     assert result is True
     assert poller.odoo_uid == 1
 
@@ -84,13 +82,13 @@ def test_connect_odoo_failure(mock_server_proxy):
     os.environ['RABBIT_USER'] = 'guest'
     os.environ['RABBIT_PASS'] = 'guest'
     os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
-    
+
     from order_poller import OrderPoller
-    
+
     # Mock connection error
     mock_server_proxy.side_effect = Exception('Connection refused')
-    
+
     poller = OrderPoller()
     result = poller.connect_odoo()
-    
+
     assert result is False

@@ -24,13 +24,13 @@ try:
         connection_attempts=1,
         retry_delay=0,
     )
-    
+
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
-    
+
     print("\n✅ CONNECTION SUCCESSFUL!")
     print(f"   Channel created: {channel}")
-    
+
     # Verify exchange exists or create it
     try:
         channel.exchange_declare(
@@ -39,12 +39,12 @@ try:
             passive=True  # Just check if exists
         )
         print("   ✅ Exchange 'kassa.exchange' exists")
-    except:
+    except BaseException:
         print("   ⚠️  Exchange needs to be created")
-    
+
     connection.close()
     print("\n🎉 RabbitMQ is working and accessible!")
-    
+
 except Exception as e:
     print(f"\n❌ Connection failed: {e}")
     print(f"\n   Error type: {type(e).__name__}")

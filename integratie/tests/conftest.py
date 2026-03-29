@@ -19,13 +19,13 @@ def cleanup_env():
         'POLL_INTERVAL', 'BADGE_PAYMENT_METHOD_NAME',
         'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB'
     ]
-    
+
     original_values = {}
     for var in env_vars:
         original_values[var] = os.environ.get(var)
-    
+
     yield
-    
+
     # Restore original values
     for var, value in original_values.items():
         if value is None:

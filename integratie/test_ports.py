@@ -2,7 +2,6 @@
 """Test multiple AMQP port configurations"""
 import pika
 import socket
-import time
 import os
 
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
@@ -35,7 +34,8 @@ for port, use_tls, description in ports_to_try:
     except ConnectionRefusedError:
         print(f"   ❌ Port {port:5d} ({description:30s}) — REFUSED")
     except Exception as e:
-        print(f"   ❌ Port {port:5d} ({description:30s}) — ERROR: {type(e).__name__}")
+        print(f"   ❌ Port {port:5d} ({description:30s}) — ERROR: "
+              f"{type(e).__name__}")
 
 # Now try AMQP connections
 print("\n\n📡 PIKA CONNECTION TESTS:")
@@ -52,7 +52,7 @@ for port, use_tls, description in ports_to_try[:2]:  # Only AMQP-capable ports
             retry_delay=0,
             ssl_options=pika.SSLOptions(None) if use_tls else None
         )
-        
+
         connection = pika.BlockingConnection(params)
         print(f"   ✅ SUCCESS on port {port}!")
         connection.close()

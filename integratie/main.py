@@ -33,27 +33,32 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass):
 
     # First check if we can already authenticate (DB exists)
     try:
-        common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+        common = xmlrpc.client.ServerProxy(
+            f'{odoo_url}/xmlrpc/2/common', allow_none=True)
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if uid:
-            print(f"✅ Database '{odoo_db}' already exists and is accessible", flush=True)
+            print(
+                f"✅ Database '{odoo_db}' already exists and is accessible",
+                flush=True)
             return True
     except Exception:
         pass  # DB doesn't exist yet — proceed to create it
 
-    print(f"📦 Database '{odoo_db}' not found — creating it automatically...", flush=True)
+    print(
+        f"📦 Database '{odoo_db}' not found — creating it automatically...",
+        flush=True)
 
     try:
         resp = requests.post(
             f'{odoo_url}/web/database/create',
             data={
                 'master_pwd': ODOO_MASTER_PASS,
-                'name':       odoo_db,
-                'login':      odoo_user,
-                'password':   odoo_pass,
-                'lang':       'en_US',
+                'name': odoo_db,
+                'login': odoo_user,
+                'password': odoo_pass,
+                'lang': 'en_US',
                 'country_code': 'be',
-                'phone':      '',
+                'phone': '',
             },
             timeout=120,
             allow_redirects=True
@@ -65,7 +70,9 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass):
             time.sleep(5)
             return True
         else:
-            print(f"⚠️  Database creation returned status {resp.status_code}", flush=True)
+            print(
+                f"⚠️  Database creation returned status {resp.status_code}",
+                flush=True)
             return False
 
     except Exception as e:
@@ -81,13 +88,15 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
     print("🔍 Checking if Point of Sale module is installed...", flush=True)
 
     try:
-        common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+        common = xmlrpc.client.ServerProxy(
+            f'{odoo_url}/xmlrpc/2/common', allow_none=True)
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if not uid:
             print("❌ Cannot check modules — Odoo auth failed", flush=True)
             return False
 
-        models = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/object', allow_none=True)
+        models = xmlrpc.client.ServerProxy(
+            f'{odoo_url}/xmlrpc/2/object', allow_none=True)
 
         # Find the point_of_sale module record
         module_ids = models.execute_kw(
@@ -112,7 +121,9 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
             print("✅ Point of Sale module already installed", flush=True)
             return True
 
-        print(f"📦 Point of Sale module state: {state} — installing now...", flush=True)
+        print(
+            f"📦 Point of Sale module state: {state} — installing now...",
+            flush=True)
 
         # Trigger installation
         models.execute_kw(
@@ -130,9 +141,13 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
                 [module_ids, ['state']]
             )
             new_state = module_info[0]['state']
-            print(f"   ⏳ Installing... ({(attempt + 1) * 5}s) state={new_state}", flush=True)
+            print(
+                f"   ⏳ Installing... ({(attempt + 1) * 5}s) state={new_state}",
+                flush=True)
             if new_state == 'installed':
-                print("✅ Point of Sale module installed successfully!", flush=True)
+                print(
+                    "✅ Point of Sale module installed successfully!",
+                    flush=True)
                 return True
 
         print("⚠️  POS install timed out — continuing anyway", flush=True)
@@ -145,10 +160,12 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
 
 def main():
     print("🚀 Kassa Integration Service Started", flush=True)
-    print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
+    print(
+        "📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)",
+        flush=True)
 
-    odoo_url  = os.environ.get("ODOO_URL")
-    odoo_db   = os.environ.get("ODOO_DB")
+    odoo_url = os.environ.get("ODOO_URL")
+    odoo_db = os.environ.get("ODOO_DB")
     odoo_user = os.environ.get("ODOO_USER")
     odoo_pass = os.environ.get("ODOO_PASS")
 
@@ -177,7 +194,11 @@ def main():
     print("✅ All services running. Press Ctrl+C to stop.", flush=True)
 
     # Run poller in a thread
-    poller_thread = threading.Thread(target=poller.poll, kwargs={'interval': int(os.environ.get("POLL_INTERVAL", 5))})
+    poller_thread = threading.Thread(
+        target=poller.poll, kwargs={
+            'interval': int(
+                os.environ.get(
+                    "POLL_INTERVAL", 5))})
     poller_thread.daemon = True
     poller_thread.start()
 
