@@ -19,13 +19,16 @@ import uuid
 import pika
 from datetime import datetime, timezone
 
+from config_utils import parse_rabbit_port
+
+
 # ── RabbitMQ connection (local or via .env) ────────────────────────────────────
-RABBIT_HOST  = os.environ.get("RABBIT_HOST", "localhost")
-RABBIT_PORT  = int(os.environ.get("RABBIT_PORT", 5672))
+RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_USER  = os.environ.get("RABBIT_USER", "guest")
-RABBIT_PASS  = os.environ.get("RABBIT_PASS", "guest")
-QUEUE_NAME   = "queue.incoming"
+RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
+RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
+QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
 
 def now_utc() -> str:
@@ -35,9 +38,14 @@ def now_utc() -> str:
 def send(xml_text: str, label: str) -> None:
     try:
         credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-        params      = pika.ConnectionParameters(host=RABBIT_HOST, port=RABBIT_PORT, virtual_host=RABBIT_VHOST, credentials=credentials)
-        conn        = pika.BlockingConnection(params)
-        channel     = conn.channel()
+        params = pika.ConnectionParameters(
+            host=RABBIT_HOST,
+            port=RABBIT_PORT,
+            virtual_host=RABBIT_VHOST,
+            credentials=credentials,
+        )
+        conn = pika.BlockingConnection(params)
+        channel = conn.channel()
         channel.queue_declare(queue=QUEUE_NAME, durable=True)
         channel.basic_publish(
             exchange="",
@@ -50,8 +58,8 @@ def send(xml_text: str, label: str) -> None:
         print(f"[TEST_SENDER]   To queue: {QUEUE_NAME} on {RABBIT_HOST}")
     except Exception as e:
         print(f"[TEST_SENDER] ✗ Error sending '{label}': {e}")
-        print("[TEST_SENDER]   Tip: make sure RabbitMQ is running on port 5672")
-        print("[TEST_SENDER]   docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3")
+        print(f"[TEST_SENDER]   Tip: make sure RabbitMQ is reachable on {RABBIT_HOST}:{RABBIT_PORT}")
+        print(f"[TEST_SENDER]   Current vhost: {RABBIT_VHOST}")
 
 
 # ── XML builders for all 4 message types ──────────────────────────────────────
@@ -135,7 +143,7 @@ def build_profile_update() -> str:
 
 def build_badge_scanned(known: bool = True) -> str:
     msg_id = str(uuid.uuid4())
-    badge  = "BADGE-RF-00142" if known else "BADGE-RF-99999"
+    badge = "BADGE-RF-00142" if known else "BADGE-RF-99999"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
@@ -201,20 +209,20 @@ if __name__ == "__main__":
 
     if arg in ("new_registration", "all"):
         send(build_new_registration(company=False), "new_registration (private)")
-        send(build_new_registration(company=True),  "new_registration (company)")
+        send(build_new_registration(company=True), "new_registration (company)")
 
     if arg in ("profile_update", "all"):
         send(build_profile_update(), "profile_update")
 
     if arg in ("badge_scanned", "all"):
-        send(build_badge_scanned(known=True),  "badge_scanned (known badge)")
+        send(build_badge_scanned(known=True), "badge_scanned (known badge)")
         send(build_badge_scanned(known=False), "badge_scanned (unknown badge – sad path)")
 
     if arg in ("cancel_registration", "all"):
         send(build_cancel_registration(), "cancel_registration")
 
     if arg in ("sad_paths", "all"):
-        send(build_invalid_xml(),  "invalid XML (sad path)")
+        send(build_invalid_xml(), "invalid XML (sad path)")
         send(build_unknown_type(), "unknown message type (sad path)")
 
-    print(f"\n[TEST_SENDER] Done. Check the logs of receiver.py.")
+    print("\n[TEST_SENDER] Done. Check the logs of receiver.py.")

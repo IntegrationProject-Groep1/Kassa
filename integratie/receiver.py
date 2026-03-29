@@ -17,30 +17,32 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
 
+from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
 
+
 # ── Environment ────────────────────────────────────────────────────────────────
-RABBIT_HOST  = os.environ.get("RABBIT_HOST")
-RABBIT_PORT  = int(os.environ.get("RABBIT_PORT", 5672))
+RABBIT_HOST = os.environ.get("RABBIT_HOST")
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_USER  = os.environ.get("RABBIT_USER")
-RABBIT_PASS  = os.environ.get("RABBIT_PASS")
+RABBIT_USER = os.environ.get("RABBIT_USER")
+RABBIT_PASS = os.environ.get("RABBIT_PASS")
 
-ODOO_URL   = os.environ.get("ODOO_URL", "http://odoo:8069")
-ODOO_DB    = os.environ.get("ODOO_DB",  "odoo_kassa")
-ODOO_USER  = os.environ.get("ODOO_USER")
-ODOO_PASS  = os.environ.get("ODOO_PASS")
+ODOO_URL = os.environ.get("ODOO_URL")
+ODOO_DB = os.environ.get("ODOO_DB")
+ODOO_USER = os.environ.get("ODOO_USER")
+ODOO_PASS = os.environ.get("ODOO_PASS")
 
-QUEUE_NAME = "queue.incoming"
+QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 # Paths to XSD files in the container (/app/schemas/)
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration":    os.path.join(SCHEMA_DIR, "schema_nieuwe_inschrijving.xsd"),
-    "profile_update":      os.path.join(SCHEMA_DIR, "schema_profiel_update.xsd"),
-    "badge_scanned":       os.path.join(SCHEMA_DIR, "schema_scan_badge.xsd"),
+    "new_registration": os.path.join(SCHEMA_DIR, "schema_nieuwe_inschrijving.xsd"),
+    "profile_update": os.path.join(SCHEMA_DIR, "schema_profiel_update.xsd"),
+    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_scan_badge.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
 }
 
@@ -69,13 +71,16 @@ def get_odoo_connection():
     Connect to Odoo via XML-RPC.
     Returns (uid, models).
     """
-    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-    uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    required = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
+    common = xmlrpc.client.ServerProxy(f"{required['ODOO_URL']}/xmlrpc/2/common")
+    uid = common.authenticate(
+        required["ODOO_DB"], required["ODOO_USER"], required["ODOO_PASS"], {}
+    )
     if not uid:
         raise ConnectionError(
-            f"Odoo authentication failed. Check ODOO_USER/ODOO_PASS and database '{ODOO_DB}'."
+            "Odoo authentication failed. Check ODOO_USER/ODOO_PASS and ODOO_DB."
         )
-    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    models = xmlrpc.client.ServerProxy(f"{required['ODOO_URL']}/xmlrpc/2/object")
     return uid, models
 
 
@@ -91,11 +96,11 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         return
 
     schema_doc = etree.parse(schema_path)
-    schema     = etree.XMLSchema(schema_doc)
-    xml_doc    = etree.fromstring(xml_text.encode("utf-8"))
+    schema = etree.XMLSchema(schema_doc)
+    xml_doc = etree.fromstring(xml_text.encode("utf-8"))
 
     if not schema.validate(xml_doc):
-        errors = "\n".join(str(e) for e in schema.error_log)
+        errors = str(schema.error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
     print(f"[VALIDATION] ✓ XSD validation passed for type '{msg_type}'")
@@ -109,21 +114,35 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     Create customer in Odoo, or update if already exists via x_user_id.
     Also stores outstanding registration amount as payment_due.
     """
-    body     = root.find("body")
-    customer = body.find("customer")
+    body = root.find("body")
+    if body is None:
+        raise ValueError("new_registration: <body> missing")
 
-    user_id      = customer.findtext("user_id", "").strip()
-    email        = customer.findtext("email", "").strip()
-    name         = customer.findtext("name", "").strip()
+    customer = body.find("customer")
+    if customer is None:
+        raise ValueError("new_registration: <customer> missing in <body>")
+
+    user_id = customer.findtext("user_id", "").strip()
+    email = customer.findtext("email", "").strip()
+
+    contact = customer.find("contact")
+    first_name = contact.findtext("first_name", "").strip() if contact is not None else ""
+    last_name = contact.findtext("last_name", "").strip() if contact is not None else ""
+    contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    name = customer.findtext("name", "").strip() or contact_name
+
     company_name = customer.findtext("company_name", "").strip()
-    ctype        = customer.findtext("type", "private").strip().lower()
-    vat_number   = customer.findtext("vat_number", "").strip()
-    age_text     = customer.findtext("age", "0").strip()
-    age          = int(age_text) if age_text.isdigit() else 0
+    ctype = customer.findtext("type", "private").strip().lower()
+    vat_number = customer.findtext("vat_number", "").strip()
+    age_text = customer.findtext("age", "0").strip()
+    age = int(age_text) if age_text.isdigit() else 0
 
     payment_due_el = body.find("payment_due")
-    amount         = float(payment_due_el.findtext("amount", "0"))
-    status         = payment_due_el.findtext("status", "unpaid").strip()
+    if payment_due_el is None:
+        raise ValueError("new_registration: <payment_due> missing in <body>")
+
+    amount = float(payment_due_el.findtext("amount", "0"))
+    status = payment_due_el.findtext("status", "unpaid").strip()
 
     if not user_id:
         raise ValueError("new_registration: user_id missing in <customer>")
@@ -136,11 +155,11 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     )
 
     partner_vals = {
-        "name":       name or company_name or "Unknown",
-        "email":      email,
-        "x_user_id":  user_id,
+        "name": name or company_name or "Unknown",
+        "email": email,
+        "x_user_id": user_id,
         "is_company": ctype == "company",
-        "x_age":      age,
+        "x_age": age,
     }
     if vat_number:
         partner_vals["vat"] = vat_number
@@ -171,15 +190,23 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     Defensive: creates customer if not found.
     """
     body = root.find("body")
+    if body is None:
+        raise ValueError("profile_update: <body> missing")
 
-    user_id      = body.findtext("user_id", "").strip()
-    email        = body.findtext("email", "").strip()
-    name         = body.findtext("name", "").strip()
+    user_id = body.findtext("user_id", "").strip()
+    email = body.findtext("email", "").strip()
+
+    contact = body.find("contact")
+    first_name = contact.findtext("first_name", "").strip() if contact is not None else ""
+    last_name = contact.findtext("last_name", "").strip() if contact is not None else ""
+    contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    name = body.findtext("name", "").strip() or contact_name
+
     company_name = body.findtext("company_name", "").strip()
-    ctype        = body.findtext("type", "private").strip().lower()
-    vat_number   = body.findtext("vat_number", "").strip()
-    age_text     = body.findtext("age", "0").strip()
-    age          = int(age_text) if age_text.isdigit() else 0
+    ctype = body.findtext("type", "private").strip().lower()
+    vat_number = body.findtext("vat_number", "").strip()
+    age_text = body.findtext("age", "0").strip()
+    age = int(age_text) if age_text.isdigit() else 0
 
     if not user_id:
         raise ValueError("profile_update: user_id missing in <body>")
@@ -192,9 +219,9 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     )
 
     update_vals = {
-        "email":      email,
+        "email": email,
         "is_company": ctype == "company",
-        "x_age":      age,
+        "x_age": age,
     }
     if name:
         update_vals["name"] = name
@@ -228,7 +255,10 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
     If not found: send system_error (badge_not_found).
     Cashier then decides: anonymous sale (Flow 11) or redirect to registration desk.
     """
-    body     = root.find("body")
+    body = root.find("body")
+    if body is None:
+        raise ValueError("badge_scanned: <body> missing")
+
     badge_id = body.findtext("badge_id", "").strip()
     location = body.findtext("location", "unknown").strip()
 
@@ -266,8 +296,11 @@ def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
     Flow 4 – cancel_registration
     Deactivate customer profile in Odoo based on x_user_id.
     """
-    body       = root.find("body")
-    user_id    = body.findtext("user_id", "").strip()
+    body = root.find("body")
+    if body is None:
+        raise ValueError("cancel_registration: <body> missing")
+
+    user_id = body.findtext("user_id", "").strip()
     session_id = body.findtext("session_id", "").strip()
 
     if not user_id:
@@ -306,7 +339,7 @@ def process_message(ch, method, properties, body):
     Step 4: Business logic per message type
     Step 5: ACK on success, NACK on validation error
     """
-    xml_text           = body.decode("utf-8")
+    xml_text = body.decode("utf-8")
     related_message_id = None
 
     try:
@@ -319,9 +352,9 @@ def process_message(ch, method, properties, body):
             return
 
         # ── Step 2: Read header ────────────────────────────────────────────
-        header             = root.find("header")
+        header = root.find("header")
         related_message_id = header.findtext("message_id") if header is not None else None
-        msg_type           = header.findtext("type") if header is not None else None
+        msg_type = header.findtext("type") if header is not None else None
 
         if not msg_type:
             send_error_to_queue(
@@ -387,7 +420,12 @@ def process_message(ch, method, properties, body):
 
 def connect_to_rabbitmq():
     credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    params      = pika.ConnectionParameters(host=RABBIT_HOST, port=RABBIT_PORT, virtual_host=RABBIT_VHOST, credentials=credentials)
+    params = pika.ConnectionParameters(
+        host=RABBIT_HOST,
+        port=RABBIT_PORT,
+        virtual_host=RABBIT_VHOST,
+        credentials=credentials,
+    )
     return pika.BlockingConnection(params)
 
 
@@ -397,7 +435,7 @@ def start_listening():
     Re-publishes buffered messages on connect (flush_buffer).
     Listens on queue.incoming with prefetch_count=1 for fair dispatch.
     """
-    conn    = connect_to_rabbitmq()
+    conn = connect_to_rabbitmq()
     channel = conn.channel()
 
     channel.queue_declare(queue=QUEUE_NAME, durable=True)

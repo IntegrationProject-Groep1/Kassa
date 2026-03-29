@@ -6,7 +6,7 @@
 # detected and skipped.
 #
 # Usage (from project root):
-#   python integratie/setup_odoo.py
+#   python integratie/tools/setup_odoo.py
 #
 # Credentials are loaded from the .env file in the project root.
 # Any variable already set in the environment takes priority over .env.
@@ -27,12 +27,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# ── Load .env (project root is one level above this file) ─────────────────────
-_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+# ── Load .env (project root is two levels above this file) ─────────────────────
+_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(dotenv_path=_ENV_PATH, override=False)  # env vars already set take priority
 
-ODOO_URL  = os.environ.get("ODOO_URL",  "http://localhost:8069")
-ODOO_DB   = os.environ.get("ODOO_DB",   "odoo_kassa")
+ODOO_URL = os.environ.get("ODOO_URL", "http://localhost:8069")
+ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
 ODOO_USER = os.environ.get("ODOO_USER", "odoo")
 ODOO_PASS = os.environ.get("ODOO_PASS", "myodoo")
 
@@ -45,7 +45,7 @@ FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
         "x_age":            {"ttype": "integer", "string": "Age"},
     },
     "pos.order": {
-        "x_rabbitmq_sent":  {"ttype": "boolean", "string": "Sent to RabbitMQ"},
+        "x_rabbitmq_sent": {"ttype": "boolean", "string": "Sent to RabbitMQ"},
     },
 }
 
@@ -105,15 +105,19 @@ def main() -> None:
     # ── Authenticate ──────────────────────────────────────────────────────────
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common", allow_none=True)
     try:
-        version = common.version()["server_version"]
+        version_info = common.version()
+        if not isinstance(version_info, dict):
+            raise RuntimeError("Unexpected response from Odoo version()")
+        version = str(version_info.get("server_version", "unknown"))
     except Exception as exc:
         print(f"[SETUP] ERROR: cannot reach Odoo at {ODOO_URL} – {exc}")
         sys.exit(1)
 
-    _uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
-    if not _uid:
+    authenticated_uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    if not isinstance(authenticated_uid, int) or authenticated_uid <= 0:
         print("[SETUP] ERROR: authentication failed – check ODOO_USER / ODOO_PASS / ODOO_DB")
         sys.exit(1)
+    _uid = authenticated_uid
 
     print(f"[SETUP] Connected  (Odoo {version}, UID={_uid})")
     print()
