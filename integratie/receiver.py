@@ -17,20 +17,13 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
 
+from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
-
-
-def _parse_rabbit_port() -> int:
-    value = os.environ.get("RABBIT_PORT")
-    try:
-        return int(value) if value else 5672
-    except ValueError:
-        return 5672
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
-RABBIT_PORT = _parse_rabbit_port()
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
@@ -78,13 +71,16 @@ def get_odoo_connection():
     Connect to Odoo via XML-RPC.
     Returns (uid, models).
     """
-    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    required = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
+    common = xmlrpc.client.ServerProxy(f"{required['ODOO_URL']}/xmlrpc/2/common")
+    uid = common.authenticate(
+        required["ODOO_DB"], required["ODOO_USER"], required["ODOO_PASS"], {}
+    )
     if not uid:
         raise ConnectionError(
-            f"Odoo authentication failed. Check ODOO_USER/ODOO_PASS and database '{ODOO_DB}'."
+            "Odoo authentication failed. Check ODOO_USER/ODOO_PASS and ODOO_DB."
         )
-    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    models = xmlrpc.client.ServerProxy(f"{required['ODOO_URL']}/xmlrpc/2/object")
     return uid, models
 
 
@@ -128,7 +124,13 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
 
     user_id = customer.findtext("user_id", "").strip()
     email = customer.findtext("email", "").strip()
-    name = customer.findtext("name", "").strip()
+
+    contact = customer.find("contact")
+    first_name = contact.findtext("first_name", "").strip() if contact is not None else ""
+    last_name = contact.findtext("last_name", "").strip() if contact is not None else ""
+    contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    name = customer.findtext("name", "").strip() or contact_name
+
     company_name = customer.findtext("company_name", "").strip()
     ctype = customer.findtext("type", "private").strip().lower()
     vat_number = customer.findtext("vat_number", "").strip()
@@ -193,7 +195,13 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
 
     user_id = body.findtext("user_id", "").strip()
     email = body.findtext("email", "").strip()
-    name = body.findtext("name", "").strip()
+
+    contact = body.find("contact")
+    first_name = contact.findtext("first_name", "").strip() if contact is not None else ""
+    last_name = contact.findtext("last_name", "").strip() if contact is not None else ""
+    contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    name = body.findtext("name", "").strip() or contact_name
+
     company_name = body.findtext("company_name", "").strip()
     ctype = body.findtext("type", "private").strip().lower()
     vat_number = body.findtext("vat_number", "").strip()
