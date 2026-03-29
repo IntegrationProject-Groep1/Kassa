@@ -56,9 +56,15 @@ ROUTING_KEYS = {
 
 # Optional queue topology auto-setup (useful when CRM consumers are not online yet)
 OUTBOUND_QUEUE_BINDINGS = {
-    "kassa.payments.consumption": os.environ.get("RABBIT_QUEUE_PAYMENTS_CONSUMPTION", "kassa.out.payments.consumption"),
-    "kassa.payments.registration": os.environ.get("RABBIT_QUEUE_PAYMENTS_REGISTRATION", "kassa.out.payments.registration"),
-    "kassa.payments.refund": os.environ.get("RABBIT_QUEUE_PAYMENTS_REFUND", "kassa.out.payments.refund"),
+    "kassa.payments.consumption": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_CONSUMPTION", "kassa.out.payments.consumption"
+    ),
+    "kassa.payments.registration": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_REGISTRATION", "kassa.out.payments.registration"
+    ),
+    "kassa.payments.refund": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_REFUND", "kassa.out.payments.refund"
+    ),
     "kassa.payments.badge": os.environ.get("RABBIT_QUEUE_PAYMENTS_BADGE", "kassa.out.payments.badge"),
     "kassa.payments.invoice": os.environ.get("RABBIT_QUEUE_PAYMENTS_INVOICE", "kassa.out.payments.invoice"),
     "kassa.frontend.payment": os.environ.get("RABBIT_QUEUE_FRONTEND_PAYMENT", "kassa.out.frontend.payment"),
