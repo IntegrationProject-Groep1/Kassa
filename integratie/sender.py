@@ -37,7 +37,7 @@ ROUTING_KEYS = {
 }
 
 # Buffer configuration
-BUFFER_FILE = Path("/app/outbox/outbox.json")
+BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
 

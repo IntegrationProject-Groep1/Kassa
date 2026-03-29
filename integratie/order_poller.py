@@ -31,8 +31,8 @@ class OrderPoller:
         self.processed_orders = collections.OrderedDict()
 
         # Outbox folder setup
-        self.outbox_dir = Path("/app/outbox")
-        self.outbox_dir.mkdir(exist_ok=True)
+        self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
+        self.outbox_dir.mkdir(parents=True, exist_ok=True)
 
     def connect_odoo(self):
         """Authenticate with Odoo"""
