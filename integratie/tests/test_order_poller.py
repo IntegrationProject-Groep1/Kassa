@@ -2,12 +2,13 @@
 Test suite for Order Poller module
 """
 import os
+import pytest
 from unittest.mock import patch, MagicMock
 
 
-def test_order_poller_initialization():
-    """Test that OrderPoller initializes with environment variables"""
-    # Set minimal environment variables
+@pytest.fixture(autouse=True)
+def setup_env():
+    """Mock environment variables for all Order Poller tests"""
     os.environ['ODOO_URL'] = 'http://test:8069'
     os.environ['ODOO_DB'] = 'test_db'
     os.environ['ODOO_USER'] = 'test_user'
@@ -16,6 +17,10 @@ def test_order_poller_initialization():
     os.environ['RABBIT_USER'] = 'guest'
     os.environ['RABBIT_PASS'] = 'guest'
     os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
+
+
+def test_order_poller_initialization():
+    """Test that OrderPoller initializes with environment variables"""
 
     from order_poller import OrderPoller
 
@@ -28,14 +33,6 @@ def test_order_poller_initialization():
 
 def test_outbox_directory_creation():
     """Test that outbox directory is created on initialization"""
-    os.environ['ODOO_URL'] = 'http://test:8069'
-    os.environ['ODOO_DB'] = 'test_db'
-    os.environ['ODOO_USER'] = 'test_user'
-    os.environ['ODOO_PASS'] = 'test_pass'
-    os.environ['RABBIT_HOST'] = 'localhost'
-    os.environ['RABBIT_USER'] = 'guest'
-    os.environ['RABBIT_PASS'] = 'guest'
-    os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
 
     from order_poller import OrderPoller
 
@@ -48,14 +45,6 @@ def test_outbox_directory_creation():
 @patch('order_poller.xmlrpc.client.ServerProxy')
 def test_connect_odoo_success(mock_server_proxy):
     """Test successful Odoo connection"""
-    os.environ['ODOO_URL'] = 'http://test:8069'
-    os.environ['ODOO_DB'] = 'test_db'
-    os.environ['ODOO_USER'] = 'test_user'
-    os.environ['ODOO_PASS'] = 'test_pass'
-    os.environ['RABBIT_HOST'] = 'localhost'
-    os.environ['RABBIT_USER'] = 'guest'
-    os.environ['RABBIT_PASS'] = 'guest'
-    os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
 
     from order_poller import OrderPoller
 
@@ -74,14 +63,6 @@ def test_connect_odoo_success(mock_server_proxy):
 @patch('order_poller.xmlrpc.client.ServerProxy')
 def test_connect_odoo_failure(mock_server_proxy):
     """Test failed Odoo connection"""
-    os.environ['ODOO_URL'] = 'http://test:8069'
-    os.environ['ODOO_DB'] = 'test_db'
-    os.environ['ODOO_USER'] = 'test_user'
-    os.environ['ODOO_PASS'] = 'test_pass'
-    os.environ['RABBIT_HOST'] = 'localhost'
-    os.environ['RABBIT_USER'] = 'guest'
-    os.environ['RABBIT_PASS'] = 'guest'
-    os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
 
     from order_poller import OrderPoller
 
