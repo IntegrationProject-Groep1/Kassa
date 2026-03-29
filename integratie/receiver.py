@@ -104,7 +104,7 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
     xml_doc = etree.fromstring(xml_text.encode("utf-8"))
 
     if not schema.validate(xml_doc):
-        errors = "\n".join(str(e) for e in schema.error_log)
+        errors = str(schema.error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
     print(f"[VALIDATION] ✓ XSD validation passed for type '{msg_type}'")
@@ -119,7 +119,12 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     Also stores outstanding registration amount as payment_due.
     """
     body = root.find("body")
+    if body is None:
+        raise ValueError("new_registration: <body> missing")
+
     customer = body.find("customer")
+    if customer is None:
+        raise ValueError("new_registration: <customer> missing in <body>")
 
     user_id = customer.findtext("user_id", "").strip()
     email = customer.findtext("email", "").strip()
@@ -131,6 +136,9 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     age = int(age_text) if age_text.isdigit() else 0
 
     payment_due_el = body.find("payment_due")
+    if payment_due_el is None:
+        raise ValueError("new_registration: <payment_due> missing in <body>")
+
     amount = float(payment_due_el.findtext("amount", "0"))
     status = payment_due_el.findtext("status", "unpaid").strip()
 
@@ -180,6 +188,8 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     Defensive: creates customer if not found.
     """
     body = root.find("body")
+    if body is None:
+        raise ValueError("profile_update: <body> missing")
 
     user_id = body.findtext("user_id", "").strip()
     email = body.findtext("email", "").strip()
@@ -238,6 +248,9 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
     Cashier then decides: anonymous sale (Flow 11) or redirect to registration desk.
     """
     body = root.find("body")
+    if body is None:
+        raise ValueError("badge_scanned: <body> missing")
+
     badge_id = body.findtext("badge_id", "").strip()
     location = body.findtext("location", "unknown").strip()
 
@@ -276,6 +289,9 @@ def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
     Deactivate customer profile in Odoo based on x_user_id.
     """
     body = root.find("body")
+    if body is None:
+        raise ValueError("cancel_registration: <body> missing")
+
     user_id = body.findtext("user_id", "").strip()
     session_id = body.findtext("session_id", "").strip()
 
