@@ -1,0 +1,40 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "dev", "prod" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "dev", "prod" ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Test (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r integratie/requirements-dev.txt
+          pip install pytest
+
+      - name: Linting
+        run: flake8 integratie/ --max-line-length=120
+
+      - name: Type Checking
+        run: mypy integratie/
+
+      - name: Unit Tests
+        run: pytest integratie/tests/ -v

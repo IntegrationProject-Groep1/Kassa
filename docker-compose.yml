@@ -7,6 +7,7 @@ services:
       - "8069:8069"
     volumes:
       - ./addons:/mnt/extra-addons
+      - ./odoo.conf:/etc/odoo/odoo.conf:ro
     environment:
       - HOST=db
       - USER=${POSTGRES_USER}
@@ -30,10 +31,15 @@ services:
       - ODOO_USER=${ODOO_USER}
       - ODOO_PASS=${ODOO_PASS}
       - RABBIT_HOST=${RABBIT_HOST}
+      - RABBIT_PORT=${RABBIT_PORT}
       - RABBIT_USER=${RABBIT_USER}
       - RABBIT_PASS=${RABBIT_PASS}
+      - RABBIT_VHOST=${RABBIT_VHOST}
+      - RABBIT_AUTO_SETUP_TOPOLOGY=${RABBIT_AUTO_SETUP_TOPOLOGY}
       - RABBIT_EXCHANGE=${RABBIT_EXCHANGE}
+      - RABBIT_INCOMING_QUEUE=${RABBIT_INCOMING_QUEUE}
       - POLL_INTERVAL=${POLL_INTERVAL}
+      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS}
     volumes:
       - ./integratie:/app
       - outbox-data:/app/outbox
