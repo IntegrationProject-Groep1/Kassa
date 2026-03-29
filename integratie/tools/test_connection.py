@@ -2,12 +2,16 @@
 """Test RabbitMQ connection with provided credentials"""
 import pika
 import os
+import traceback
 
 RABBIT_HOST = os.environ.get("RABBIT_HOST", "")
 RABBIT_USER = os.environ.get("RABBIT_USER", "")
 RABBIT_PASS = os.environ.get("RABBIT_PASS", "")
 port_env = os.environ.get("RABBIT_PORT")
-RABBIT_PORT = int(port_env) if port_env is not None else 5672
+try:
+    RABBIT_PORT = int(port_env) if port_env else 5672
+except ValueError:
+    RABBIT_PORT = 5672
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "")
 
 print("🔗 Testing RabbitMQ connection...")
@@ -49,5 +53,4 @@ try:
 except Exception as e:
     print(f"\n❌ Connection failed: {e}")
     print(f"\n   Error type: {type(e).__name__}")
-    import traceback
     traceback.print_exc()

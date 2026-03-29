@@ -41,7 +41,7 @@ Zodra je in het Odoo dashboard zit, kan je controleren of onze `kassa-integratie
 Voer in je terminal in de hoofdmap van het project dit commando uit:
 
 ```bash
-docker-compose exec kassa-integratie python ping_odoo.py
+docker-compose exec kassa-integratie python tools/ping_odoo.py
 ```
 
 Als alles klopt, zie je de boodschap:
@@ -52,6 +52,13 @@ Als alles klopt, zie je de boodschap:
 ## 💻 4. Verder Ontwikkelen
 
 Alle Python ontwikkeling van het team (`sender.py`, `receiver.py`, `poller.py` etc.) doen we in de map **`/integratie`**.
+
+Structuur van `integratie/`:
+
+- Runtime scripts: `main.py`, `receiver.py`, `sender.py`, `order_poller.py`
+- Tools & diagnostics: `tools/` (zoals `tools/ping_odoo.py`, `tools/test_connection.py`, `tools/test_sender.py`)
+- Tests: `tests/`
+- Schemas: `schemas/`
 
 - De container `kassa-integratie` draait constant een loop op de achtergrond (`main.py`) zodat hij niet crasht.
 - Wijzigingen in de code kun je lokaal testen door in de container een commando uit te voeren:
