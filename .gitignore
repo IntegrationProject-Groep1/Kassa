@@ -1,5 +1,6 @@
 # Environment variables
 .env
+odoo.conf
 
 # Secrets & Keys
 keys/
