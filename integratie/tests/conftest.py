@@ -5,5 +5,28 @@
 import os
 import sys
 
+import pytest
+
 INTEGRATIE_DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(INTEGRATIE_DIR))
+
+
+@pytest.fixture(autouse=True)
+def cleanup_env():
+    """Clean up important env vars before/after each test for isolation."""
+    env_vars = [
+        "ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS",
+        "RABBIT_HOST", "RABBIT_PORT", "RABBIT_USER", "RABBIT_PASS", "RABBIT_VHOST", "RABBIT_EXCHANGE",
+        "RABBIT_INCOMING_QUEUE",
+        "POLL_INTERVAL", "BADGE_PAYMENT_METHOD_NAME",
+        "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB",
+    ]
+
+    original_values = {var: os.environ.get(var) for var in env_vars}
+    yield
+
+    for var, value in original_values.items():
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value

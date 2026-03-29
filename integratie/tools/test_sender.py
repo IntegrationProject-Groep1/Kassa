@@ -19,18 +19,12 @@ import uuid
 import pika
 from datetime import datetime, timezone
 
-
-def _parse_rabbit_port() -> int:
-    value = os.environ.get("RABBIT_PORT")
-    try:
-        return int(value) if value else 5672
-    except ValueError:
-        return 5672
+from config_utils import parse_rabbit_port
 
 
 # ── RabbitMQ connection (local or via .env) ────────────────────────────────────
 RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
-RABBIT_PORT = _parse_rabbit_port()
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
 RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")

@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import logging
 
+from config_utils import parse_rabbit_port
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,17 +24,9 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_rabbit_port() -> int:
-    value = os.environ.get("RABBIT_PORT")
-    try:
-        return int(value) if value else 5672
-    except ValueError:
-        return 5672
-
-
 # Configuration
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
-RABBIT_PORT = _parse_rabbit_port()
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
