@@ -8,9 +8,6 @@ from order_poller import OrderPoller
 import sender
 
 
-ODOO_MASTER_PASS = os.environ.get("ODOO_MASTER_PASS")
-
-
 def wait_for_odoo(odoo_url, timeout=120):
     """Wait until Odoo web server is responding (before DB exists)"""
     print("⏳ Waiting for Odoo to become available...", flush=True)
@@ -20,14 +17,14 @@ def wait_for_odoo(odoo_url, timeout=120):
             if resp.status_code < 500:
                 print("✅ Odoo web server is up", flush=True)
                 return True
-        except Exception:
+        except requests.exceptions.RequestException:
             pass
         time.sleep(5)
     print("⚠️  Odoo did not respond in time — continuing anyway", flush=True)
     return False
 
 
-def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass):
+def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
     """Auto-create the Odoo database if it doesn't exist yet"""
     print(f"🔍 Checking if database '{odoo_db}' exists...", flush=True)
 
@@ -52,7 +49,7 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass):
         resp = requests.post(
             f'{odoo_url}/web/database/create',
             data={
-                'master_pwd': ODOO_MASTER_PASS,
+                'master_pwd': odoo_master_pass,
                 'name': odoo_db,
                 'login': odoo_user,
                 'password': odoo_pass,
@@ -65,10 +62,26 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass):
         )
 
         if resp.status_code in (200, 302):
-            print(f"✅ Database '{odoo_db}' created successfully!", flush=True)
-            # Give Odoo a moment to finish initialization
-            time.sleep(5)
-            return True
+            print(
+                f"✅ Database '{odoo_db}' initialized. Waiting for readiness...", flush=True)
+            # Give Odoo a moment to finish initialization by polling for successful auth
+            for _ in range(10):  # Poll for 50 seconds
+                time.sleep(5)
+                try:
+                    common = xmlrpc.client.ServerProxy(
+                        f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+                    uid = common.authenticate(
+                        odoo_db, odoo_user, odoo_pass, {})
+                    if uid:
+                        print(
+                            f"✅ Database '{odoo_db}' is now accessible.", flush=True)
+                        return True
+                except Exception:
+                    pass  # Ignore connection errors during polling
+
+            print(
+                f"⚠️  Database '{odoo_db}' was created, but could not confirm accessibility.", flush=True)
+            return False
         else:
             print(
                 f"⚠️  Database creation returned status {resp.status_code}",
@@ -168,15 +181,22 @@ def main():
     odoo_db = os.environ.get("ODOO_DB")
     odoo_user = os.environ.get("ODOO_USER")
     odoo_pass = os.environ.get("ODOO_PASS")
+    odoo_master_pass = os.environ.get("ODOO_MASTER_PASS")
 
     # Step 1: Wait for Odoo web server to be reachable
-    wait_for_odoo(odoo_url)
+    if not wait_for_odoo(odoo_url):
+        print("❌ Odoo web server did not become available. Exiting.", flush=True)
+        sys.exit(1)
 
     # Step 2: Auto-create database if it doesn't exist
-    setup_database(odoo_url, odoo_db, odoo_user, odoo_pass)
+    if not setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
+        print("❌ Database setup failed. Exiting.", flush=True)
+        sys.exit(1)
 
     # Step 3: Auto-install POS module if needed
-    ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass)
+    if not ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
+        print("❌ POS module installation failed. Exiting.", flush=True)
+        sys.exit(1)
 
     # Step 4: Initialize and start Order Poller
     print("📦 Starting Order Poller...", flush=True)
