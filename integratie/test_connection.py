@@ -3,11 +3,12 @@
 import pika
 import os
 
-RABBIT_HOST = os.environ.get("RABBIT_HOST")
-RABBIT_USER = os.environ.get("RABBIT_USER")
-RABBIT_PASS = os.environ.get("RABBIT_PASS")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", 30000))
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "kassa")
+RABBIT_HOST = os.environ.get("RABBIT_HOST", "")
+RABBIT_USER = os.environ.get("RABBIT_USER", "")
+RABBIT_PASS = os.environ.get("RABBIT_PASS", "")
+port_env = os.environ.get("RABBIT_PORT")
+RABBIT_PORT = int(port_env) if port_env is not None else 5672
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "")
 
 print("🔗 Testing RabbitMQ connection...")
 print(f"   Host: {RABBIT_HOST}:{RABBIT_PORT}")
@@ -24,27 +25,27 @@ try:
         connection_attempts=1,
         retry_delay=0,
     )
-    
+
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
-    
+
     print("\n✅ CONNECTION SUCCESSFUL!")
     print(f"   Channel created: {channel}")
-    
+
     # Verify exchange exists or create it
     try:
         channel.exchange_declare(
             exchange='kassa.exchange',
-            exchange_type='topic',
+            exchange_type=pika.exchange_type.ExchangeType.topic,
             passive=True  # Just check if exists
         )
         print("   ✅ Exchange 'kassa.exchange' exists")
-    except:
+    except BaseException:
         print("   ⚠️  Exchange needs to be created")
-    
+
     connection.close()
     print("\n🎉 RabbitMQ is working and accessible!")
-    
+
 except Exception as e:
     print(f"\n❌ Connection failed: {e}")
     print(f"\n   Error type: {type(e).__name__}")

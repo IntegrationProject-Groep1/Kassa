@@ -6,6 +6,7 @@
 *.pem
 secrets/
 keys/
+odoo.conf
 
 # Python
 __pycache__/
