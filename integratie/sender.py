@@ -20,7 +20,7 @@ RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_PORT = int(os.environ.get("RABBIT_PORT", 5672))
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "kassa")
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
 # Routing key mapping
@@ -355,10 +355,10 @@ def send_error_to_queue(
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
-
+    
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
-
+        
     ET.SubElement(body, "description").text = error_description[:500]
 
     error_xml = _to_xml(root)
