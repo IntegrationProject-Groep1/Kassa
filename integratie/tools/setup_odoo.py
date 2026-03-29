@@ -31,10 +31,10 @@ from dotenv import load_dotenv
 _ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(dotenv_path=_ENV_PATH, override=False)  # env vars already set take priority
 
-ODOO_URL = os.environ.get("ODOO_URL", "http://localhost:8069")
-ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
-ODOO_USER = os.environ.get("ODOO_USER", "odoo")
-ODOO_PASS = os.environ.get("ODOO_PASS", "myodoo")
+ODOO_URL = os.environ.get("ODOO_URL")
+ODOO_DB = os.environ.get("ODOO_DB")
+ODOO_USER = os.environ.get("ODOO_USER")
+ODOO_PASS = os.environ.get("ODOO_PASS")
 
 # ── Field definitions grouped by Odoo model ───────────────────────────────────
 FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
