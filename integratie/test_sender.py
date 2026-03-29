@@ -25,7 +25,7 @@ RABBIT_PORT  = int(os.environ.get("RABBIT_PORT", 5672))
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_USER  = os.environ.get("RABBIT_USER", "guest")
 RABBIT_PASS  = os.environ.get("RABBIT_PASS", "guest")
-QUEUE_NAME   = "queue.incoming"
+QUEUE_NAME   = "kassa.incoming"
 
 
 def now_utc() -> str:

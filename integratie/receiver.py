@@ -1,7 +1,7 @@
 # receiver.py – v3.3
 # Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
 #
-# Listens on queue.incoming and processes:
+# Listens on kassa.incoming and processes:
 #   - new_registration     → create/update customer in Odoo
 #   - profile_update       → update customer profile in Odoo
 #   - badge_scanned        → look up customer via x_badge_id
@@ -31,7 +31,7 @@ ODOO_DB    = os.environ.get("ODOO_DB",  "odoo_kassa")
 ODOO_USER  = os.environ.get("ODOO_USER")
 ODOO_PASS  = os.environ.get("ODOO_PASS")
 
-QUEUE_NAME = "queue.incoming"
+QUEUE_NAME = "kassa.incoming"
 
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 # Paths to XSD files in the container (/app/schemas/)
