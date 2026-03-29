@@ -5,11 +5,10 @@ Helps troubleshoot connectivity issues to Azure RabbitMQ endpoint
 """
 import socket
 import os
+import sys
 
 # Load environment
-RABBIT_HOST = os.getenv(
-    'RABBIT_HOST',
-    'integrationproject-2526s2-dag01.westeurope.cloudapp.azure.com')
+RABBIT_HOST = os.getenv('RABBIT_HOST')
 RABBIT_PORT = 5672
 
 
@@ -110,6 +109,10 @@ def main():
     print("=" * 60)
     print("RabbitMQ DIAGNOSTICS")
     print("=" * 60)
+
+    if not RABBIT_HOST:
+        print("❌ RABBIT_HOST is not set. Aborting diagnostics.")
+        sys.exit(1)
 
     # Run tests
     ip = test_dns_resolution()
