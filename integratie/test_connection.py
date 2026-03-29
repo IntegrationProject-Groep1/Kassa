@@ -6,8 +6,8 @@ import os
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", 30000))
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "kassa")
+RABBIT_PORT = int(os.environ.get("RABBIT_PORT"))
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST")
 
 print("🔗 Testing RabbitMQ connection...")
 print(f"   Host: {RABBIT_HOST}:{RABBIT_PORT}")

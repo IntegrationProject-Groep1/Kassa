@@ -5,7 +5,7 @@ def test_vhost(vhost):
     user = os.environ.get("RABBIT_USER")
     password = os.environ.get("RABBIT_PASS")
     host = os.environ.get("RABBIT_HOST")
-    port = int(os.environ.get("RABBIT_PORT", 30000))
+    port = int(os.environ.get("RABBIT_PORT"))
     
     credentials = pika.PlainCredentials(user, password)
     params = pika.ConnectionParameters(
