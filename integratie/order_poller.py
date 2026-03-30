@@ -1,6 +1,33 @@
 """
-Order Poller — Haalt afgeronde bestellingen uit Odoo POS
-en stuurt ze naar RabbitMQ via sender.py
+order_poller.py — Polls Odoo POS for completed orders and publishes them to RabbitMQ.
+
+Runs in a background thread started by main.py. Every `interval` seconds
+(default: 5) it fetches all POS orders in state 'paid' or 'done' and sends
+each one as a consumption_order XML message via sender.send_typed_message().
+
+Duplicate prevention:
+    A module-level OrderedDict (processed_orders) tracks every order ID that
+    has been sent in this session. Orders already in the dict are skipped.
+    The dict is capped at 10,000 entries (LRU eviction) to prevent unbounded
+    memory growth in long-running deployments.
+
+Anonymous vs named customers:
+    If the POS order has no linked partner (partner_id is False/None) the order
+    is treated as anonymous. If a partner is linked but get_customer_info()
+    fails to fetch it, the order also falls back to anonymous rather than
+    failing entirely.
+
+Company detection:
+    A customer is considered company-linked if:
+      1. Their own res.partner record has is_company=True, OR
+      2. They have a parent_id whose res.partner record has is_company=True
+         (i.e. they are a contact under a company account).
+    The second check requires an extra Odoo read — see process_order().
+
+Offline resilience:
+    Sending goes through sender.send_message(), which writes to outbox.json
+    if the broker is unreachable. flush_buffer() is called every 30 seconds
+    inside the polling loop to replay any buffered messages.
 """
 
 import xmlrpc.client
@@ -21,7 +48,14 @@ logger = logging.getLogger(__name__)
 
 class OrderPoller:
     def __init__(self):
-        """Initialize Odoo connection"""
+        """
+        Read Odoo credentials from the environment and prepare internal state.
+
+        processed_orders is an OrderedDict used as a bounded set: values are
+        always True, the key is the Odoo order ID. OrderedDict preserves
+        insertion order which makes the LRU eviction in process_order()
+        deterministic (oldest entry removed first).
+        """
         self.odoo_url = os.environ.get("ODOO_URL")
         self.odoo_db = os.environ.get("ODOO_DB")
         self.odoo_user = os.environ.get("ODOO_USER")
@@ -35,7 +69,12 @@ class OrderPoller:
         self.outbox_dir.mkdir(parents=True, exist_ok=True)
 
     def connect_odoo(self):
-        """Authenticate with Odoo"""
+        """
+        Authenticate against the Odoo XML-RPC endpoint and store the uid.
+
+        Returns True on success, False if authentication fails or the server
+        is unreachable. The caller (main.py) exits if this returns False.
+        """
         try:
             common = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/common', allow_none=True)
@@ -53,7 +92,13 @@ class OrderPoller:
             return False
 
     def get_pending_orders(self):
-        """Fetch completed orders from Odoo POS that haven't been sent yet"""
+        """
+        Return all POS orders in state 'paid' or 'done' from Odoo.
+
+        'Pending' here means not yet processed by this poller session, not a
+        separate Odoo field. Filtering against processed_orders happens in
+        process_order(), not here, so this query always returns the full set.
+        """
         try:
             models = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
@@ -90,7 +135,13 @@ class OrderPoller:
             return []
 
     def get_customer_info(self, partner_id):
-        """Fetch customer details from Odoo"""
+        """
+        Fetch a res.partner record from Odoo and return it as a dict.
+
+        partner_id can be either a plain integer or the (id, display_name)
+        tuple that Odoo XML-RPC returns for many2one fields — both forms are
+        handled. Returns None if the partner cannot be fetched.
+        """
         if not partner_id:
             return None
 
@@ -98,7 +149,7 @@ class OrderPoller:
             models = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
-            # partner_id is usually a tuple like (ID, name)
+            # Odoo XML-RPC returns many2one fields as [id, "Display Name"]
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
 
@@ -113,7 +164,20 @@ class OrderPoller:
             return None
 
     def process_order(self, order):
-        """Process a single order: fetch details, build XML, send via sender"""
+        """
+        Build and send the consumption_order message for one POS order.
+
+        Returns True if the order was sent (or skipped as a duplicate),
+        False if an exception prevented processing.
+
+        Steps:
+          1. Check processed_orders — skip if already sent this session.
+          2. Resolve the linked partner (anonymous if none or lookup fails).
+          3. Read each order line to get product name, quantity, and VAT rate.
+          4. Determine company linkage (see company detection note below).
+          5. Build the XML and send via sender.send_typed_message().
+          6. Record order_id in processed_orders.
+        """
         order_id = order['id']
 
         # Skip if already processed
@@ -179,15 +243,23 @@ class OrderPoller:
                         'currency': 'eur'
                     })
 
-            # Check if linked to a company
+            # Determine company linkage.
+            # Odoo models individual contacts under their employer using
+            # parent_id. A customer is company-linked if:
+            #   a) Their own record is a company (is_company=True), OR
+            #   b) They have a parent_id and that parent is a company.
+            # Case (b) requires an extra read because the XML-RPC many2one
+            # field only gives us the parent ID and name, not is_company.
             is_company_linked = False
             company_id = None
             if customer_info:
                 if customer_info.get('is_company'):
+                    # The customer record itself is the company
                     is_company_linked = True
                     company_id = str(customer_info['id'])
                 elif customer_info.get('parent_id'):
-                    # Explicitly check if the parent is a company
+                    # Customer is a contact under a potential parent company;
+                    # fetch the parent to confirm it is marked as a company
                     parent_id_val = customer_info['parent_id'][0]
                     parent_detail = models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -216,9 +288,9 @@ class OrderPoller:
             # fallback)
             sender.send_typed_message('consumption_order', xml_message)
 
-            # Mark as processed
+            # Mark as processed so this order is skipped on the next poll cycle
             self.processed_orders[order_id] = True
-            # Evict oldest if we exceed 10,000 to prevent memory leaks
+            # Keep the dict bounded: evict the oldest entry once we exceed 10,000
             if len(self.processed_orders) > 10000:
                 self.processed_orders.popitem(last=False)
 
@@ -231,14 +303,20 @@ class OrderPoller:
             return False
 
     def poll(self, interval=5):
-        """Main polling loop"""
+        """
+        Run the polling loop indefinitely, sleeping `interval` seconds between cycles.
+
+        flush_buffer() is called every 30 seconds (reconnect_interval) rather
+        than every cycle to avoid hammering the broker with reconnect attempts
+        when it is down. The counter resets after each flush.
+        """
         logger.info(f"Order Poller started (interval: {interval}s)")
         reconnect_counter = 0
         reconnect_interval = 30
 
         while True:
             try:
-                # Every 30 seconds try to flush outbox
+                # Flush the outbox buffer roughly every 30 seconds
                 reconnect_counter += 1
                 if reconnect_counter >= reconnect_interval / interval:
                     sender.flush_buffer()
