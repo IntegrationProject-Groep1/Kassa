@@ -13,12 +13,12 @@ ENV_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def get_env(name: str, default: str | None = None) -> str | None:
-    """Return env value for canonical name, with optional alias fallback."""
+    """Return canonical env value with alias fallback and whitespace trimming."""
     keys = ENV_ALIASES.get(name, (name,))
     for key in keys:
         value = os.environ.get(key)
         if value is not None and value.strip():
-            return value
+            return value.strip()
     return default
 
 
