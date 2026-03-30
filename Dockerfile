@@ -17,7 +17,7 @@ EXPOSE 30030
 
 # Health check - verify Odoo can be reached
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python ping_odoo.py || exit 1
+    CMD python tools/ping_odoo.py || exit 1
 
 # Start the Order Poller service
 CMD ["python", "main.py"]
