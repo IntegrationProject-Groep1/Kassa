@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- schema_scan_badge.xsd – v2.0                                   -->
-<!-- Team Kassa | Integratieproject Desideriushogeschool 2026        -->
-<!-- Flow 2: badge_scanned – customer lookup via badge ID            -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 
   <xs:complexType name="HeaderType">
@@ -22,7 +19,7 @@
           <xs:complexType>
             <xs:sequence>
               <xs:element name="badge_id" type="xs:string"/>
-              <xs:element name="location" type="xs:string" minOccurs="0"/>
+              <xs:element name="location" type="xs:string"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>

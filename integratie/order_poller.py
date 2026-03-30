@@ -58,11 +58,11 @@ class OrderPoller:
             models = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
-            # Search for orders with state 'paid' or 'done'
+            # Search for completed orders (paid or done)
             order_ids = models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'search',
-                [[['state', '=', 'paid']]]
+                [[['state', 'in', ['paid', 'done']]]]
             )
 
             if not order_ids:
@@ -105,7 +105,7 @@ class OrderPoller:
             customer = models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read', [
                     partner_id, [
-                        'id', 'name', 'email', 'phone', 'is_company', 'parent_id']])
+                        'id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_user_id']])
 
             return customer[0] if customer else None
         except Exception as e:
@@ -204,7 +204,7 @@ class OrderPoller:
                 customer_id=str(
                     customer_info['id']) if customer_info else None,
                 user_id=str(
-                    customer_info.get('id')) if customer_info else None,
+                    customer_info.get('x_user_id')) if customer_info else None,
                 is_company_linked=is_company_linked,
                 company_id=company_id,
                 email=customer_info.get(
