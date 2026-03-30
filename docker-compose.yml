@@ -1,22 +1,24 @@
 services:
-  web:
+  kassa-web:
     image: odoo:latest
     depends_on:
-      - db
+      - kassa-db
+    container_name: kassa_odoo
     ports:
       - "8069:8069"
     volumes:
       - ./addons:/mnt/extra-addons
       - ./odoo.conf:/etc/odoo/odoo.conf:ro
     environment:
-      - HOST=db
+      - HOST=kassa-db
       - USER=${POSTGRES_USER}
       - PASSWORD=${POSTGRES_PASSWORD}
  
-  db:
+  kassa-db:
     image: postgres:15
+    container_name: kassa_db
     environment:
-      - POSTGRES_DB=postgres
+      - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_USER=${POSTGRES_USER}
     volumes:
@@ -24,16 +26,16 @@ services:
 
   kassa-integratie:
     build: .
-    container_name: kassa-integratie
+    container_name: kassa_integratie
     environment:
       - ODOO_URL=${ODOO_URL}
       - ODOO_DB=${ODOO_DB}
       - ODOO_USER=${ODOO_USER}
       - ODOO_PASS=${ODOO_PASS}
-      - RABBIT_HOST=${RABBIT_HOST}
-      - RABBIT_PORT=${RABBIT_PORT}
-      - RABBIT_USER=${RABBIT_USER}
-      - RABBIT_PASS=${RABBIT_PASS}
+      - RABBITMQKASSA_HOST=${RABBIT_HOST}
+      - RABBITMQKASSA_PORT=${RABBIT_PORT}
+      - RABBITMQKASSA_USER=${RABBIT_USER}
+      - RABBITMQKASSA_PASS=${RABBIT_PASS}
       - RABBIT_VHOST=${RABBIT_VHOST}
       - RABBIT_AUTO_SETUP_TOPOLOGY=${RABBIT_AUTO_SETUP_TOPOLOGY}
       - RABBIT_EXCHANGE=${RABBIT_EXCHANGE}
@@ -44,7 +46,7 @@ services:
       - ./integratie:/app
       - outbox-data:/app/outbox
     depends_on:
-      - web
+      - kassa-web
     restart: unless-stopped
 
 volumes:

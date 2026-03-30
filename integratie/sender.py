@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import logging
 
-from config_utils import parse_rabbit_port
+from config_utils import get_env, parse_rabbit_port
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,10 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 
 
 # Configuration
-RABBIT_HOST = os.environ.get("RABBIT_HOST")
+RABBIT_HOST = get_env("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_USER = os.environ.get("RABBIT_USER")
-RABBIT_PASS = os.environ.get("RABBIT_PASS")
+RABBIT_USER = get_env("RABBIT_USER")
+RABBIT_PASS = get_env("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
     os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
