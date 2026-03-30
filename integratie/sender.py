@@ -13,14 +13,26 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import logging
 
+from config_utils import parse_rabbit_port
+
 logger = logging.getLogger(__name__)
+
+
+def _as_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 
 # Configuration
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", 5672))
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "kassa")
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
+    os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
+)
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
 # Routing key mapping
@@ -34,6 +46,24 @@ ROUTING_KEYS = {
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
     "system_error": "kassa.errors",
+}
+
+# Optional queue topology auto-setup (useful when CRM consumers are not online yet)
+OUTBOUND_QUEUE_BINDINGS = {
+    "kassa.payments.consumption": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_CONSUMPTION", "kassa.out.payments.consumption"
+    ),
+    "kassa.payments.registration": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_REGISTRATION", "kassa.out.payments.registration"
+    ),
+    "kassa.payments.refund": os.environ.get(
+        "RABBIT_QUEUE_PAYMENTS_REFUND", "kassa.out.payments.refund"
+    ),
+    "kassa.payments.badge": os.environ.get("RABBIT_QUEUE_PAYMENTS_BADGE", "kassa.out.payments.badge"),
+    "kassa.payments.invoice": os.environ.get("RABBIT_QUEUE_PAYMENTS_INVOICE", "kassa.out.payments.invoice"),
+    "kassa.frontend.payment": os.environ.get("RABBIT_QUEUE_FRONTEND_PAYMENT", "kassa.out.frontend.payment"),
+    "kassa.frontend.wallet": os.environ.get("RABBIT_QUEUE_FRONTEND_WALLET", "kassa.out.frontend.wallet"),
+    "kassa.errors": os.environ.get("RABBIT_QUEUE_ERRORS", "kassa.out.errors"),
 }
 
 # Buffer configuration
@@ -141,6 +171,24 @@ def setup_exchange(channel):
         exchange_type="topic",
         durable=True
     )
+
+    if not RABBIT_AUTO_SETUP_TOPOLOGY:
+        return
+
+    for routing_key, queue_name in OUTBOUND_QUEUE_BINDINGS.items():
+        if not queue_name:
+            continue
+        try:
+            channel.queue_declare(queue=queue_name, durable=True)
+            channel.queue_bind(
+                exchange=EXCHANGE_NAME,
+                queue=queue_name,
+                routing_key=routing_key,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"⚠️  Could not declare/bind queue '{queue_name}' for '{routing_key}': {exc}"
+            )
 
 
 def send_message(routing_key: str, message_xml: str) -> None:
@@ -355,10 +403,10 @@ def send_error_to_queue(
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
-    
+
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
-        
+
     ET.SubElement(body, "description").text = error_description[:500]
 
     error_xml = _to_xml(root)
