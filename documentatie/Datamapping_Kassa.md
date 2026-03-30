@@ -20,19 +20,19 @@ Overzicht van alle berichten die verstuurd worden, met type-waarden conform snak
 |     |     |     |     |     |     |
 | --- | --- | --- | --- | --- | --- |
 | **Scenario** | **type (enum)** | **Van** | **Naar** | **Queue** | **Trigger** |
-| Bezoeker schrijft in | new_registration | CRM (Salesforce) | Kassa | queue.incoming | Inschrijving bevestigd op website |
-| Bezoeker scant badge | badge_scanned | IoT (Raspberry Pi) | Kassa | queue.incoming | Badge gescand door scanner |
-| CRM werkt profiel bij | profile_update | CRM (Salesforce) | Kassa | queue.incoming | Profiel bijgewerkt in Salesforce |
-| Klant annuleert inschrijving | cancel_registration | CRM (Salesforce) | Kassa | queue.incoming | Annulering via website |
-| Bestelling doorsturen CRM | consumption_order | Kassa | CRM | pos.payments | Na elke afgeronde aankoop |
-| Anonieme aankoop | consumption_order (is_anonymous=true) | Kassa | CRM | pos.payments | Aankoop zonder badge/account |
-| Betaling registreren CRM | payment_registered | Kassa | CRM | pos.payments | Na succesvolle betaling |
-| Inschrijving betaald | payment_registered (context=registration) | Kassa | CRM | pos.payments | Inschrijvingsgeld betaald aan kassa |
-| Klant vraagt factuur | invoice_request | Kassa | CRM | pos.payments | Kassamedewerker verzamelt factuurgegevens |
-| Badge koppelen aan account | badge_assigned | Kassa | CRM | pos.payments | Badge gekoppeld aan bezoeker bij balie |
-| Terugbetaling verwerkt | refund_processed | Kassa | CRM | pos.payments | Kassamedewerker initieert correctie |
-| Systeem monitoring | heartbeat | Kassa | Elastic | queue.heartbeats | Elke seconde automatisch |
-| Validatie/systeemfout | system_error | Kassa | Elastic | queue.errors | Fout gedetecteerd |
+| Bezoeker schrijft in | new_registration | CRM (Salesforce) | Kassa | kassa.incoming | Inschrijving bevestigd op website |
+| Bezoeker scant badge | badge_scanned | IoT (Raspberry Pi) | Kassa | kassa.incoming | Badge gescand door scanner |
+| CRM werkt profiel bij | profile_update | CRM (Salesforce) | Kassa | kassa.incoming | Profiel bijgewerkt in Salesforce |
+| Klant annuleert inschrijving | cancel_registration | CRM (Salesforce) | Kassa | kassa.incoming | Annulering via website |
+| Bestelling doorsturen CRM | consumption_order | Kassa | CRM | kassa.payments | Na elke afgeronde aankoop |
+| Anonieme aankoop | consumption_order (is_anonymous=true) | Kassa | CRM | kassa.payments | Aankoop zonder badge/account |
+| Betaling registreren CRM | payment_registered | Kassa | CRM | kassa.payments | Na succesvolle betaling |
+| Inschrijving betaald | payment_registered (context=registration) | Kassa | CRM | kassa.payments | Inschrijvingsgeld betaald aan kassa |
+| Klant vraagt factuur | invoice_request | Kassa | CRM | kassa.payments | Kassamedewerker verzamelt factuurgegevens |
+| Badge koppelen aan account | badge_assigned | Kassa | CRM | kassa.payments | Badge gekoppeld aan bezoeker bij balie |
+| Terugbetaling verwerkt | refund_processed | Kassa | CRM | kassa.payments | Kassamedewerker initieert correctie |
+| Systeem monitoring | heartbeat | Kassa | Elastic | heartbeat | Elke seconde automatisch |
+| Validatie/systeemfout | system_error | Kassa | Elastic | kassa.errors | Fout gedetecteerd |
 | Klant betaalt inschrijving | payment_status | Kassa | Drupal | frontend.payments | Betaling succesvol afgerond |
 | Betaling met badge | wallet_balance_update | Kassa | Drupal | frontend.payments | Klant betaalt een bestelling met de Badge Wallet _(Saldo daalt)_ |
 | Top-up via kassa (Flow 13) | wallet_balance_update | Kassa | Drupal | frontend.payments | Klant koopt een Top-up product aan de kassa _(Saldo stijgt)_ |
@@ -54,7 +54,8 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
 | Customer | &lt;customer&gt;&lt;user_id&gt; | UUID v4 | Ja  | Externe sleutel — uniek over alle systemen. Opgeslagen als x_user_id in Odoo res.partner. |
 | Customer | &lt;customer&gt;&lt;email&gt; | String | Ja  | Geldig e-mailadresformaat |
-| Customer | &lt;customer&gt;&lt;name&gt; | String | Ja  | Volledige naam bezoeker |
+| Customer | &lt;customer&gt;&lt;contact&gt;&lt;first_name&gt; | String | Ja  | Voornaam bezoeker |
+| Customer | &lt;customer&gt;&lt;contact&gt;&lt;last_name&gt; | String | Ja  | Achternaam bezoeker |
 | Customer | &lt;customer&gt;&lt;type&gt; | Enum | Ja  | company of private |
 | Customer | &lt;customer&gt;&lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
@@ -87,7 +88,8 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | Externe sleutel — unieke sleutel voor klantprofiel (x_user_id in Odoo) |
 | Body | &lt;email&gt; | String | Ja  | Geldig e-mailadresformaat |
-| Body | &lt;name&gt; | String | Ja  | Volledige naam |
+| Body | &lt;contact&gt;&lt;first_name&gt; | String | Ja  | Voornaam |
+| Body | &lt;contact&gt;&lt;last_name&gt; | String | Ja  | Achternaam |
 | Body | &lt;type&gt; | Enum | Ja  | company of private. Bepaalt of company_name en vat_number verplicht zijn. |
 | Body | &lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Body | &lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
@@ -170,7 +172,7 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 |     |     |     |     |     |
 | --- | --- | --- | --- | --- |
 | **Kassa → Elastic Stack — system_error** |     |     |     |     |
-| **Bij validatiefouten of systeemfouten. Stuurt naar queue.errors.** |     |     |     |     |
+| **Bij validatiefouten of systeemfouten. Stuurt naar kassa.errors.** |     |     |     |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: system_error |
@@ -219,7 +221,8 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
 | Header | &lt;header&gt;&lt;correlation_id&gt; | UUID v4 | Cond. | UUID van bijhorend consumption_order bericht. Optioneel maar sterk aanbevolen. |
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | Unieke sleutel klantprofiel matching |
-| Invoice data | &lt;invoice_data&gt;&lt;name&gt; | String | Ja  | Volledige naam factuurontvanger |
+| Invoice data | &lt;invoice_data&gt;&lt;first_name&gt; | String | Ja  | Voornaam factuurontvanger |
+| Invoice data | &lt;invoice_data&gt;&lt;last_name&gt; | String | Ja  | Achternaam factuurontvanger |
 | Invoice data | &lt;invoice_data&gt;&lt;email&gt; | String | Ja  | Geldig e-mailadresformaat |
 | Invoice data | &lt;invoice_data&gt;&lt;address&gt;&lt;street&gt; | String | Ja  | Straatnaam |
 | Invoice data | &lt;invoice_data&gt;&lt;address&gt;&lt;number&gt; | String | Ja  | Huisnummer |
@@ -266,12 +269,12 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 
 |     |     |     |     |
 | --- | --- | --- | --- |
-| **Veld** | **Conditie** | **Actie bij ontbreken** | **Foutmelding (queue.errors)** |
-| &lt;vat_number&gt; | Verplicht als customer.type = company | → queue.errors | ERROR: btw_nummer required when type=company |
-| &lt;location&gt; | Verplicht bij badge_scanned | → queue.errors | ERROR: location required for badge_scanned |
-| &lt;company_name&gt; | Verplicht als customer.type = company | → queue.errors | ERROR: company_name required when type=company |
-| &lt;company_id&gt; | Verplicht als is_company_linked = true | → queue.errors | ERROR: company_id required when is_company_linked=true |
-| &lt;customer&gt; blok | Verplicht als is_anonymous = false of afwezig | → queue.errors / DLQ | XSD-validatiefout: customer required when is_anonymous=false |
+| **Veld** | **Conditie** | **Actie bij ontbreken** | **Foutmelding (kassa.errors)** |
+| &lt;vat_number&gt; | Verplicht als customer.type = company | → kassa.errors | ERROR: btw_nummer required when type=company |
+| &lt;location&gt; | Verplicht bij badge_scanned | → kassa.errors | ERROR: location required for badge_scanned |
+| &lt;company_name&gt; | Verplicht als customer.type = company | → kassa.errors | ERROR: company_name required when type=company |
+| &lt;company_id&gt; | Verplicht als is_company_linked = true | → kassa.errors | ERROR: company_id required when is_company_linked=true |
+| &lt;customer&gt; blok | Verplicht als is_anonymous = false of afwezig | → kassa.errors / DLQ | XSD-validatiefout: customer required when is_anonymous=false |
 | &lt;invoice&gt;&lt;id&gt; | Verplicht bij payment_context=consumption. Afwezig bij registration. | Geen fout — by design | CRM maakt factuur aan bij registration |
 | &lt;related_message_id&gt; | Optioneel bij system_error, verplicht bij badge_not_found | Bericht wordt alsnog verstuurd | —   |
 

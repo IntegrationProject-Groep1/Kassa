@@ -67,18 +67,18 @@ Routing keys voor payment_registered zijn gesplitst per payment_context. Gebruik
 |     |     |     |     |     |
 | --- | --- | --- | --- | --- |
 | **Queue** | **Routing key** | **Verstuurt** | **Leest** | **Waarvoor** |
-| queue.incoming | —   | Frontend, CRM, IoT | Odoo (Kassa) | Inschrijvingen, profielupdates, badge scans |
-| pos.payments | kassa.payments.consumption | Odoo (Kassa) | Salesforce CRM | consumption_order, payment_registered (consumption) |
-| pos.payments | kassa.payments.registration | Odoo (Kassa) | Salesforce CRM | payment_registered (registration) |
-| pos.payments | kassa.payments.refund | Odoo (Kassa) | Salesforce CRM | refund_processed |
-| pos.payments | kassa.payments.badge | Odoo (Kassa) | Salesforce CRM | badge_assigned |
-| pos.payments | kassa.payments.invoice | Odoo (Kassa) | Salesforce CRM | invoice_request |
+| kassa.incoming | —   | Frontend, CRM, IoT | Odoo (Kassa) | Inschrijvingen, profielupdates, badge scans |
+| kassa.payments | kassa.payments.consumption | Odoo (Kassa) | Salesforce CRM | consumption_order, payment_registered (consumption) |
+| kassa.payments | kassa.payments.registration | Odoo (Kassa) | Salesforce CRM | payment_registered (registration) |
+| kassa.payments | kassa.payments.refund | Odoo (Kassa) | Salesforce CRM | refund_processed |
+| kassa.payments | kassa.payments.badge | Odoo (Kassa) | Salesforce CRM | badge_assigned |
+| kassa.payments | kassa.payments.invoice | Odoo (Kassa) | Salesforce CRM | invoice_request |
 | frontend.payments | kassa.frontend.payment | Odoo (Kassa) | Drupal | payment_status |
 | frontend.payments | kassa.frontend.wallet | Odoo (Kassa) | Drupal | wallet_balance_update |
-| queue.heartbeats | Direct (geen exchange) | Elk systeem (1x/sec) | Elastic Stack | Bewaken of systemen online zijn |
-| queue.errors | kassa.errors | Odoo (Kassa) bij fout | Elastic Stack | Fouten melden |
+| heartbeat | Direct (geen exchange) | Elk systeem (1x/sec) | Elastic Stack | Bewaken of systemen online zijn |
+| kassa.errors | kassa.errors | Odoo (Kassa) bij fout | Elastic Stack | Fouten melden |
 
-Heartbeats worden DIRECT naar queue.heartbeats gepubliceerd — niet via kassa.exchange. Dit is bewust: het Monitoring-team verwacht heartbeats op een vaste, stabiele queue onafhankelijk van de exchange-routering.
+Heartbeats worden DIRECT naar heartbeat gepubliceerd — niet via kassa.exchange. Dit is bewust: het Monitoring-team verwacht heartbeats op een vaste, stabiele queue onafhankelijk van de exchange-routering.
 
 # **3\. Odoo POS — hoe werkt het en hoe schrijf je er code voor?**
 
@@ -713,7 +713,7 @@ print(f"\[SENDER\] Kon error niet sturen naar queue: {err}")
 
 ## **4.2 De Receiver — berichten ontvangen (v3.3)**
 
-receiver.py verwerkt alle inkomende berichten van queue.incoming. Bevat idempotentie-check, XSD-validatie placeholder en correcte error handling.
+receiver.py verwerkt alle inkomende berichten van kassa.incoming. Bevat idempotentie-check, XSD-validatie placeholder en correcte error handling.
 
 **Wijzigingen t.o.v. v3.2:**
 
@@ -875,19 +875,19 @@ print(f"\[RECEIVER\] Luisteren op queue: {queue_name} ...")
 
 channel.start_consuming()
 
-## **4.3 De Heartbeat — degraded state logica (v2.1)**
+## **4.3 De Heartbeat — beheerd door Team Infra**
 
-heartbeat.py is gedocumenteerd in een apart document: Heartbeat_Kassa.docx. Samenvatting:
+De heartbeat wordt **niet** geïmplementeerd door Team Kassa. Team Infra levert hiervoor een kant-en-klare Docker image die toegevoegd wordt aan de `docker-compose.yml` onder de naam `kassa-heartbeat`.
 
-• Stuurt DIRECT naar queue.heartbeats — niet via kassa.exchange.
+- Stuurt DIRECT naar `heartbeat` — niet via `kassa.exchange`.
 
-• get_system_status() evalueert 3 condities: Odoo bereikbaar, RabbitMQ OK, foutenteller.
+- Verstuurt `online` of `degraded` status conform `schema_heartbeat.xsd`.
 
-• Status 'degraded' als één conditie faalt. Status 'offline' wordt nooit actief verstuurd.
+- Status `offline` wordt nooit actief verstuurd — een ontbrekende heartbeat is zelf het offline-signaal.
 
-• Mislukte heartbeats worden NIET gebufferd — alleen realtime heartbeats zijn zinvol.
+- Mislukte heartbeats worden NIET gebufferd — alleen realtime heartbeats zijn zinvol.
 
-• Timestamp formaat: YYYY-MM-DDTHH:MM:SSZ via strftime (identiek aan now_utc() in sender.py).
+De exacte image naam wordt aangeleverd door Infra zodra de software live gaat.
 
 ## **4.4 De Poller — POS events triggeren (v1.1)**
 
