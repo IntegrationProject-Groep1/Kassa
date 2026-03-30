@@ -67,7 +67,7 @@ Voorbeeld XML:
 </message>
 XSD Schema:
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="new\_registration"/>
@@ -136,7 +136,7 @@ Voorbeeld XML:
 </message>
 XSD Schema:
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="badge\_scanned"/>
@@ -186,7 +186,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_profiel\_update.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="profile\_update"/>
@@ -239,7 +239,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_cancel\_registration.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="cancel\_registration"/>
@@ -305,7 +305,7 @@ XSD Schema (schema\_consumption\_order\_v2.1.xsd):
 \- <customer> volledig optioneel (minOccurs=0)
 \- item\_type optioneel veld toegevoegd (wallet\_topup voor top-up producten)
 \- vat\_rate enum hersteld, waarde 0 toegevoegd voor top-up producten -->
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="consumption\_order"/>
@@ -408,7 +408,7 @@ XSD Schema: schema\_payment\_registered\_v2.1.xsd (zie ook Flow 14 — zelfde sc
 \- <user\_id> op body-niveau optioneel: aanwezig bij registration
 \- payment\_method enum conform PM-standaard: company\_link, on\_site, online
 \- due\_date: datum van de aankoop zelf (order date\_order) bij consumption -->
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="payment\_registered"/>
@@ -481,7 +481,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_heartbeat.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="heartbeat"/>
@@ -528,7 +528,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_error.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="system\_error"/>
@@ -582,7 +582,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_payment\_status.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="payment\_status"/>
@@ -629,7 +629,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_wallet\_balance\_update.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="wallet\_balance\_update"/>
@@ -686,7 +686,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_invoice\_request.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="invoice\_request"/>
@@ -785,7 +785,7 @@ Voorbeeld XML:
 </message>
 XSD Schema (schema\_badge\_assigned.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="badge\_assigned"/>
@@ -927,7 +927,7 @@ Voorbeeld XML:
 Als method=badge\_wallet: stuur daarna ook wallet\_balance\_update naar Drupal (Flow 9). Anonieme terugbetaling: badge\_wallet niet mogelijk. Gebruik cash of card\_reversal, stuur refund\_processed zonder <user\_id>. CRM down: buffer het bericht conform Vraag 17.
 XSD Schema (schema\_refund\_processed.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns:xs="[http://www.w3.org/2001/XMLSchema](http://www.w3.org/2001/XMLSchema)">
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message\_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="refund\_processed"/>
