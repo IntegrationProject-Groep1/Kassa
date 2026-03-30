@@ -29,9 +29,9 @@ RABBIT_HOST = get_env("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
 RABBIT_USER = get_env("RABBIT_USER")
 RABBIT_PASS = get_env("RABBIT_PASS")
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
 RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
-    os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
+    get_env("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
 )
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 

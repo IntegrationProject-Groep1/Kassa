@@ -24,7 +24,7 @@ from sender import send_error_to_queue, flush_buffer, now_utc
 # ── Environment ────────────────────────────────────────────────────────────────
 RABBIT_HOST = get_env("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
 RABBIT_USER = get_env("RABBIT_USER")
 RABBIT_PASS = get_env("RABBIT_PASS")
 
