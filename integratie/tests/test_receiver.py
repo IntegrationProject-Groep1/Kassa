@@ -7,7 +7,7 @@
 # No live services are required.
 
 import xml.etree.ElementTree as ET
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,7 +27,7 @@ def clear_idempotency_cache():
 @pytest.fixture
 def odoo():
     """Return (uid, models_mock) mimicking get_odoo_connection()."""
-    uid    = 1
+    uid = 1
     models = MagicMock()
     return uid, models
 
@@ -361,7 +361,7 @@ class TestProcessMessage:
     @patch("receiver.get_odoo_connection")
     @patch("receiver.validate_xml")
     def test_acks_on_success(self, mock_validate, mock_odoo, ch, method):
-        uid    = 1
+        uid = 1
         models = MagicMock()
         models.execute_kw.side_effect = [[], 50]  # create new partner
         mock_odoo.return_value = (uid, models)
@@ -429,7 +429,7 @@ class TestProcessMessage:
     @patch("receiver.get_odoo_connection")
     @patch("receiver.validate_xml")
     def test_cancel_registration_acks_on_success(self, mock_validate, mock_odoo, ch, method):
-        uid    = 1
+        uid = 1
         models = MagicMock()
         models.execute_kw.side_effect = [[{"id": 3, "name": "Dave"}], True]
         mock_odoo.return_value = (uid, models)
@@ -446,7 +446,7 @@ class TestProcessMessage:
     @patch("receiver.validate_xml")
     def test_badge_scan_unknown_still_acks(self, mock_validate, mock_odoo, mock_send_error, ch, method):
         """Unknown badge → sends error but must still ACK (not NACK)."""
-        uid    = 1
+        uid = 1
         models = MagicMock()
         models.execute_kw.return_value = []  # badge not found
         mock_odoo.return_value = (uid, models)
