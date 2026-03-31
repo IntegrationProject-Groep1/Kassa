@@ -347,6 +347,7 @@ def process_message(ch, method, properties, body):
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
+            print(f"[RECEIVER] ❌ XML parse error: {e}")
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -376,6 +377,7 @@ def process_message(ch, method, properties, body):
         try:
             validate_xml(xml_text, msg_type)
         except ValueError as e:
+            print(f"[RECEIVER] ❌ XSD validation failed for '{msg_type}': {e}")
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -404,14 +406,17 @@ def process_message(ch, method, properties, body):
 
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
+        print(f"[RECEIVER] ❌ {code} for message_id={related_message_id}: {e}")
         send_error_to_queue(code, related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except ConnectionError as e:
+        print(f"[RECEIVER] ❌ Odoo connection error for message_id={related_message_id}: {e}")
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
+        print(f"[RECEIVER] ❌ Unexpected error for message_id={related_message_id}: {type(e).__name__}: {e}")
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
