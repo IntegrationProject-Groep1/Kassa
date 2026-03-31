@@ -17,6 +17,11 @@ from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port
 
+
+class BufferFullError(RuntimeError):
+    """Raised when the outbox buffer has reached its maximum capacity."""
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,13 +84,13 @@ def _buffer_message(routing_key: str, message_xml: str) -> None:
     entries = _read_buffer()
 
     if len(entries) >= BUFFER_MAX_MESSAGES:
-        logger.warning(
-            f"⚠️  Buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}")
         send_error_to_queue(
             "offline_queue_full",
             None,
             f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
-        return
+        raise BufferFullError(
+            f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+        )
 
     entries.append(entry)
     BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)

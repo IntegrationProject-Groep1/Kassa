@@ -18,6 +18,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MAX_CACHE_SIZE = 10_000
+
 
 class OrderPoller:
     def __init__(self):
@@ -218,7 +220,7 @@ class OrderPoller:
             # Update in-memory cache immediately after send to suppress duplicates
             # within the same session even if the Odoo write below fails.
             self.processed_orders[order_id] = True
-            if len(self.processed_orders) > 10000:
+            if len(self.processed_orders) > MAX_CACHE_SIZE:
                 self.processed_orders.popitem(last=False)
 
             # Persist sent status in Odoo — survives container restarts.
