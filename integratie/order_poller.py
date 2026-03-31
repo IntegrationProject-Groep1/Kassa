@@ -18,6 +18,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MAX_CACHE_SIZE = 10_000
+
 
 class OrderPoller:
     def __init__(self):
@@ -213,20 +215,22 @@ class OrderPoller:
                 is_anonymous=is_anonymous)
 
             # Send via sender module (automatically handles RabbitMQ + outbox fallback)
-            # at-least-once: mark after send so a crash before the Odoo write
-            # causes a retry on next cycle rather than silent message loss.
             sender.send_typed_message('consumption_order', xml_message)
 
-            # Mark as sent in Odoo after successful send/buffer
+            # Update in-memory cache immediately after send to suppress duplicates
+            # within the same session even if the Odoo write below fails.
+            self.processed_orders[order_id] = True
+            if len(self.processed_orders) > MAX_CACHE_SIZE:
+                self.processed_orders.popitem(last=False)
+
+            # Persist sent status in Odoo — survives container restarts.
+            # at-least-once: if this write fails the in-memory cache still
+            # prevents a duplicate storm within the current session.
             models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'write',
                 [[order_id], {'x_rabbitmq_sent': True}]
             )
-            # Also keep in-memory cache to avoid re-fetching within same session
-            self.processed_orders[order_id] = True
-            if len(self.processed_orders) > 10000:
-                self.processed_orders.popitem(last=False)
 
             status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
             logger.info(f"📦 Order {order_id}: {status_text}")
