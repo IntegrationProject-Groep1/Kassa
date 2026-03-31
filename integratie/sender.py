@@ -21,6 +21,7 @@ from config_utils import get_env, parse_rabbit_port
 class BufferFullError(RuntimeError):
     """Raised when the outbox buffer has reached its maximum capacity."""
 
+
 logger = logging.getLogger(__name__)
 
 
