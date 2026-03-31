@@ -9,7 +9,7 @@ Integratieproject Desideriushogeschool 2026
 | **Veld** | **Waarde** |
 | Project | Integratieproject Desideriushogeschool 2026 |
 | Team | Kassa (Odoo POS) |
-| Versie | 3.3 — Routing key tabel gecorrigeerd; sender v3.4 (now_utc publiek, buffer limiet, \_make_header refactor); receiver v3.3; CI/CD SSH-setup |
+| Versie | 3.4 — sender v3.5 (total_amount per item); poller v1.2 (total_amount berekening); XSD consumption_order → v2.2 |
 | Tech stack | Odoo 17, PostgreSQL 15, Python 3.12, RabbitMQ, Docker, GitHub Actions |
 
 # **1\. Het grote plaatje — hoe hangt alles samen?**
@@ -173,11 +173,17 @@ De betaalmethode 'Badge Wallet' is uitsluitend intern in Odoo. In de externe XML
 
 # **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
 
-## **4.1 De Sender — berichten versturen (v3.4)**
+## **4.1 De Sender — berichten versturen (v3.5)**
 
 sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. bufferlimiet), exchange-setup, routing key mapping, alle builder-functies voor de 7 uitgaande berichttypes, send_error_to_queue en de publieke hulpfunctie now_utc().
 
-**Wijzigingen t.o.v. v3.3:**
+**Wijzigingen t.o.v. v3.4:**
+
+• total_amount toegevoegd aan build_consumption_order_xml per item (quantity × unit_price)
+
+• schema_consumption_order_v2.2.xsd → v2.2
+
+**Wijzigingen t.o.v. v3.3 (eerder):**
 
 • ROUTING_KEYS gesplitst: payment_registered_consumption (kassa.payments.consumption) en payment_registered_registration (kassa.payments.registration)
 
@@ -189,7 +195,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • Alle 9 functies aanwezig: 7 builders + send_error_to_queue + send_typed_message (dispatcher)
 
-\# sender.py — v3.4 — Exchange-routing + lokale buffer + send_error_to_queue
+\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.2)
 
 \# Alle berichten via kassa.exchange (topic). Bij verbindingsverlies
 
@@ -488,6 +494,14 @@ up = ET.SubElement(el, "unit_price")
 up.text = str(i\["unit_price"\])
 
 up.set("currency", i.get("currency", "eur"))
+
+\# total_amount: quantity × unit_price, berekend door poller.py (v1.2)
+
+tp = ET.SubElement(el, "total_amount")
+
+tp.text = f"{i\['total_amount'\]:.2f}"
+
+tp.set("currency", i.get("currency", "eur"))
 
 ET.SubElement(el, "vat_rate").text = str(i\["vat_rate"\])
 
@@ -875,25 +889,29 @@ print(f"\[RECEIVER\] Luisteren op queue: {queue_name} ...")
 
 channel.start_consuming()
 
-## **4.3 De Heartbeat — beheerd door Team Infra**
+## **4.3 De Heartbeat — degraded state logica (v2.1)**
 
-De heartbeat wordt **niet** geïmplementeerd door Team Kassa. Team Infra levert hiervoor een kant-en-klare Docker image die toegevoegd wordt aan de `docker-compose.yml` onder de naam `kassa-heartbeat`.
+heartbeat.py is gedocumenteerd in een apart document: Heartbeat_Kassa.docx. Samenvatting:
 
-- Stuurt DIRECT naar `heartbeat` — niet via `kassa.exchange`.
+• Stuurt DIRECT naar heartbeat — niet via kassa.exchange.
 
-- Verstuurt `online` of `degraded` status conform `schema_heartbeat.xsd`.
+• get_system_status() evalueert 3 condities: Odoo bereikbaar, RabbitMQ OK, foutenteller.
 
-- Status `offline` wordt nooit actief verstuurd — een ontbrekende heartbeat is zelf het offline-signaal.
+• Status 'degraded' als één conditie faalt. Status 'offline' wordt nooit actief verstuurd.
 
-- Mislukte heartbeats worden NIET gebufferd — alleen realtime heartbeats zijn zinvol.
+• Mislukte heartbeats worden NIET gebufferd — alleen realtime heartbeats zijn zinvol.
 
-De exacte image naam wordt aangeleverd door Infra zodra de software live gaat.
+• Timestamp formaat: YYYY-MM-DDTHH:MM:SSZ via strftime (identiek aan now_utc() in sender.py).
 
-## **4.4 De Poller — POS events triggeren (v1.1)**
+## **4.4 De Poller — POS events triggeren (v1.2)**
 
 Omdat er geen code in Odoo geschreven mag worden, gebruikt de integratie een polling-mechanisme. poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden op nieuwe 'done' POS-orders via XML-RPC.
 
-**Wijzigingen t.o.v. v1.0:**
+**Wijzigingen t.o.v. v1.1:**
+
+• total_amount berekening toegevoegd aan item dict in process_order() (line_total = round(qty × price_unit, 2))
+
+**Wijzigingen t.o.v. v1.0 (eerder):**
 
 • due_date: order\['date_order'\]\[:10\] — YYYY-MM-DD, datum van de aankoop zelf
 
@@ -928,7 +946,7 @@ Hoe het werkt:
 
 payment_status naar Drupal wordt ENKEL verstuurd bij payment_context=registration (inschrijvingsgeld betaald aan kassa — Flow 14). De poller verwerkt uitsluitend consumption orders. Registratiebetalingen aan de kassa zijn een apart manueel getriggerd flow.
 
-\# poller.py — v1.1 — Fixes: due_date, BTW-lookup, badge wallet detectie,
+\# poller.py — v1.2 — total_amount berekening per orderregel toegevoegd
 
 \# wallet balance update, company via parent_id
 
@@ -1169,6 +1187,8 @@ item = {
 "quantity": int(l\["qty"\]),
 
 "unit_price": l\["price_unit"\],
+
+"total_amount": round(l\["qty"\] * l\["price_unit"\], 2),  \# quantity × unit_price
 
 "vat_rate": vat_rate,
 
@@ -1689,4 +1709,4 @@ De kassa moet blijven werken ook als externe systemen tijdelijk uitvallen. Onder
 
 Buffer NOOIT heartbeats — alleen berichten die data bevatten (bestellingen, betalingen, etc.). outbox.json staat op een Docker named volume (outbox-data). Zonder volume-mount gaan gebufferde berichten verloren bij een container-herstart. Controleer docker-compose.yml.
 
-Team Kassa | Technische Gids v3.3 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | Technische Gids v3.4 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026

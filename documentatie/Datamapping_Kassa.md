@@ -1,6 +1,6 @@
 **Datamapping Documentatie — Team Kassa (Odoo POS)**
 
-Versie 2.3 — Conform XML_naamgeving standaard (snake_case) | Geintegreerd document
+Versie 2.5 — Conform XML_naamgeving standaard (snake_case) | Geintegreerd document
 
 Integratieproject Desideriushogeschool 2026
 
@@ -119,16 +119,17 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Header | &lt;header&gt;&lt;timestamp&gt; | ISO-8601 UTC | Ja  | Formaat: YYYY-MM-DDTHH:MM:SSZ |
 | Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
 | Body | &lt;is_anonymous&gt; | Boolean | Nee | true = anonieme aankoop zonder klantdata. Ontbreekt of false = klantdata verplicht (backward compatible). |
-| Customer | &lt;customer&gt;&lt;id&gt; | Integer | Cond. | Odoo intern partner ID. Verplicht als is_anonymous = false. |
-| Customer | &lt;customer&gt;&lt;user_id&gt; | UUID v4 | Cond. | Externe sleutel. Verplicht als is_anonymous = false. Unieke sleutel voor matching. |
+| Customer | &lt;customer&gt;&lt;id&gt; | String | Cond. | Odoo intern partner ID. Verplicht als is_anonymous = false. |
+| Customer | &lt;customer&gt;&lt;user_id&gt; | UUID v4 | Cond. | Externe sleutel. Verplicht als is_anonymous = false. Unieke sleutel voor matching in CRM. |
+| Customer | &lt;customer&gt;&lt;type&gt; | Enum | Cond. | Verplicht als is_anonymous = false. Waarden: company of private (lowercase). Afgeleid uit Odoo res.partner: company als is_company=true of gekoppeld aan parent company; anders private. |
 | Customer | &lt;customer&gt;&lt;email&gt; | String | Cond. | Verplicht als is_anonymous = false. |
-| Customer | &lt;customer&gt;&lt;is_company_linked&gt; | Boolean | Cond. | Verplicht als is_anonymous = false. true of false. |
-| Customer | &lt;customer&gt;&lt;company_id&gt; | String | Cond. | Verplicht als is_company_linked = true. UUID van de parent company (x_user_id van parent_id in Odoo). |
-| Customer | &lt;customer&gt;&lt;address&gt; | Object | Cond. | Volledig optioneel blok. Verplicht als is_anonymous = false. |
-| Item | &lt;item&gt;&lt;id&gt; | String (SKU) | Ja  | SKU / product ID. Niet leeg. |
+| Customer | &lt;customer&gt;&lt;address&gt; | Object | Nee | Optioneel adresblok. Niet verstuurd door de huidige poller implementatie. |
+| Item | &lt;item&gt;&lt;id&gt; | String (LINE-xxx) | Ja  | Uniek transactieregel-ID (formaat LINE-{pos.order.line id}). Wordt door CRM gebruikt als Consumption_ID (External ID) voor Upsert. Niet leeg. |
+| Item | &lt;item&gt;&lt;sku&gt; | String | Ja  | Fysiek product-ID uit Odoo (product_id[0]). Voorheen de waarde van &lt;id&gt;. |
 | Item | &lt;item&gt;&lt;description&gt; | String | Ja  | Productnaam |
 | Item | &lt;item&gt;&lt;quantity&gt; | Integer | Ja  | Positief geheel getal, min. 1 |
 | Item | &lt;item&gt;&lt;unit_price currency="eur"&gt; | Decimal | Ja  | Positief decimaal, excl. BTW. Attribuut currency altijd eur. |
+| Item | &lt;item&gt;&lt;total_amount currency="eur"&gt; | Decimal | Ja  | Totaalbedrag voor deze bestelregel (quantity × unit_price). Berekend door poller.py. Attribuut currency altijd eur. Toegevoegd in schema v2.2. |
 | Item | &lt;item&gt;&lt;vat_rate&gt; | Integer | Ja  | Enum: 0, 6, 12 of 21. Waarde 0 is toegestaan voor Top-up producten. Opgehaald via account.tax. |
 | Item | &lt;item&gt;&lt;item_type&gt; | String | Nee | Optioneel. Waarde wallet_topup voor Top-up producten. Automatisch gezet door poller als vat_rate=0. |
 
@@ -273,7 +274,6 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | &lt;vat_number&gt; | Verplicht als customer.type = company | → kassa.errors | ERROR: btw_nummer required when type=company |
 | &lt;location&gt; | Verplicht bij badge_scanned | → kassa.errors | ERROR: location required for badge_scanned |
 | &lt;company_name&gt; | Verplicht als customer.type = company | → kassa.errors | ERROR: company_name required when type=company |
-| &lt;company_id&gt; | Verplicht als is_company_linked = true | → kassa.errors | ERROR: company_id required when is_company_linked=true |
 | &lt;customer&gt; blok | Verplicht als is_anonymous = false of afwezig | → kassa.errors / DLQ | XSD-validatiefout: customer required when is_anonymous=false |
 | &lt;invoice&gt;&lt;id&gt; | Verplicht bij payment_context=consumption. Afwezig bij registration. | Geen fout — by design | CRM maakt factuur aan bij registration |
 | &lt;related_message_id&gt; | Optioneel bij system_error, verplicht bij badge_not_found | Bericht wordt alsnog verstuurd | —   |
@@ -301,4 +301,4 @@ Gebruik uitsluitend de onderstaande waarden. Geen hoofdletters, geen spaties, ge
 | &lt;payment_context&gt; | registration, consumption | Onderscheidt inschrijvings- van consumptiebetaling in payment_registered |
 | &lt;vat_rate&gt; | 0, 6, 12, 21 | 0 uitsluitend voor Top-up producten. Waarde opgehaald via account.tax in poller.py. |
 
-Team Kassa | Datamapping v2.3 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | Datamapping v2.5 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
