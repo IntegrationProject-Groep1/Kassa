@@ -333,12 +333,26 @@ def build_invoice_request_xml(
     ET.SubElement(body, "user_id").text = user_id
 
     inv = ET.SubElement(body, "invoice_data")
-    ET.SubElement(inv, "name").text = invoice_data["name"]
+
+    first_name = invoice_data.get("first_name")
+    last_name = invoice_data.get("last_name")
+
+    # Backward-compatible fallback for callers still passing a single full name.
+    if (not first_name or not last_name) and invoice_data.get("name"):
+        full_name = str(invoice_data["name"]).strip()
+        parts = full_name.split(maxsplit=1)
+        if not first_name and parts:
+            first_name = parts[0]
+        if not last_name:
+            last_name = parts[1] if len(parts) > 1 else ""
+
+    ET.SubElement(inv, "first_name").text = str(first_name or "")
+    ET.SubElement(inv, "last_name").text = str(last_name or "")
     ET.SubElement(inv, "email").text = invoice_data["email"]
 
     addr = ET.SubElement(inv, "address")
-    for k, v in invoice_data["address"].items():
-        ET.SubElement(addr, k).text = v
+    for k, v in invoice_data.get("address", {}).items():
+        ET.SubElement(addr, k).text = str(v) if v is not None else ""
 
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
@@ -407,7 +421,7 @@ def send_error_to_queue(
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
 
-    ET.SubElement(body, "description").text = error_description[:500]
+    ET.SubElement(body, "error_description").text = error_description[:500]
 
     error_xml = _to_xml(root)
 
