@@ -264,6 +264,99 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
         return False
 
 
+VALID_VAT_RATES = {0, 6, 12, 21}
+TARGET_VAT_RATE = 6
+
+
+def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
+    """
+    Ensure all POS products have a valid VAT rate (0, 6, 12 or 21%).
+    Products with non-standard rates are updated to TARGET_VAT_RATE.
+    Safe to call on every startup — skips products already correctly configured.
+    """
+    print("🔍 Checking POS product tax rates...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        if not uid:
+            print("⚠️  Cannot check product taxes — Odoo auth failed", flush=True)
+            return
+
+        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
+
+        # Find or create target tax
+        existing_tax = models.execute_kw(
+            odoo_db, uid, odoo_pass,
+            "account.tax", "search_read",
+            [[["amount", "=", TARGET_VAT_RATE], ["type_tax_use", "in", ["sale", "all"]]]],
+            {"fields": ["id", "name"], "limit": 1}
+        )
+        if existing_tax:
+            target_tax_id = existing_tax[0]["id"]
+        else:
+            target_tax_id = models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "account.tax", "create",
+                [{"name": f"BTW {TARGET_VAT_RATE}%", "amount": TARGET_VAT_RATE,
+                  "type_tax_use": "sale", "amount_type": "percent"}]
+            )
+            print(f"   ✅ Created {TARGET_VAT_RATE}% tax", flush=True)
+
+        # Check all POS products
+        product_ids = models.execute_kw(
+            odoo_db, uid, odoo_pass,
+            "product.template", "search",
+            [[["available_in_pos", "=", True]]]
+        )
+        if not product_ids:
+            print("✅ No POS products found — skipping", flush=True)
+            return
+
+        products = models.execute_kw(
+            odoo_db, uid, odoo_pass,
+            "product.template", "read",
+            [product_ids, ["id", "name", "taxes_id"]]
+        )
+
+        # Batch fetch all unique tax IDs in one call
+        all_tax_ids = list({tid for p in products for tid in p.get("taxes_id", [])})
+        tax_map = {}
+        if all_tax_ids:
+            taxes_data = models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "account.tax", "read",
+                [all_tax_ids, ["amount"]]
+            )
+            tax_map = {t["id"]: t["amount"] for t in taxes_data}
+
+        # Identify products that need fixing
+        to_fix_ids = []
+        for product in products:
+            tax_ids = product.get("taxes_id", [])
+            if not tax_ids:
+                to_fix_ids.append(product["id"])
+                continue
+            rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
+            if not rates.issubset(VALID_VAT_RATES):
+                print(f"   Fixing '{product['name']}': {rates} → {TARGET_VAT_RATE}%", flush=True)
+                to_fix_ids.append(product["id"])
+
+        # Batch update all products in a single call
+        if to_fix_ids:
+            models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "product.template", "write",
+                [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
+            )
+            print(f"✅ Product taxes ready — {len(to_fix_ids)} product(s) updated to {TARGET_VAT_RATE}%",
+                  flush=True)
+        else:
+            print("✅ Product taxes ready — all products already have valid rates", flush=True)
+
+    except Exception as e:
+        print(f"⚠️  Could not verify/fix product taxes: {type(e).__name__}: {str(e)[:200]}", flush=True)
+
+
 def main():
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
@@ -291,6 +384,9 @@ def main():
 
     # Step 4: Ensure custom Odoo fields exist (x_user_id, x_badge_id, etc.)
     ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass)
+
+    # Step 5: Fix non-standard product tax rates
+    ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass)
 
     # ── Receiver thread ────────────────────────────────────────────────────────
     receiver_thread = threading.Thread(
