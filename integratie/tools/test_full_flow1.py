@@ -17,7 +17,7 @@ import xmlrpc.client
 import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_utils import get_env, parse_rabbit_port  # noqa: E402
+from config_utils import get_env, parse_rabbit_port  # noqa: E402  # type: ignore[attr-defined]
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 ODOO_URL = os.environ.get("ODOO_URL")
