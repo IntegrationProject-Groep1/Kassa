@@ -212,13 +212,9 @@ class OrderPoller:
                 email=customer_info.get('email', '') if customer_info else '',
                 is_anonymous=is_anonymous)
 
-            # Send via sender module (automatically handles RabbitMQ + outbox
-            # fallback)
-            sender.send_typed_message('consumption_order', xml_message)
-
-            # Mark as sent in Odoo (persistent across restarts)
-            models = xmlrpc.client.ServerProxy(
-                f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
+            # Mark as sent in Odoo before sending — minimizes duplicates if
+            # Odoo write fails the order stays unset and retried next cycle,
+            # but if send fails the sender's outbox buffer handles it.
             models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'write',
@@ -226,6 +222,9 @@ class OrderPoller:
             )
             # Also keep in-memory cache to avoid re-fetching within same session
             self.processed_orders[order_id] = True
+
+            # Send via sender module (automatically handles RabbitMQ + outbox fallback)
+            sender.send_typed_message('consumption_order', xml_message)
             if len(self.processed_orders) > 10000:
                 self.processed_orders.popitem(last=False)
 
