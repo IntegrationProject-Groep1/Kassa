@@ -182,7 +182,7 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
         return True
 
     except Exception as e:
-        print(f"⚠️  Could not verify/create custom fields: {e}", flush=True)
+        print(f"⚠️  Could not verify/create custom fields: {type(e).__name__}", flush=True)
         return False
 
 

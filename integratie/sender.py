@@ -250,7 +250,7 @@ def send_typed_message(msg_type: str, message_xml: str) -> None:
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.error(f"❌ Bericht NIET verstuurd — validatiefout: {e}")
+        logger.error(f"❌ Bericht NIET verstuurd — {type(e).__name__} tijdens validatie van '{msg_type}'")
         send_error_to_queue("invalid_xml_format", None, str(e)[:500])
         return
 
