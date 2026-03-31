@@ -92,7 +92,7 @@ def fix_product_taxes(uid, models, target_tax_id):
         if not tax_ids:
             to_fix.append(product)
             continue
-        rates = {int(tax_map.get(tid, 0)) for tid in tax_ids}
+        rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
         if not rates.issubset(VALID_VAT_RATES):
             to_fix.append(product)
             print(f"  [{product['id']}] {product['name']} — tarief(en): {rates} → wordt aangepast")

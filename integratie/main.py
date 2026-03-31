@@ -336,7 +336,7 @@ def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
             if not tax_ids:
                 to_fix_ids.append(product["id"])
                 continue
-            rates = {int(tax_map.get(tid, 0)) for tid in tax_ids}
+            rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
             if not rates.issubset(VALID_VAT_RATES):
                 print(f"   Fixing '{product['name']}': {rates} → {TARGET_VAT_RATE}%", flush=True)
                 to_fix_ids.append(product["id"])
