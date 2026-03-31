@@ -180,31 +180,30 @@ def connect_to_rabbitmq():
 
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
+    # Require broker confirms so publish success reflects broker acknowledgement.
+    _channel.confirm_delivery()
     setup_exchange(_channel)
     return _connection, _channel
 
 
 def _publish_or_raise(routing_key: str, message_xml: str) -> None:
     """Publish once and retry once with a fresh connection on failure."""
-    try:
-        _, channel = connect_to_rabbitmq()
-        channel.basic_publish(
-            exchange=EXCHANGE_NAME,
-            routing_key=routing_key,
-            body=message_xml.encode("utf-8"),
-            properties=pika.BasicProperties(delivery_mode=2),
-        )
-        return
-    except Exception:
-        _reset_connection()
-
-    _, channel = connect_to_rabbitmq()
-    channel.basic_publish(
-        exchange=EXCHANGE_NAME,
-        routing_key=routing_key,
-        body=message_xml.encode("utf-8"),
-        properties=pika.BasicProperties(delivery_mode=2),
-    )
+    for attempt in range(2):
+        try:
+            _, channel = connect_to_rabbitmq()
+            published = channel.basic_publish(
+                exchange=EXCHANGE_NAME,
+                routing_key=routing_key,
+                body=message_xml.encode("utf-8"),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+            if published is False:
+                raise RuntimeError("RabbitMQ did not confirm message publish")
+            return
+        except Exception:
+            _reset_connection()
+            if attempt == 1:
+                raise
 
 
 def setup_exchange(channel):
