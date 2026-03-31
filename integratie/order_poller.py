@@ -58,11 +58,11 @@ class OrderPoller:
             models = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
-            # Search for completed orders (paid or done)
+            # Search for completed orders not yet sent to RabbitMQ
             order_ids = models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'search',
-                [[['state', 'in', ['paid', 'done']]]]
+                [[['state', 'in', ['paid', 'done']], ['x_rabbitmq_sent', '=', False]]]
             )
 
             if not order_ids:
@@ -216,9 +216,16 @@ class OrderPoller:
             # fallback)
             sender.send_typed_message('consumption_order', xml_message)
 
-            # Mark as processed
+            # Mark as sent in Odoo (persistent across restarts)
+            models = xmlrpc.client.ServerProxy(
+                f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
+            models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'write',
+                [[order_id], {'x_rabbitmq_sent': True}]
+            )
+            # Also keep in-memory cache to avoid re-fetching within same session
             self.processed_orders[order_id] = True
-            # Evict oldest if we exceed 10,000 to prevent memory leaks
             if len(self.processed_orders) > 10000:
                 self.processed_orders.popitem(last=False)
 
