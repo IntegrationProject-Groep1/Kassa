@@ -318,40 +318,43 @@ def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
             [product_ids, ["id", "name", "taxes_id"]]
         )
 
-        fixed = 0
+        # Batch fetch all unique tax IDs in one call
+        all_tax_ids = list({tid for p in products for tid in p.get("taxes_id", [])})
+        tax_map = {}
+        if all_tax_ids:
+            taxes_data = models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "account.tax", "read",
+                [all_tax_ids, ["amount"]]
+            )
+            tax_map = {t["id"]: t["amount"] for t in taxes_data}
+
+        # Identify products that need fixing
+        to_fix_ids = []
         for product in products:
             tax_ids = product.get("taxes_id", [])
             if not tax_ids:
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "product.template", "write",
-                    [[product["id"]], {"taxes_id": [(6, 0, [target_tax_id])]}]
-                )
-                fixed += 1
+                to_fix_ids.append(product["id"])
                 continue
-
-            taxes = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "account.tax", "read",
-                [tax_ids, ["amount"]]
-            )
-            rates = {int(t["amount"]) for t in taxes}
+            rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
             if not rates.issubset(VALID_VAT_RATES):
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "product.template", "write",
-                    [[product["id"]], {"taxes_id": [(6, 0, [target_tax_id])]}]
-                )
-                print(f"   ✅ Fixed tax on '{product['name']}': {rates} → {TARGET_VAT_RATE}%", flush=True)
-                fixed += 1
+                print(f"   Fixing '{product['name']}': {rates} → {TARGET_VAT_RATE}%", flush=True)
+                to_fix_ids.append(product["id"])
 
-        if fixed:
-            print(f"✅ Product taxes ready — {fixed} product(s) updated to {TARGET_VAT_RATE}%", flush=True)
+        # Batch update all products in a single call
+        if to_fix_ids:
+            models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "product.template", "write",
+                [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
+            )
+            print(f"✅ Product taxes ready — {len(to_fix_ids)} product(s) updated to {TARGET_VAT_RATE}%",
+                  flush=True)
         else:
             print("✅ Product taxes ready — all products already have valid rates", flush=True)
 
     except Exception as e:
-        print(f"⚠️  Could not verify/fix product taxes: {type(e).__name__}", flush=True)
+        print(f"⚠️  Could not verify/fix product taxes: {type(e).__name__}: {str(e)[:200]}", flush=True)
 
 
 def main():

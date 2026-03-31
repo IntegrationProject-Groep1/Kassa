@@ -74,19 +74,25 @@ def fix_product_taxes(uid, models, target_tax_id):
         [product_ids, ["id", "name", "taxes_id"]]
     )
 
+    # Batch fetch all unique tax IDs in one call
+    all_tax_ids = list({tid for p in products for tid in p.get("taxes_id", [])})
+    tax_map = {}
+    if all_tax_ids:
+        taxes_data = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "account.tax", "read",
+            [all_tax_ids, ["amount"]]
+        )
+        tax_map = {t["id"]: t["amount"] for t in taxes_data}
+
+    # Identify products that need fixing
     to_fix = []
     for product in products:
         tax_ids = product.get("taxes_id", [])
         if not tax_ids:
             to_fix.append(product)
             continue
-
-        taxes = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "account.tax", "read",
-            [tax_ids, ["amount"]]
-        )
-        rates = {int(t["amount"]) for t in taxes}
+        rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
         if not rates.issubset(VALID_VAT_RATES):
             to_fix.append(product)
             print(f"  [{product['id']}] {product['name']} — tarief(en): {rates} → wordt aangepast")
@@ -95,13 +101,15 @@ def fix_product_taxes(uid, models, target_tax_id):
         print("Alle POS-producten hebben al een geldig BTW-tarief.")
         return
 
-    print(f"\n{len(to_fix)} product(en) worden aangepast naar {TARGET_VAT_RATE}%...")
+    # Batch update all products in a single call
+    to_fix_ids = [p["id"] for p in to_fix]
+    print(f"\n{len(to_fix_ids)} product(en) worden aangepast naar {TARGET_VAT_RATE}%...")
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "product.template", "write",
+        [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
+    )
     for product in to_fix:
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "product.template", "write",
-            [[product["id"]], {"taxes_id": [(6, 0, [target_tax_id])]}]
-        )
         print(f"  ✅ [{product['id']}] {product['name']}")
 
     print(f"\n✅ {len(to_fix)} product(en) bijgewerkt naar {TARGET_VAT_RATE}% BTW.")
