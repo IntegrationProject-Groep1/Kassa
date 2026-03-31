@@ -7,6 +7,7 @@ Versie 3.4 — Buffer + routing key mapping + error handling
 import pika
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -200,10 +201,12 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
             if published is False:
                 raise RuntimeError("RabbitMQ did not confirm message publish")
             return
-        except Exception:
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):
             _reset_connection()
             if attempt == 1:
                 raise
+            # Small backoff prevents immediate hammering when broker path is unstable.
+            time.sleep(0.25)
 
 
 def setup_exchange(channel):
