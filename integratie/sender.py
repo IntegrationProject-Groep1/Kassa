@@ -1,7 +1,7 @@
 """
 Sender — Verstuurt berichten naar RabbitMQ via kassa.exchange
 Met lokale buffer (outbox.json) voor offline resilience
-Versie 3.4 — Buffer + routing key mapping + error handling
+Versie 3.5 — Uitgaande XSD-validatie voor consumption_order
 """
 
 import pika
@@ -12,8 +12,14 @@ from pathlib import Path
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import logging
+from lxml import etree
 
 from config_utils import parse_rabbit_port
+
+
+class BufferFullError(RuntimeError):
+    """Raised when the outbox buffer has reached its maximum capacity."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +83,13 @@ def _buffer_message(routing_key: str, message_xml: str) -> None:
     entries = _read_buffer()
 
     if len(entries) >= BUFFER_MAX_MESSAGES:
-        logger.warning(
-            f"⚠️  Buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}")
         send_error_to_queue(
             "offline_queue_full",
             None,
             f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
-        return
+        raise BufferFullError(
+            f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+        )
 
     entries.append(entry)
     BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -215,8 +221,42 @@ def send_message(routing_key: str, message_xml: str) -> None:
         _buffer_message(routing_key, message_xml)
 
 
+# ── Uitgaande XSD-validatie ────────────────────────────────────────────────────
+_SCHEMA_DIR = Path(__file__).parent / "schemas"
+
+_OUTGOING_SCHEMA_MAP = {
+    "consumption_order": _SCHEMA_DIR / "schema_consumption_order_v2.3.xsd",
+}
+
+# Cache parsed schemas to avoid re-parsing on every message
+_schema_cache: dict[str, etree.XMLSchema] = {}
+
+
+def _validate_outgoing(msg_type: str, message_xml: str) -> None:
+    """
+    Validate outgoing XML against the corresponding XSD schema.
+    Raises ValueError if validation fails. Skips silently if no schema is mapped.
+    """
+    schema_path = _OUTGOING_SCHEMA_MAP.get(msg_type)
+    if not schema_path or not schema_path.exists():
+        return
+
+    if msg_type not in _schema_cache:
+        _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+
+    xml_doc = etree.fromstring(message_xml.encode("utf-8"))
+    if not _schema_cache[msg_type].validate(xml_doc):
+        errors = str(_schema_cache[msg_type].error_log)
+        raise ValueError(f"Uitgaande XSD-validatie mislukt voor '{msg_type}':\n{errors}")
+
+
 def send_typed_message(msg_type: str, message_xml: str) -> None:
-    """Send message with automatic routing key selection based on type"""
+    """Validate against XSD then send with automatic routing key selection based on type."""
+    try:
+        _validate_outgoing(msg_type, message_xml)
+    except ValueError as e:
+        logger.warning(f"⚠️  XSD-validatie mislukt voor '{msg_type}': {str(e)[:300]} — bericht wordt toch verstuurd")
+
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     send_message(routing_key, message_xml)
 
@@ -249,11 +289,11 @@ def _to_xml(root) -> str:
 
 # ============================================================================
 # Builder Functions — All outgoing message types
-# ============================================================================
+# ===========================================================================
 
 def build_consumption_order_xml(
     items, customer_id=None, user_id=None,
-    is_company_linked=False, company_id=None,
+    customer_type="private",
     email=None, address=None, is_anonymous=False
 ) -> str:
     """Build consumption_order message (POS order with items)"""
@@ -266,10 +306,7 @@ def build_consumption_order_xml(
         cust = ET.SubElement(body, "customer")
         ET.SubElement(cust, "id").text = str(customer_id)
         ET.SubElement(cust, "user_id").text = str(user_id) if user_id else ""
-        ET.SubElement(cust, "is_company_linked").text = str(
-            is_company_linked).lower()
-        if company_id:
-            ET.SubElement(cust, "company_id").text = str(company_id)
+        ET.SubElement(cust, "type").text = customer_type
         ET.SubElement(cust, "email").text = str(email) if email else ""
         if address:
             addr = ET.SubElement(cust, "address")
@@ -280,11 +317,15 @@ def build_consumption_order_xml(
     for i in (items or []):
         el = ET.SubElement(items_el, "item")
         ET.SubElement(el, "id").text = str(i["id"])
+        ET.SubElement(el, "sku").text = str(i["sku"])
         ET.SubElement(el, "description").text = i["description"]
         ET.SubElement(el, "quantity").text = str(i["quantity"])
         up = ET.SubElement(el, "unit_price")
         up.text = str(i["unit_price"])
         up.set("currency", i.get("currency", "eur"))
+        tp = ET.SubElement(el, "total_amount")
+        tp.text = f"{i['total_amount']:.2f}"
+        tp.set("currency", i.get("currency", "eur"))
         ET.SubElement(el, "vat_rate").text = str(i["vat_rate"])
         if i.get("item_type"):
             ET.SubElement(el, "item_type").text = i["item_type"]
@@ -333,12 +374,26 @@ def build_invoice_request_xml(
     ET.SubElement(body, "user_id").text = user_id
 
     inv = ET.SubElement(body, "invoice_data")
-    ET.SubElement(inv, "name").text = invoice_data["name"]
+
+    first_name = invoice_data.get("first_name")
+    last_name = invoice_data.get("last_name")
+
+    # Backward-compatible fallback for callers still passing a single full name.
+    if (not first_name or not last_name) and invoice_data.get("name"):
+        full_name = str(invoice_data["name"]).strip()
+        parts = full_name.split(maxsplit=1)
+        if not first_name and parts:
+            first_name = parts[0]
+        if not last_name:
+            last_name = parts[1] if len(parts) > 1 else ""
+
+    ET.SubElement(inv, "first_name").text = str(first_name or "")
+    ET.SubElement(inv, "last_name").text = str(last_name or "")
     ET.SubElement(inv, "email").text = invoice_data["email"]
 
     addr = ET.SubElement(inv, "address")
-    for k, v in invoice_data["address"].items():
-        ET.SubElement(addr, k).text = v
+    for k, v in invoice_data.get("address", {}).items():
+        ET.SubElement(addr, k).text = str(v) if v is not None else ""
 
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
@@ -407,7 +462,7 @@ def send_error_to_queue(
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
 
-    ET.SubElement(body, "description").text = error_description[:500]
+    ET.SubElement(body, "error_description").text = error_description[:500]
 
     error_xml = _to_xml(root)
 

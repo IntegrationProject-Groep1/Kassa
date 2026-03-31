@@ -1,7 +1,7 @@
 # XML_Structuren_Kassa.docx
 
 **Technische Integratiedocumentatie — XML & XSD**
-Team Kassa (Odoo POS) — Versie 2.3 — Geïntegreerd document
+Team Kassa (Odoo POS) — Versie 2.5 — Geïntegreerd document
 Conform XML\_naamgeving standaard (snake\_case) | Integratieproject Desideriushogeschool 2026
 # 1\. Overzicht van alle Flows
 Alle messageType-waarden zijn conform de snake\_case naamgevingsstandaard. Flows 11–16 zijn uitbreidingen op de basisflows.
@@ -12,14 +12,14 @@ Alle messageType-waarden zijn conform de snake\_case naamgevingsstandaard. Flows
 | 2 | Inkomend | IoT | Odoo | kassa.incoming | badge\_scanned | schema\_scan\_badge.xsd |
 | 3 | Inkomend | CRM | Odoo | kassa.incoming | profile\_update | schema\_profiel\_update.xsd |
 | 4 | Inkomend | CRM | Odoo | kassa.incoming | cancel\_registration | schema\_cancel\_registration.xsd |
-| 5A | Uitgaand | Odoo | CRM | kassa.payments | consumption\_order | schema\_consumption\_order\_v2.1.xsd |
+| 5A | Uitgaand | Odoo | CRM | kassa.payments | consumption\_order | schema\_consumption\_order\_v2.3.xsd |
 | 5B | Uitgaand | Odoo | CRM | kassa.payments | payment\_registered | schema\_payment\_registered\_v2.1.xsd |
 | 6 | Uitgaand | Odoo | Elastic | heartbeat | heartbeat | schema\_heartbeat.xsd |
 | 7 | Uitgaand | Odoo | Elastic | kassa.errors | system\_error | schema\_error.xsd |
 | 8 | Uitgaand | Odoo | Drupal | frontend.payments | payment\_status | schema\_payment\_status.xsd |
 | 9 | Uitgaand | Odoo | Drupal | frontend.payments | wallet\_balance\_update | schema\_wallet\_balance\_update.xsd |
 | 10 | Uitgaand | Odoo | CRM | kassa.payments | invoice\_request | schema\_invoice\_request.xsd |
-| 11 | Uitgaand | Odoo | CRM | kassa.payments | consumption\_order (is\_anonymous=true) | schema\_consumption\_order\_v2.1.xsd |
+| 11 | Uitgaand | Odoo | CRM | kassa.payments | consumption\_order (is\_anonymous=true) | schema\_consumption\_order\_v2.3.xsd |
 | 12 | Uitgaand | Odoo | CRM | kassa.payments | badge\_assigned | schema\_badge\_assigned.xsd |
 | 13 | Uitgaand (2-staps) | Odoo | CRM + Drupal | kassa.payments + frontend.payments | consumption\_order + wallet\_balance\_update | zie Flow 5A + Flow 9 |
 | 14 | Uitgaand | Odoo | CRM | kassa.payments | payment\_registered (context=registration) | schema\_payment\_registered\_v2.1.xsd |
@@ -264,8 +264,8 @@ XSD Schema (schema\_cancel\_registration.xsd):
 | **Queue:** kassa.payments |
 | **Routing key:** kassa.payments.consumption |
 | **type:** consumption\_order |
-| **Bestand:** schema\_consumption\_order\_v2.1.xsd |
-| **XSD versie:** v2.1 — dekt ook anonieme aankopen (Flow 11) en top-up producten (Flow 13) |
+| **Bestand:** schema\_consumption\_order\_v2.3.xsd |
+| **XSD versie:** v2.3 — dekt ook anonieme aankopen (Flow 11) en top-up producten (Flow 13); &lt;id&gt; is nu de unieke transactieregel-ID (LINE-xxx / Consumption\_ID), &lt;sku&gt; toegevoegd als fysiek product-ID |
 
 Voorbeeld XML:
 <?xml version="1.0" encoding="UTF-8"?>
@@ -289,18 +289,25 @@ Voorbeeld XML:
 </customer>
 <items>
 <item>
-<id>BEV-001</id>
+<id>LINE-4201</id>
+<sku>BEV-001</sku>
 <description>Koffie</description>
 <quantity>2</quantity>
 <unit\_price currency="eur">2.50</unit\_price>
+<total\_amount currency="eur">5.00</total\_amount>
 <vat\_rate>6</vat\_rate>
 </item>
 </items>
 </body>
 </message>
-XSD Schema (schema\_consumption\_order\_v2.1.xsd):
+XSD Schema (schema\_consumption\_order\_v2.3.xsd):
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Wijzigingen t.o.v. v2.0:
+<!-- Wijzigingen t.o.v. v2.2:
+\- id in ItemType is nu de unieke transactieregel-ID (LINE-xxx), gebruikt als Consumption\_ID door CRM voor Upsert
+\- sku toegevoegd aan ItemType: het fysieke product-ID uit Odoo (voorheen de waarde van <id>)
+Wijzigingen t.o.v. v2.1:
+\- total\_amount toegevoegd aan ItemType (quantity x unit\_price, berekend door poller.py)
+Wijzigingen t.o.v. v2.0:
 \- is\_anonymous boolean toegevoegd (default false)
 \- <customer> volledig optioneel (minOccurs=0)
 \- item\_type optioneel veld toegevoegd (wallet\_topup voor top-up producten)
@@ -322,9 +329,9 @@ XSD Schema (schema\_consumption\_order\_v2.1.xsd):
 </xs:sequence></xs:complexType>
 <!-- CustomerType: alle velden optioneel in XSD.
 Conditionele validatie (is\_anonymous=false -> klantdata verplicht)
-afgedwongen in [receiver.py](http://receiver.py), niet door XSD. -->
+afgedwongen in code, niet door XSD. -->
 <xs:complexType name="CustomerType"><xs:sequence>
-<xs:element name="id" type="xs:integer" minOccurs="0"/>
+<xs:element name="id" type="xs:string" minOccurs="0"/>
 <xs:element name="user\_id" type="xs:string" minOccurs="0"/>
 <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
 <xs:enumeration value="private"/>
@@ -334,7 +341,10 @@ afgedwongen in [receiver.py](http://receiver.py), niet door XSD. -->
 <xs:element name="address" type="AddressType" minOccurs="0"/>
 </xs:sequence></xs:complexType>
 <xs:complexType name="ItemType"><xs:sequence>
+<!-- id: unieke transactieregel-ID (formaat LINE-xxx). Gebruikt als Consumption\_ID door CRM voor Upsert. -->
 <xs:element name="id" type="xs:string"/>
+<!-- sku: fysiek product-ID uit Odoo (voorheen de waarde van <id>). -->
+<xs:element name="sku" type="xs:string"/>
 <xs:element name="description" type="xs:string"/>
 <xs:element name="quantity" type="xs:positiveInteger"/>
 <xs:element name="unit\_price">
@@ -349,6 +359,12 @@ afgedwongen in [receiver.py](http://receiver.py), niet door XSD. -->
 <xs:enumeration value="12"/>
 <xs:enumeration value="21"/>
 </xs:restriction></xs:simpleType></xs:element>
+<xs:element name="total\_amount">
+<xs:complexType><xs:simpleContent>
+<xs:extension base="xs:decimal">
+<xs:attribute name="currency" type="xs:string" use="required"/>
+</xs:extension></xs:simpleContent></xs:complexType>
+</xs:element>
 <!-- item\_type optioneel: waarde wallet\_topup voor top-up producten -->
 <xs:element name="item\_type" type="xs:string" minOccurs="0"/>
 </xs:sequence></xs:complexType>
@@ -727,9 +743,9 @@ XSD Schema (schema\_invoice\_request.xsd):
 | **Routing key:** kassa.payments.consumption |
 | **type:** consumption\_order |
 | **is\_anonymous:** true |
-| **Bestand:** schema\_consumption\_order\_v2.1.xsd — zelfde XSD als Flow 5A |
+| **Bestand:** schema\_consumption\_order\_v2.3.xsd — zelfde XSD als Flow 5A |
 
-Een bezoeker koopt iets aan de kassa zonder badge en zonder account. De <customer>-sectie wordt volledig weggelaten. De XSD (v2.1) valideert dit correct via minOccurs=0 op het <customer> element.
+Een bezoeker koopt iets aan de kassa zonder badge en zonder account. De <customer>-sectie wordt volledig weggelaten. De XSD (v2.3) valideert dit correct via minOccurs=0 op het <customer> element.
 Voorbeeld XML:
 <?xml version="1.0" encoding="UTF-8"?>
 <message>
@@ -744,7 +760,8 @@ Voorbeeld XML:
 <is\_anonymous>true</is\_anonymous>
 <items>
 <item>
-<id>BEV-002</id>
+<id>LINE-4202</id>
+<sku>BEV-002</sku>
 <description>Cola</description>
 <quantity>1</quantity>
 <unit\_price currency="eur">2.00</unit\_price>
@@ -754,7 +771,7 @@ Voorbeeld XML:
 </body>
 </message>
 Sad path: Als is\_anonymous=false maar <customer> ontbreekt, faalt XSD-validatie en gaat het bericht naar de DLQ. Na een anonieme aankoop is achteraf geen factuur meer mogelijk — de klant krijgt enkel een kassaticket.
-_XSD Schema: hergebruikt schema\_consumption\_order\_v2.1.xsd — zie Flow 5A._
+_XSD Schema: hergebruikt schema\_consumption\_order\_v2.3.xsd — zie Flow 5A._
 
 | **📤 FLOW 12: Badge Koppeling aan Account (badge\_assigned)**<br>Odoo (Kassa) → Salesforce (CRM) via kassa.payments | routing key: kassa.payments.badge |
 | --- |
@@ -811,7 +828,7 @@ XSD Schema (schema\_badge\_assigned.xsd):
 | **Stap 2 — type:** wallet\_balance\_update (Flow 9) |
 | **Stap 2 — Queue:** frontend.payments → Drupal | routing key: kassa.frontend.wallet |
 | **vat\_rate:** 0 (saldo-opwaardering is geen belaste dienst) |
-| **Bestand:** schema\_consumption\_order\_v2.1.xsd + schema\_wallet\_balance\_update.xsd |
+| **Bestand:** schema\_consumption\_order\_v2.3.xsd + schema\_wallet\_balance\_update.xsd |
 
 Voorbeeld XML — Top-up via consumption\_order:
 <?xml version="1.0" encoding="UTF-8"?>
@@ -833,7 +850,8 @@ Voorbeeld XML — Top-up via consumption\_order:
 </customer>
 <items>
 <item>
-<id>TOPUP-010</id>
+<id>LINE-4210</id>
+<sku>TOPUP-010</sku>
 <description>Top-up EUR 10</description>
 <quantity>1</quantity>
 <unit\_price currency="eur">10.00</unit\_price>
@@ -843,7 +861,7 @@ Voorbeeld XML — Top-up via consumption\_order:
 </items>
 </body>
 </message>
-_XSD Schema: hergebruikt schema\_consumption\_order\_v2.1.xsd (stap 1, zie Flow 5A) en schema\_wallet\_balance\_update.xsd (stap 2, zie Flow 9)._
+_XSD Schema: hergebruikt schema\_consumption\_order\_v2.3.xsd (stap 1, zie Flow 5A) en schema\_wallet\_balance\_update.xsd (stap 2, zie Flow 9)._
 Stap 2 — wallet\_balance\_update naar Drupal: zie Flow 9 XML-voorbeeld. Stuurt het nieuwe saldo na de top-up.
 
 | **📤 FLOW 14: Inschrijvingsvergoeding Betaald aan Kassa**<br>Odoo (Kassa) → Salesforce (CRM) via kassa.payments | routing key: kassa.payments.registration |
@@ -1021,4 +1039,4 @@ Gebruik uitsluitend de onderstaande waarden. Conform XML\_naamgeving §4.
 | <error\_code> | invalid\_xml\_format, unknown\_message\_type, profile\_not\_found, odoo\_api\_error, rabbitmq\_connection\_error, offline\_queue\_full, badge\_not\_found | Altijd lowercase. unknown\_message\_type: onbekend berichttype ontvangen in [receiver.py](http://receiver.py). |
 | <vat\_rate> | 0, 6, 12, 21 | 0 uitsluitend voor Top-up producten. Opgehaald via [account.tax](http://account.tax) in [poller.py](http://poller.py). |
 
-Team Kassa | XML Structuren v2.3 | Conform XML\_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | XML Structuren v2.4 | Conform XML\_naamgeving standaard | Integratieproject Desideriushogeschool | 2026

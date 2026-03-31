@@ -18,6 +18,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MAX_CACHE_SIZE = 10_000
+
 
 class OrderPoller:
     def __init__(self):
@@ -58,11 +60,11 @@ class OrderPoller:
             models = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
-            # Search for completed orders (paid or done)
+            # Search for completed orders not yet sent to RabbitMQ
             order_ids = models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'search',
-                [[['state', 'in', ['paid', 'done']]]]
+                [[['state', 'in', ['paid', 'done']], ['x_rabbitmq_sent', '=', False]]]
             )
 
             if not order_ids:
@@ -102,10 +104,17 @@ class OrderPoller:
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
 
-            customer = models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read', [
-                    partner_id, [
-                        'id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_user_id']])
+            base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id']
+            try:
+                customer = models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
+                    [partner_id, base_fields + ['x_user_id']])
+            except Exception:
+                # x_user_id is a custom field that may not exist yet in this Odoo instance
+                logger.warning("⚠️  x_user_id field not found on res.partner — fetching without it")
+                customer = models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
+                    [partner_id, base_fields])
 
             return customer[0] if customer else None
         except Exception as e:
@@ -149,7 +158,7 @@ class OrderPoller:
                 line_detail = models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order.line', 'read',
-                    [line_id, ['product_id', 'qty', 'price_unit', 'tax_ids']]
+                    [line_id, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
                 )
 
                 if line_detail:
@@ -157,7 +166,8 @@ class OrderPoller:
                     product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
 
                     # Fetch tax details
-                    vat_rate = 0.0
+                    # account.tax.amount is stored as a percentage in Odoo (e.g. 6.0 for 6%)
+                    vat_rate = 0
                     tax_ids = line.get('tax_ids', [])
                     if tax_ids:
                         tax_details = models.execute_kw(
@@ -166,28 +176,26 @@ class OrderPoller:
                             [tax_ids, ['amount']]
                         )
                         if tax_details:
-                            # Use the highest tax rate or the first one
-                            vat_rate = max(t['amount']
-                                           for t in tax_details) / 100.0
+                            vat_rate = int(max(t['amount'] for t in tax_details))
 
                     items.append({
-                        'id': str(line_id),
+                        'id': f"LINE-{line['id']}",
+                        'sku': str(line['product_id'][0]),
                         'description': product_name,
                         'quantity': int(line['qty']),
                         'unit_price': float(line['price_unit']),
-                        'vat_rate': float(vat_rate),
+                        'total_amount': round(line['qty'] * line['price_unit'], 2),
+                        'vat_rate': vat_rate,
                         'currency': 'eur'
                     })
 
-            # Check if linked to a company
-            is_company_linked = False
-            company_id = None
+            # Determine customer type (company or private) for XML <type> field
+            customer_type = "private"
             if customer_info:
                 if customer_info.get('is_company'):
-                    is_company_linked = True
-                    company_id = str(customer_info['id'])
+                    customer_type = "company"
                 elif customer_info.get('parent_id'):
-                    # Explicitly check if the parent is a company
+                    # Contact linked to a parent company → buying on behalf of company
                     parent_id_val = customer_info['parent_id'][0]
                     parent_detail = models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -195,32 +203,34 @@ class OrderPoller:
                         [parent_id_val, ['is_company']]
                     )
                     if parent_detail and parent_detail[0].get('is_company'):
-                        is_company_linked = True
-                        company_id = str(parent_id_val)
+                        customer_type = "company"
 
             # Build consumption_order XML using sender builder
             xml_message = sender.build_consumption_order_xml(
                 items=items,
-                customer_id=str(
-                    customer_info['id']) if customer_info else None,
-                user_id=str(
-                    customer_info.get('x_user_id')) if customer_info else None,
-                is_company_linked=is_company_linked,
-                company_id=company_id,
-                email=customer_info.get(
-                    'email',
-                    '') if customer_info else '',
+                customer_id=str(customer_info['id']) if customer_info else None,
+                user_id=str(customer_info.get('x_user_id')) if customer_info else None,
+                customer_type=customer_type,
+                email=customer_info.get('email', '') if customer_info else '',
                 is_anonymous=is_anonymous)
 
-            # Send via sender module (automatically handles RabbitMQ + outbox
-            # fallback)
+            # Send via sender module (automatically handles RabbitMQ + outbox fallback)
             sender.send_typed_message('consumption_order', xml_message)
 
-            # Mark as processed
+            # Update in-memory cache immediately after send to suppress duplicates
+            # within the same session even if the Odoo write below fails.
             self.processed_orders[order_id] = True
-            # Evict oldest if we exceed 10,000 to prevent memory leaks
-            if len(self.processed_orders) > 10000:
+            if len(self.processed_orders) > MAX_CACHE_SIZE:
                 self.processed_orders.popitem(last=False)
+
+            # Persist sent status in Odoo — survives container restarts.
+            # at-least-once: if this write fails the in-memory cache still
+            # prevents a duplicate storm within the current session.
+            models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'write',
+                [[order_id], {'x_rabbitmq_sent': True}]
+            )
 
             status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
             logger.info(f"📦 Order {order_id}: {status_text}")
