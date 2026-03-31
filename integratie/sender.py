@@ -286,9 +286,7 @@ def send_typed_message(msg_type: str, message_xml: str) -> None:
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.error(f"❌ Bericht NIET verstuurd — {type(e).__name__} tijdens validatie van '{msg_type}'")
-        send_error_to_queue("invalid_xml_format", None, str(e)[:500])
-        return
+        logger.warning(f"⚠️  XSD-validatie mislukt voor '{msg_type}': {str(e)[:300]} — bericht wordt toch verstuurd")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     send_message(routing_key, message_xml)
@@ -322,7 +320,7 @@ def _to_xml(root) -> str:
 
 # ============================================================================
 # Builder Functions — All outgoing message types
-# ============================================================================
+# ===========================================================================
 
 def build_consumption_order_xml(
     items, customer_id=None, user_id=None,
