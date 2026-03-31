@@ -17,26 +17,26 @@ import xmlrpc.client
 import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_utils import get_env, parse_rabbit_port
+from config_utils import get_env, parse_rabbit_port  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-ODOO_URL  = os.environ.get("ODOO_URL")
-ODOO_DB   = os.environ.get("ODOO_DB")
+ODOO_URL = os.environ.get("ODOO_URL")
+ODOO_DB = os.environ.get("ODOO_DB")
 ODOO_USER = os.environ.get("ODOO_USER")
 ODOO_PASS = os.environ.get("ODOO_PASS")
 
-RABBIT_HOST  = get_env("RABBIT_HOST")
-RABBIT_PORT  = parse_rabbit_port()
-RABBIT_USER  = get_env("RABBIT_USER")
-RABBIT_PASS  = get_env("RABBIT_PASS")
+RABBIT_HOST = get_env("RABBIT_HOST")
+RABBIT_PORT = parse_rabbit_port()
+RABBIT_USER = get_env("RABBIT_USER")
+RABBIT_PASS = get_env("RABBIT_PASS")
 RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
 INCOMING_QUEUE = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
 TEST_USER_ID = str(uuid.uuid4())   # fresh UUID elke run
-TEST_NAME    = "Test e2e Janssen"
-TEST_EMAIL   = f"janssen.{TEST_USER_ID[:8]}@testbedrijf.be"
+TEST_NAME = "Test e2e Janssen"
+TEST_EMAIL = f"janssen.{TEST_USER_ID[:8]}@testbedrijf.be"
 TEST_COMPANY = "Test e2e Bedrijf NV"
-TEST_VAT     = "BE0999888777"
+TEST_VAT = "BE0999888777"
 
 SEP = "-" * 60
 
@@ -76,7 +76,7 @@ NEW_REGISTRATION_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 def publish_new_registration():
     print("Stap 1: new_registration sturen naar kassa.incoming...")
     creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    conn  = pika.BlockingConnection(pika.ConnectionParameters(
+    conn = pika.BlockingConnection(pika.ConnectionParameters(
         host=RABBIT_HOST, port=RABBIT_PORT,
         virtual_host=RABBIT_VHOST, credentials=creds,
         heartbeat=30, blocked_connection_timeout=10
@@ -174,7 +174,7 @@ def wait_for_poller(uid, models, order_id, timeout=15):
     # Poller interval is 3s — na max 2 cycli moet het klaar zijn
     for i in range(timeout):
         time.sleep(1)
-        result = models.execute_kw(
+        models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "pos.order", "read",
             [order_id, ["state"]]
@@ -219,7 +219,7 @@ def main():
     print("Verwacht resultaat in de logs:")
     print(f"  [RECEIVER] New customer created: {TEST_NAME} ...")
     print(f"  [POLLER]   Order {order_id}: {TEST_NAME}")
-    print(f"  [SENDER]   Sent: routing_key=kassa.payments.consumption")
+    print("  [SENDER]   Sent: routing_key=kassa.payments.consumption")
     print()
     print("Check met:")
     print("  docker logs kassa_integratie --since 60s")

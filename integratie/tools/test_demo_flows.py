@@ -7,11 +7,10 @@ Gebruik: docker exec kassa_integratie python tools/test_demo_flows.py
 
 import xmlrpc.client
 import os
-import time
 import sys
 
 ODOO_URL = os.environ.get("ODOO_URL")
-ODOO_DB  = os.environ.get("ODOO_DB")
+ODOO_DB = os.environ.get("ODOO_DB")
 ODOO_USER = os.environ.get("ODOO_USER")
 ODOO_PASS = os.environ.get("ODOO_PASS")
 
@@ -135,8 +134,8 @@ def main():
     print(SEP)
 
     uid, models = connect()
-    session_id  = get_open_session(uid, models)
-    product_id  = get_any_product(uid, models)
+    session_id = get_open_session(uid, models)
+    product_id = get_any_product(uid, models)
 
     print()
     print("--- FLOW 2: Anonieme aankoop ---")
@@ -151,7 +150,7 @@ def main():
 
     print()
     print(SEP)
-    print(f"Beide orders staan op PAID in Odoo.")
+    print("Beide orders staan op PAID in Odoo.")
     print(f"  Flow 2 (anoniem):       order id={anon_id}")
     print(f"  Flow 1 (bedrijfsklant): order id={company_id}")
     print()
