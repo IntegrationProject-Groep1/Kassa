@@ -56,7 +56,12 @@ afgedwongen in code, niet door XSD. -->
 <xs:attribute name="currency" type="xs:string" use="required"/>
 </xs:extension></xs:simpleContent></xs:complexType>
 </xs:element>
-<xs:element name="vat_rate" type="xs:nonNegativeInteger"/>
+<xs:element name="vat_rate"><xs:simpleType><xs:restriction base="xs:integer">
+<xs:enumeration value="0"/> <!-- Top-up producten -->
+<xs:enumeration value="6"/>
+<xs:enumeration value="12"/>
+<xs:enumeration value="21"/>
+</xs:restriction></xs:simpleType></xs:element>
 <!-- item_type optioneel: waarde wallet_topup voor top-up producten -->
 <xs:element name="item_type" type="xs:string" minOccurs="0"/>
 </xs:sequence></xs:complexType>
