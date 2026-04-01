@@ -9,6 +9,7 @@ services:
     volumes:
       - ./addons:/mnt/extra-addons
       - ./odoo.conf:/etc/odoo/odoo.conf:ro
+      - odoo-data:/var/lib/odoo
     environment:
       - HOST=kassa-db
       - USER=${POSTGRES_USER}
@@ -52,3 +53,4 @@ services:
 volumes:
   outbox-data:
   db-data:
+  odoo-data:

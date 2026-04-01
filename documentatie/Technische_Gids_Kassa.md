@@ -134,6 +134,31 @@ else:
 
 print('Klant niet gevonden -> nieuwe registratie aanmaken')
 
+## **3.2.1 Incident: Odoo webassets 500 na container herstart**
+
+Symptoom: Odoo POS of backend laadt niet volledig en geeft 500-fouten op paden zoals /web/assets/... met FileNotFoundError in ir_attachment.
+
+Root cause: de database verwijst naar asset-bijlagen in de filestore, maar die bestanden ontbreken op schijf. Dit gebeurt typisch wanneer /var/lib/odoo niet persistent gemount is en de container opnieuw aangemaakt werd.
+
+Preventie (verplicht): mount altijd een Docker named volume op /var/lib/odoo in de kassa-web service.
+
+Herstelprocedure op VM:
+
+1. Compose met persistent filestore deployen.
+
+2. Odoo container recreaten:
+docker compose up -d --force-recreate kassa-web
+
+3. Enkel asset-records laten herbouwen:
+docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"
+
+4. Odoo herstarten:
+docker compose restart kassa-web
+
+5. Browser hard refresh (Ctrl+F5).
+
+Opmerking: XML-RPC deprecation warnings in Odoo 19 zijn informatief en niet de oorzaak van deze 500-fouten.
+
 ## **3.3 Belangrijke Odoo modellen**
 
 |     |     |     |
