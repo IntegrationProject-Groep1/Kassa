@@ -204,16 +204,11 @@ Berichten gemarkeerd met ✔ DONE zijn vaststaande feiten. Vragen gemarkeerd met
 | Formeel goedgekeurd door PM: consumption_order, payment_registered en alle update-events (profile_update, cancel_registration, payment_status, wallet_balance_update, badge_assigned) mogen formeel gebruikt worden.<br><br>Volledig type-overzicht: new_registration, badge_scanned, invoice_request, system_error, heartbeat, consumption_order, payment_registered, profile_update, cancel_registration, payment_status, wallet_balance_update, badge_assigned, refund_processed.<br><br>Actiepunt: documenteer alle XML payloads in ClickUp zodat andere teams exact weten wat ze van ons kunnen consumeren. |
 | **Betrokken teams: Kassa-team, CRM-team, Frontend-team, alle teams** |
 
-# **NOG TE VRAGEN**
 
-**Te vragen aan: Infra-team**
+**Infrastructuur & RabbitMQ**
 
-Technische RabbitMQ-infrastructuurkeuzes die Infra rechtstreeks beheert.
-
-|     |
-| --- |
-| **? Vraag 30 — RabbitMQ exchange/routing strategie — welke aanpak gebruikt Infra?** |
-| Onze sender.py (v3.3) publiceert al via kassa.exchange als topic exchange. De concrete infrastructuurconfiguratie (exchange declaratie, binding keys, dead-letter queue) moet nog formeel afgestemd worden met Infra.<br><br>Specifieke vragen voor Infra:<br><br>(1) Bevestigen jullie kassa.exchange als topic exchange?<br><br>(2) Hoe worden binding keys bepaald voor andere teams die willen meeluisteren?<br><br>(3) Is er een dead-letter queue voor berichten die niet verwerkt kunnen worden, en op welke queue-naam? |
+| **✔ DONE — Vraag 30 — RabbitMQ exchange/routing strategie — welke aanpak gebruikt Infra?** |
+| Drie deelvragen zijn beantwoord op basis van de Tech Stack documentatie en de huidige sender.py implementatie:<br><br>**(1) Bevestiging van kassa.exchange als topic exchange:** Onze sender.py (v3.5) declareert kassa.exchange zelf als topic exchange bij het opstarten via channel.exchange_declare(). We zijn hiervoor niet afhankelijk van Infra — de exchange wordt automatisch aangemaakt als die nog niet bestaat. Dit is conform de Tech Stack (RABBIT_EXCHANGE environment variable, default: kassa.exchange).<br><br>**(2) Binding keys voor andere teams:** Teams die passief willen meeluisteren (bv. Controlroom) binden hun eigen queue aan kassa.exchange met de wildcard routing key kassa.# — dit geeft hen alle berichten van het kassa-systeem. Specifiekere bindings zijn ook mogelijk, bv. kassa.payments.# voor enkel betalingsberichten. Elk team regelt zijn eigen bindings — wij hoeven daar niets voor aan te passen.<br><br>**(3) Dead-letter queue (DLQ):** Een DLQ is een opvangwachtrij voor berichten die herhaaldelijk falen (bv. door een crash of verwerkingsfout). Onze receiver.py stuurt ongeldige berichten actief naar kassa.errors en geeft een basic_ack — er komen dus geen berichten in een DLQ terecht door onze code. Of Infra een DLQ configureert op de RabbitMQ-queues zelf is hun verantwoordelijkheid en heeft geen impact op onze implementatie. |
 | **Betrokken teams: Kassa-team, Infra-team** |
 
 Team Kassa | Vragen & Beslissingslogboek | Integratieproject Desideriushogeschool | 2026
