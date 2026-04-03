@@ -1,4 +1,4 @@
-**Datamapping Documentatie — Team Kassa (Odoo POS)**
+# Datamapping Documentatie — Team Kassa (Odoo POS)
 
 Versie 2.5 — Conform XML_naamgeving standaard (snake_case) | Geintegreerd document
 
@@ -6,7 +6,7 @@ Integratieproject Desideriushogeschool 2026
 
 # 1\. Systeemlegenda
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Systeem** | **Omschrijving** | **Systeem** | **Omschrijving** |
 | Kassa | Kassasysteem (Odoo POS) aan de bar of hoofdkassa. Verstuurt consumptie- en betalingsberichten. | IoT | Raspberry Pi badge scanners. Sturen badge_id door naar Kassa. |
@@ -17,35 +17,34 @@ Integratieproject Desideriushogeschool 2026
 
 Overzicht van alle berichten die verstuurd worden, met type-waarden conform snake_case standaard.
 
-|     |     |     |     |     |     |
+| |     | |     | |     |
 | --- | --- | --- | --- | --- | --- |
-| **Scenario** | **type (enum)** | **Van** | **Naar** | **Queue** | **Trigger** |
-| Bezoeker schrijft in | new_registration | CRM (Salesforce) | Kassa | kassa.incoming | Inschrijving bevestigd op website |
-| Bezoeker scant badge | badge_scanned | IoT (Raspberry Pi) | Kassa | kassa.incoming | Badge gescand door scanner |
-| CRM werkt profiel bij | profile_update | CRM (Salesforce) | Kassa | kassa.incoming | Profiel bijgewerkt in Salesforce |
-| Klant annuleert inschrijving | cancel_registration | CRM (Salesforce) | Kassa | kassa.incoming | Annulering via website |
-| Bestelling doorsturen CRM | consumption_order | Kassa | CRM | kassa.payments | Na elke afgeronde aankoop |
-| Anonieme aankoop | consumption_order (is_anonymous=true) | Kassa | CRM | kassa.payments | Aankoop zonder badge/account |
-| Betaling registreren CRM | payment_registered | Kassa | CRM | kassa.payments | Na succesvolle betaling |
-| Inschrijving betaald | payment_registered (context=registration) | Kassa | CRM | kassa.payments | Inschrijvingsgeld betaald aan kassa |
-| Klant vraagt factuur | invoice_request | Kassa | CRM | kassa.payments | Kassamedewerker verzamelt factuurgegevens |
-| Badge koppelen aan account | badge_assigned | Kassa | CRM | kassa.payments | Badge gekoppeld aan bezoeker bij balie |
-| Terugbetaling verwerkt | refund_processed | Kassa | CRM | kassa.payments | Kassamedewerker initieert correctie |
-| Systeem monitoring | heartbeat | Kassa | Elastic | heartbeat | Elke seconde automatisch |
-| Validatie/systeemfout | system_error | Kassa | Elastic | kassa.errors | Fout gedetecteerd |
-| Klant betaalt inschrijving | payment_status | Kassa | Drupal | frontend.payments | Betaling succesvol afgerond |
-| Betaling met badge | wallet_balance_update | Kassa | Drupal | frontend.payments | Klant betaalt een bestelling met de Badge Wallet _(Saldo daalt)_ |
-| Top-up via kassa (Flow 13) | wallet_balance_update | Kassa | Drupal | frontend.payments | Klant koopt een Top-up product aan de kassa _(Saldo stijgt)_ |
-| Terugbetaling badge (Flow 15) | wallet_balance_update | Kassa | Drupal | frontend.payments | Klant krijgt een refund uitbetaald op de badge_wallet _(Saldo stijgt)_ |
+| **Scenario** | **type (enum)** | **Van** | **Naar** | **Routing (Exchange & Key)** | **Trigger** |
+| Bezoeker schrijft in | new_registration | CRM (Salesforce) | Kassa | Queue: kassa.incoming | Inschrijving bevestigd op website |
+| Bezoeker scant badge | badge_scanned | IoT (Raspberry Pi) | Kassa | Queue: kassa.incoming | Badge gescand door scanner |
+| CRM werkt profiel bij | profile_update | CRM (Salesforce) | Kassa | Queue: kassa.incoming | Profiel bijgewerkt in Salesforce |
+| Klant annuleert inschrijving | cancel_registration | CRM (Salesforce) | Kassa | Queue: kassa.incoming | Annulering via website |
+| Bestelling doorsturen CRM | consumption_order | Kassa | CRM | kassa.exchange → kassa.payments.consumption | Na elke afgeronde aankoop |
+| Anonieme aankoop | consumption_order (is_anonymous=true) | Kassa | CRM | kassa.exchange → kassa.payments.consumption | Aankoop zonder badge/account |
+| Betaling registreren CRM | payment_registered | Kassa | CRM | kassa.exchange → kassa.payments.consumption | Na succesvolle betaling |
+| Inschrijving betaald | payment_registered (context=registration) | Kassa | CRM | kassa.exchange → kassa.payments.registration | Inschrijvingsgeld betaald aan kassa |
+| Klant vraagt factuur | invoice_request | Kassa | CRM | kassa.exchange → kassa.payments.invoice | Kassamedewerker verzamelt factuurgegevens |
+| Badge koppelen aan account | badge_assigned | Kassa | CRM | kassa.exchange → kassa.payments.badge | Badge gekoppeld aan bezoeker bij balie |
+| Terugbetaling verwerkt | refund_processed | Kassa | CRM | kassa.exchange → kassa.payments.refund | Kassamedewerker initieert correctie |
+| Validatie/systeemfout | system_error | Kassa | Elastic | kassa.exchange → kassa.errors | Fout gedetecteerd |
+| Klant betaalt inschrijving | payment_status | Kassa | Drupal | kassa.exchange → kassa.frontend.payment | Betaling succesvol afgerond |
+| Betaling met badge | wallet_balance_update | Kassa | Drupal | kassa.exchange → kassa.frontend.wallet | Klant betaalt een bestelling met de Badge Wallet _(Saldo daalt)_ |
+| Top-up via kassa (Flow 13) | wallet_balance_update | Kassa | Drupal | kassa.exchange → kassa.frontend.wallet | Klant koopt een Top-up product aan de kassa _(Saldo stijgt)_ |
+| Terugbetaling badge (Flow 15) | wallet_balance_update | Kassa | Drupal | kassa.exchange → kassa.frontend.wallet | Klant krijgt een refund uitbetaald op de badge_wallet _(Saldo stijgt)_ |
 
 # 3\. Master Datamapping Overzicht
 
 Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatieregels.
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **CRM (Salesforce) → Kassa — new_registration** |     |     |     |     |
-| **Nieuwe inschrijving. Kassa maakt of updatet het klantprofiel in Odoo.** |     |     |     |     |
+| **CRM (Salesforce) → Kassa — new_registration** | |     | |     |
+| **Nieuwe inschrijving. Kassa maakt of updatet het klantprofiel in Odoo.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | String (UUID) | Ja  | Opslaan voor tracing en audit |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: new_registration |
@@ -59,14 +58,14 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Customer | &lt;customer&gt;&lt;type&gt; | Enum | Ja  | company of private |
 | Customer | &lt;customer&gt;&lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
-| Customer | &lt;customer&gt;&lt;age&gt; | Integer | Ja  | Leeftijd in jaren. Verplicht voor alcoholcontrole aan de bar. |
+| Customer | &lt;customer&gt;&lt;date_of_birth&gt; | Date (xs:date) | Ja  | Geboortedatum (YYYY-MM-DD). Gebruikt voor leeftijdsberekening bij alcoholcontrole. Vervangt age. |
 | Betaling | &lt;payment_due&gt;&lt;amount&gt; | Decimal | Ja  | Te betalen inschrijvingsbedrag |
 | Betaling | &lt;payment_due&gt;&lt;status&gt; | Enum | Ja  | unpaid of paid |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **IoT (Raspberry Pi) → Kassa — badge_scanned** |     |     |     |     |
-| **Badge gescand aan inkom of bar. Aankopen zonder badge moeten altijd mogelijk zijn.** |     |     |     |     |
+| **IoT (Raspberry Pi) → Kassa — badge_scanned** | |     | |     |
+| **Badge gescand aan inkom of bar. Aankopen zonder badge moeten altijd mogelijk zijn.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | String | Ja  | Opslaan voor tracing. Gebruikt als related_message_id bij badge_not_found error. |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: badge_scanned |
@@ -76,10 +75,10 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Body | &lt;badge_id&gt; | String | Ja  | Uniek ID van de gescande badge/QR-code. Opzoeken in lokale Odoo-cache (x_badge_id). |
 | Body | &lt;location&gt; | String | Ja  | Locatie van de scanner, bv. hoofdbar, inkom, bar2 |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **CRM (Salesforce) → Kassa — profile_update** |     |     |     |     |
-| **Profielwijziging. Kassa werkt het klantprofiel bij in Odoo.** |     |     |     |     |
+| **CRM (Salesforce) → Kassa — profile_update** | |     | |     |
+| **Profielwijziging. Kassa werkt het klantprofiel bij in Odoo.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | String | Ja  | Opslaan voor tracing en audit |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: profile_update |
@@ -93,12 +92,12 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Body | &lt;type&gt; | Enum | Ja  | company of private. Bepaalt of company_name en vat_number verplicht zijn. |
 | Body | &lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Body | &lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
-| Body | &lt;age&gt; | Integer | Ja  | Positief geheel getal (> 0). Bijgewerkte leeftijd. |
+| Body | &lt;date_of_birth&gt; | Date (xs:date) | Ja  | Geboortedatum (YYYY-MM-DD). Bijgewerkte waarde. Vervangt age. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **CRM (Salesforce) → Kassa — cancel_registration** |     |     |     |     |
-| **Annulering van een inschrijving. Kassa deactiveert het klantprofiel voor die sessie.** |     |     |     |     |
+| **CRM (Salesforce) → Kassa — cancel_registration** | |     | |     |
+| **Annulering van een inschrijving. Kassa deactiveert het klantprofiel voor die sessie.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | String | Ja  | Opslaan voor tracing en audit |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: cancel_registration |
@@ -108,10 +107,10 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | Unieke sleutel klantprofiel (x_user_id in Odoo) |
 | Body | &lt;session_id&gt; | UUID v4 | Ja  | Sessie- of event-ID dat geannuleerd wordt. Te bevestigen met CRM-team. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → CRM (Salesforce) — consumption_order** |     |     |     |     |
-| **Na elke afgeronde aankoop. Ondersteunt zowel gekoppelde als anonieme aankopen.** |     |     |     |     |
+| **Kassa → CRM (Salesforce) — consumption_order** | |     | |     |
+| **Na elke afgeronde aankoop. Ondersteunt zowel gekoppelde als anonieme aankopen.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: consumption_order |
@@ -133,14 +132,14 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Item | &lt;item&gt;&lt;vat_rate&gt; | Integer | Ja  | Enum: 0, 6, 12 of 21. Waarde 0 is toegestaan voor Top-up producten. Opgehaald via account.tax. |
 | Item | &lt;item&gt;&lt;item_type&gt; | String | Nee | Optioneel. Waarde wallet_topup voor Top-up producten. Automatisch gezet door poller als vat_rate=0. |
 
-|     |
+| |
 | --- |
 | **Kassa → CRM (Salesforce) — payment_registered** |
 | **Na succesvolle betaling. Twee contexten: consumptie en inschrijving.** |
 
 Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registration) van consumptiebe­talingen (consumption). Dit bepaalt hoe het CRM het bericht verwerkt.
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
@@ -158,22 +157,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Transaction | &lt;transaction&gt;&lt;id&gt; | String | Ja  | Odoo POS transactie-ID. Niet leeg. |
 | Transaction | &lt;transaction&gt;&lt;payment_method&gt; | Enum | Ja  | company_link, on_site of online (PM-standaard). on_site dekt cash, kaart en badge wallet betalingen. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → Elastic Stack — heartbeat** |     |     |     |     |
-| **Elke seconde. Zie Heartbeat_Kassa.docx voor volledige documentatie.** |     |     |     |     |
-| **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
-| Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek per bericht |
-| Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: heartbeat |
-| Header | &lt;header&gt;&lt;source&gt; | String | Ja  | Altijd: kassa |
-| Header | &lt;header&gt;&lt;timestamp&gt; | ISO-8601 UTC | Ja  | Formaat: YYYY-MM-DDTHH:MM:SSZ |
-| Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
-| Body | &lt;status&gt; | Enum | Ja  | online of degraded. Altijd lowercase. |
-
-|     |     |     |     |     |
-| --- | --- | --- | --- | --- |
-| **Kassa → Elastic Stack — system_error** |     |     |     |     |
-| **Bij validatiefouten of systeemfouten. Stuurt naar kassa.errors.** |     |     |     |     |
+| **Kassa → Elastic Stack — system_error** | |     | |     |
+| **Bij validatiefouten of systeemfouten. Stuurt naar kassa.errors.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: system_error |
@@ -184,10 +171,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Body | &lt;error_description&gt; | String | Ja  | Leesbare beschrijving voor de admin |
 | Body | &lt;related_message_id&gt; | String | Nee | message_id van het bericht dat de fout veroorzaakte. Verplicht bij badge_not_found. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → Drupal (Frontend) — payment_status** |     |     |     |     |
-| **Na succesvolle betaling van een inschrijving aan de kassa (payment_context=registration).** |     |     |     |     |
+| **Kassa → Drupal (Frontend) — payment_status** | |     | |     |
+| **Na succesvolle betaling van een inschrijving aan de kassa (payment_context=registration).** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: payment_status |
@@ -197,10 +184,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | Unieke sleutel klantprofiel (x_user_id) |
 | Body | &lt;payment_status&gt; | Enum | Ja  | paid of pending |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → Drupal (Frontend) — wallet_balance_update** |     |     |     |     |
-| **Na elke badge-aankoop, Top-up, Badge Wallet betaling of terugbetaling via badge_wallet (Flow 15). Drupal toont het bijgewerkte saldo op de profielpagina.** |     |     |     |     |
+| **Kassa → Drupal (Frontend) — wallet_balance_update** | |     | |     |
+| **Na elke badge-aankoop, Top-up, Badge Wallet betaling of terugbetaling via badge_wallet (Flow 15). Drupal toont het bijgewerkte saldo op de profielpagina.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: wallet_balance_update |
@@ -210,10 +197,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | Unieke sleutel klantprofiel |
 | Body | &lt;wallet_balance&gt; | Decimal (EUR) | Ja  | Huidig saldo NA transactie. Positief decimaal. Geschreven naar x_wallet_balance in Odoo door poller.py. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → CRM (Salesforce) — invoice_request** |     |     |     |     |
-| **Factuuraanvraag van een particuliere klant aan de kassa.** |     |     |     |     |
+| **Kassa → CRM (Salesforce) — invoice_request** | |     | |     |
+| **Factuuraanvraag van een particuliere klant aan de kassa.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: invoice_request |
@@ -232,10 +219,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Invoice data | &lt;invoice_data&gt;&lt;address&gt;&lt;country&gt; | String | Ja  | ISO-3166 lowercase (bv. be) |
 | Invoice data | &lt;invoice_data&gt;&lt;vat_number&gt; | String | Cond. | Optioneel. Verplicht als factuur op bedrijfsnaam. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → CRM (Salesforce) — badge_assigned** |     |     |     |     |
-| **Bij aankomst koppelt de kassamedewerker een badge aan het account. Formeel goedgekeurd door PM (Vraag 37).** |     |     |     |     |
+| **Kassa → CRM (Salesforce) — badge_assigned** | |     | |     |
+| **Bij aankomst koppelt de kassamedewerker een badge aan het account. Formeel goedgekeurd door PM (Vraag 37).** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: badge_assigned |
@@ -246,10 +233,10 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Body | &lt;user_id&gt; | UUID v4 | Ja  | UUID van de bezoeker. CRM koppelt dit in Salesforce. |
 | Body | &lt;assigned_at&gt; | ISO-8601 UTC | Ja  | Tijdstip van koppeling. Voor audittrail en conflictdetectie. |
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
-| **Kassa → CRM (Salesforce) — refund_processed** |     |     |     |     |
-| **Terugbetaling na kassacorrectie. Kassa initieert enkel kassacorrecties — planningswijzigingen zijn verantwoordelijkheid van CRM/Facturatie.** |     |     |     |     |
+| **Kassa → CRM (Salesforce) — refund_processed** | |     | |     |
+| **Terugbetaling na kassacorrectie. Kassa initieert enkel kassacorrecties — planningswijzigingen zijn verantwoordelijkheid van CRM/Facturatie.** | |     | |     |
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | UUID v4 | Ja  | Uniek UUID v4 per bericht |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: refund_processed |
@@ -268,7 +255,7 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 
 # 4\. Conditionele Velden — Businessregels
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Veld** | **Conditie** | **Actie bij ontbreken** | **Foutmelding (kassa.errors)** |
 | &lt;vat_number&gt; | Verplicht als customer.type = company | → kassa.errors | ERROR: btw_nummer required when type=company |
@@ -284,17 +271,16 @@ Conditionele logica (zoals vat_number verplicht als type=company) wordt afgedwon
 
 Gebruik uitsluitend de onderstaande waarden. Geen hoofdletters, geen spaties, geen Nederlandse varianten.
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Element** | **Toegestane waarden** | **Toelichting** |
-| &lt;header&gt;&lt;type&gt; | new_registration, badge_scanned, consumption_order, payment_registered, system_error, profile_update, payment_status, cancel_registration, wallet_balance_update, invoice_request, heartbeat, badge_assigned, refund_processed | Bepaalt routing en validatie. PM-goedgekeurd (Vraag 37). |
+| &lt;header&gt;&lt;type&gt; | new_registration, badge_scanned, consumption_order, payment_registered, system_error, profile_update, payment_status, cancel_registration, wallet_balance_update, invoice_request, badge_assigned, refund_processed | Bepaalt routing en validatie. PM-goedgekeurd (Vraag 37). |
 | &lt;customer&gt;&lt;type&gt; | company, private | Bepaalt of factuur aangemaakt wordt en of bedrijfsvelden verplicht zijn. |
 | &lt;payment_due&gt;&lt;status&gt; | unpaid, paid | Status van de inschrijvingsbetaling in new_registration |
-| &lt;body&gt;&lt;status&gt; (heartbeat) | online, degraded, offline | Operationele status kassa |
 | &lt;payment_status&gt; | paid, pending | Betaalstatus doorgestuurd naar Drupal |
 | &lt;invoice&gt;&lt;status&gt; | paid, pending, cancelled | Status van de factuur in payment_registered |
 | &lt;transaction&gt;&lt;payment_method&gt; | company_link, on_site, online | Betaalmethode — conform PM XML_naamgeving standaard §4. on_site dekt cash, kaart en badge wallet. Geen andere waarden toegestaan. |
-| &lt;error_code&gt; | invalid_xml_format, unknown_message_type, profile_not_found, odoo_api_error, rabbitmq_connection_error, offline_queue_full, badge_not_found | Foutcategorisering voor Elastic — altijd lowercase. unknown_message_type: onbekend type in receiver.py. |
+| &lt;error_code&gt; | invalid_xml_format, unknown_message_type, profile_not_found, odoo_api_error, offline_queue_full, badge_not_found | Foutcategorisering voor Elastic — altijd lowercase. unknown_message_type: onbekend type in receiver.py. |
 | &lt;refund&gt;&lt;method&gt; | badge_wallet, cash, card_reversal | Terugbetalingsmethode |
 | &lt;refund&gt;&lt;reason&gt; | duplicate_payment, customer_request, system_error | Gestandaardiseerde reden voor terugbetaling |
 | &lt;refund_type&gt; | consumption_item, partial | Scope van de terugbetaling |
