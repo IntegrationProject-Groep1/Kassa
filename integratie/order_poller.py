@@ -156,18 +156,19 @@ class OrderPoller:
                     payments = models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.payment', 'read',
-                        [payment_ids, ['payment_method_id']]
+                        [payment_ids, ['payment_method_id', 'amount']]
                     )
+                    wallet_refund_amount = 0.0
                     for pm in payments:
                         method_tuple = pm.get('payment_method_id')
                         if method_tuple and "Badge Wallet" in method_tuple[1]:
                             is_badge_wallet = True
                             refund_method = "Badge Wallet"
-                            break
+                            wallet_refund_amount += abs(pm.get('amount', 0.0))
 
                 # 2. Update wallet balance if necessary
                 if is_badge_wallet and customer_info:
-                    refund_amount_positive = abs(order['amount_total'])
+                    refund_amount_positive = wallet_refund_amount
                     current_balance = customer_info.get('x_wallet_balance') or 0.0
                     new_balance = float(current_balance) + refund_amount_positive
 
