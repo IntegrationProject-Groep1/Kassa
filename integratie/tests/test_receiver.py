@@ -153,7 +153,7 @@ class TestProcessNewRegistration:
         "<name>Alice</name>"
         "<type>private</type>"
         "<user_id>uid-001</user_id>"
-        "<age>30</age>"
+        "<date_of_birth>1996-01-01</date_of_birth>"
         "</customer>"
         "<payment_due><amount>25.00</amount><status>unpaid</status></payment_due>"
     )
@@ -227,7 +227,7 @@ class TestProcessProfileUpdate:
         "<user_id>uid-003</user_id>"
         "<email>new@example.com</email>"
         "<name>Bob</name>"
-        "<age>40</age>"
+        "<date_of_birth>1986-01-01</date_of_birth>"
         "<type>private</type>"
     )
 
@@ -370,7 +370,7 @@ class TestProcessMessage:
             "new_registration",
             "<customer>"
             "<email>x@x.com</email><name>X</name><type>private</type>"
-            "<user_id>uid-999</user_id><age>20</age>"
+            "<user_id>uid-999</user_id><date_of_birth>2006-01-01</date_of_birth>"
             "</customer>"
             "<payment_due><amount>10</amount><status>unpaid</status></payment_due>",
         )
