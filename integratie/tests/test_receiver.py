@@ -246,7 +246,7 @@ class TestProcessProfileUpdate:
         assert write_call[0][4] == "write"
         vals = write_call[0][5][1]
         assert vals["email"] == "new@example.com"
-        assert vals["x_age"] == 40
+        assert vals["x_date_of_birth"] == "1986-01-01"
 
     def test_creates_partner_when_not_found(self, odoo):
         uid, models = odoo
@@ -285,7 +285,7 @@ class TestProcessBadgeScan:
         uid, models = odoo
         models.execute_kw.return_value = [
             {"id": 3, "name": "Alice", "x_user_id": "uid-001",
-             "x_wallet_balance": 12.50, "x_age": 30, "is_company": False}
+             "x_wallet_balance": 12.50, "x_date_of_birth": "1996-01-01", "is_company": False}
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
         output = capsys.readouterr().out
