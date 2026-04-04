@@ -2,6 +2,7 @@ import xmlrpc.client
 import os
 from datetime import datetime
 
+
 def test_refund():
     url = os.environ.get("ODOO_URL", "http://localhost:8069")
     db = os.environ.get("ODOO_DB", "kassa-db")
@@ -22,12 +23,12 @@ def test_refund():
         if not sessions:
             print("❌ No active POS session found. Please open a POS register via the Odoo web interface first!")
             return
-        
+
         session_id = sessions[0]
 
         # Find "Badge Wallet" payment method
         payment_methods = models.execute_kw(
-            db, uid, password, 'pos.payment.method', 'search_read', 
+            db, uid, password, 'pos.payment.method', 'search_read',
             [[['name', 'ilike', 'Badge Wallet']]], {'fields': ['id', 'name']}
         )
 
@@ -68,7 +69,7 @@ def test_refund():
             'amount_return': 0.0,
         }
         order_id = models.execute_kw(db, uid, password, 'pos.order', 'create', [order_data])
-        
+
         # Create the negative order line
         models.execute_kw(db, uid, password, 'pos.order.line', 'create', [{
             'order_id': order_id,
@@ -95,6 +96,7 @@ def test_refund():
 
     except Exception as e:
         print(f"❌ Error occurred: {e}")
+
 
 if __name__ == "__main__":
     test_refund()

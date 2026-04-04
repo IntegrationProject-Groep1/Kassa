@@ -146,12 +146,12 @@ class OrderPoller:
 
             if order.get('amount_total', 0) < 0:
                 # Het is een terugbetaling
-                
+
                 # 1. Bekijk de betalingsmethode in Odoo via payment_ids
                 payment_ids = order.get('payment_ids', [])
                 is_badge_wallet = False
                 refund_method = "Cash/Card"
-                
+
                 if payment_ids:
                     payments = models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -164,25 +164,25 @@ class OrderPoller:
                             is_badge_wallet = True
                             refund_method = "Badge Wallet"
                             break
-                            
+
                 # 2. Update wallet balance if necessary
                 if is_badge_wallet and customer_info:
                     refund_amount_positive = abs(order['amount_total'])
                     current_balance = customer_info.get('x_wallet_balance') or 0.0
                     new_balance = float(current_balance) + refund_amount_positive
-                    
+
                     models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'res.partner', 'write',
                         [[customer_info['id']], {'x_wallet_balance': new_balance}]
                     )
-                    
+
                     wallet_xml = sender.build_wallet_balance_update_xml(
-                        user_id=customer_info.get('x_user_id'), 
+                        user_id=customer_info.get('x_user_id'),
                         new_balance=new_balance
                     )
                     sender.send_typed_message('wallet_balance_update', wallet_xml)
-                    
+
                 # 3. Always send refund_processed XML
                 refund_xml = sender.build_refund_processed_xml(
                     original_payment_msg_id="Unknown",
@@ -212,7 +212,7 @@ class OrderPoller:
                     if line_detail:
                         line = line_detail[0]
                         product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
-                        
+
                         vat_rate = 0
                         tax_ids = line.get('tax_ids', [])
                         if tax_ids:
@@ -223,7 +223,7 @@ class OrderPoller:
                             )
                             if tax_details:
                                 vat_rate = int(max(t['amount'] for t in tax_details))
-                        
+
                         items.append({
                             'id': f"LINE-{line['id']}",
                             'sku': str(line['product_id'][0]),

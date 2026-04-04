@@ -251,8 +251,13 @@ def send_message(routing_key: str, message_xml: str, _is_retry=False) -> None:
 
     except Exception as e:
         _reset_connection()
-        
-        if not _is_retry and type(e).__name__ in ("StreamLostError", "ConnectionClosed", "ConnectionClosedByBroker", "AMQPConnectionError"):
+
+        if not _is_retry and type(e).__name__ in (
+            "StreamLostError",
+            "ConnectionClosed",
+            "ConnectionClosedByBroker",
+            "AMQPConnectionError"
+        ):
             logger.info("🔄 Reconnecting immediately and sending to RabbitMQ online...")
             send_message(routing_key, message_xml, _is_retry=True)
             return
@@ -460,11 +465,11 @@ def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
     _make_header(root, "wallet_balance_update")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = str(user_id)
-    
+
     bal = ET.SubElement(body, "new_balance")
     bal.text = f"{new_balance:.2f}"
     bal.set("currency", "eur")
-    
+
     return _to_xml(root)
 
 
