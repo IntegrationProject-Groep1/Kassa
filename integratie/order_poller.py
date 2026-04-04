@@ -71,22 +71,41 @@ class OrderPoller:
             if not order_ids:
                 return []
 
-            # Read order details
-            orders = models.execute_kw(self.odoo_db,
-                                       self.odoo_uid,
-                                       self.odoo_pass,
-                                       'pos.order',
-                                       'read',
-                                       [order_ids,
-                                        ['id',
-                                         'name',
-                                         'partner_id',
-                                         'lines',
-                                         'amount_total',
-                                         'amount_tax',
-                                         'payment_ids',
-                                         'create_date',
-                                         'session_id']])
+            try:
+                # Try reading with x_wallet_updated
+                orders = models.execute_kw(self.odoo_db,
+                                           self.odoo_uid,
+                                           self.odoo_pass,
+                                           'pos.order',
+                                           'read',
+                                           [order_ids,
+                                            ['id',
+                                             'name',
+                                             'partner_id',
+                                             'lines',
+                                             'amount_total',
+                                             'amount_tax',
+                                             'payment_ids',
+                                             'create_date',
+                                             'session_id',
+                                             'x_wallet_updated']])
+            except Exception:
+                # Fallback if x_wallet_updated does not exist
+                orders = models.execute_kw(self.odoo_db,
+                                           self.odoo_uid,
+                                           self.odoo_pass,
+                                           'pos.order',
+                                           'read',
+                                           [order_ids,
+                                            ['id',
+                                             'name',
+                                             'partner_id',
+                                             'lines',
+                                             'amount_total',
+                                             'amount_tax',
+                                             'payment_ids',
+                                             'create_date',
+                                             'session_id']])
 
             return orders
         except Exception as e:
@@ -168,7 +187,7 @@ class OrderPoller:
                             wallet_refund_amount += abs(pm.get('amount', 0.0))
 
                 # 2. Update wallet balance if necessary
-                if is_badge_wallet and customer_info:
+                if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
                     refund_amount_positive = wallet_refund_amount
                     current_balance = customer_info.get('x_wallet_balance') or 0.0
                     new_balance = float(current_balance) + refund_amount_positive
@@ -178,6 +197,15 @@ class OrderPoller:
                         'res.partner', 'write',
                         [[customer_info['id']], {'x_wallet_balance': new_balance}]
                     )
+
+                    try:
+                        models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.order', 'write',
+                            [[order_id], {'x_wallet_updated': True}]
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
 
                     wallet_xml = sender.build_wallet_balance_update_xml(
                         user_id=customer_info.get('x_user_id'),
