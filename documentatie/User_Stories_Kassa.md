@@ -56,6 +56,15 @@ _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automati
 3. Zoek de klant op in Odoo via zijn uniek klantnummer. Bestaat hij al? Update zijn gegevens. Bestaat hij nog niet? Maak een nieuw profiel aan met alle gegevens uit het bericht.
 4. Bevestig aan de wachtrij dat het bericht verwerkt is, zodat het niet opnieuw aangeboden wordt.
 
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` maakt een nieuw `res.partner` aan in Odoo als `x_user_id` onbekend is
+- [ ] `receiver.py` overschrijft bestaande gegevens als `x_user_id` al bestaat — geen duplicaat
+- [ ] XSD-validatie actief op `schema_new_registration.xsd`
+- [ ] Idempotentie getest: zelfde `message_id` twee keer → tweede keer stil genegeerd
+- [ ] `system_error` met code `invalid_xml_format` verstuurd naar `kassa.errors` bij invalide XML
+- [ ] `basic_ack` verstuurd in alle gevallen (ook bij fout)
+
 ## **Story 2: Klantgegevens up-to-date houden**
 
 > _MVP status: MVP_
@@ -91,6 +100,12 @@ _Als bezoeker wil ik dat wijzigingen in mijn profiel (zoals een nieuw e-mailadre
 2. Zoek de klant op in Odoo via zijn uniek klantnummer.
 3. Overschrijf de gewijzigde gegevens (naam, e-mail, bedrijfsnaam, BTW-nummer, geboortedatum) in het lokale profiel.
 4. Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
+
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` overschrijft alle velden correct in het bestaande `res.partner` record, inclusief `x_date_of_birth`
+- [ ] `system_error` met code `profile_not_found` verstuurd bij onbekend `x_user_id`
+- [ ] `basic_ack` verstuurd in alle gevallen, ook als de klant niet gevonden werd
 
 ## **Story 3: Geannuleerde inschrijvingen blokkeren**
 
@@ -130,6 +145,12 @@ _Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa 
 4. Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
 
 # **EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)**
+
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` zet `active=False` correct op het juiste `res.partner` record
+- [ ] `system_error` met code `profile_not_found` verstuurd bij onbekend `x_user_id`
+- [ ] `basic_ack` verstuurd in alle gevallen
 
 ## **Story 4: Anoniem een drankje kopen**
 
@@ -173,6 +194,13 @@ _Als kassamedewerker wil ik bestellingen aan de bar supersnel kunnen afrekenen v
 4. Markeer de bestelling in Odoo als verzonden zodat ze niet opnieuw opgepikt wordt.
 5. Lukt het versturen niet? Sla beide berichten tijdelijk op in de lokale buffer.
 
+**DEFINITION OF DONE:**
+
+- [ ] `poller.py` detecteert orders zonder `partner_id` en stuurt `consumption_order` met `is_anonymous=true`
+- [ ] `payment_registered` wordt verstuurd na de `consumption_order`
+- [ ] `x_rabbitmq_sent=True` gezet op de order na succesvolle verzending
+- [ ] Buffer correct gevuld bij RabbitMQ-uitval — `x_rabbitmq_sent` blijft `False`
+
 ## **Story 5: Bestellen op bedrijfsnaam (met badge)**
 
 > _MVP status: MVP_
@@ -214,6 +242,12 @@ _Als zakelijke bezoeker wil ik dat mijn bestellingen aan de bar direct geregistr
 4. Controleer of er betaald werd met badge-tegoed. Zo ja, verlaag het lokale saldo in Odoo en stuur een saldo-update naar de website.
 5. Markeer de bestelling als verzonden in Odoo.
 
+**DEFINITION OF DONE:**
+
+- [ ] `consumption_order` verstuurd met `is_anonymous=false` en `is_company_linked=true` voor bedrijfsklanten
+- [ ] Badge Wallet betaling: `x_wallet_balance` verlaagd in Odoo én `wallet_balance_update` verstuurd naar `frontend.payments`
+- [ ] `x_rabbitmq_sent=True` gezet na succesvolle verzending van alle berichten
+
 ## **Story 6: Inkomticket betalen aan de deur**
 
 > _MVP status: MVP_
@@ -245,6 +279,12 @@ _Als bezoeker die zijn ticket nog niet online betaald heeft, wil ik dit veilig a
 3. Stuur tegelijkertijd een betaald-statusbericht naar de wachtrij richting de website.
 4. Markeer de bestelling als verzonden in Odoo.
 
+**DEFINITION OF DONE:**
+
+- [ ] `payment_registered` verstuurd met `payment_context=registration` via routing key `kassa.payments.registration`
+- [ ] `payment_status` verstuurd naar `frontend.payments` zodat Drupal de betaalstatus kent
+- [ ] `x_rabbitmq_sent=True` gezet op de order
+
 ## **Story 7: Factuur vragen voor een drankje**
 
 > _MVP status: MVP_
@@ -275,6 +315,12 @@ _Als geidentificeerde bezoeker wil ik aan de bar kunnen vragen om een officiële
 2. Haal de adresgegevens van de klant op uit Odoo (naam, adres, optioneel BTW-nummer).
 3. Bouw het factuurverzoekbericht op conform het XSD-schema en stuur naar de wachtrij richting het CRM.
 4. Markeer de bestelling als verzonden in Odoo.
+
+**DEFINITION OF DONE:**
+
+- [ ] `invoice_request` verstuurd met correcte naam, adres en optioneel BTW-nummer vanuit Odoo
+- [ ] Klant zonder account: geen `invoice_request` aangemaakt — medewerker geïnformeerd
+- [ ] `x_rabbitmq_sent=True` gezet na succesvolle verzending
 
 ## **Story 8: Een aankoop ongedaan maken (Terugbetaling)**
 
@@ -314,6 +360,13 @@ _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annul
 
 # **EPIC 3: BADGES & SALDO (IOT & WALLET)**
 
+**DEFINITION OF DONE:**
+
+- [ ] `refund_processed` verstuurd met `correlation_id` van de originele `payment_registered`
+- [ ] Badge Wallet refund: `x_wallet_balance` verhoogd in Odoo én `wallet_balance_update` verstuurd naar `frontend.payments`
+- [ ] Anonieme refund: geen `<user_id>` in bericht, methode altijd `cash` of `card_reversal`
+- [ ] `x_rabbitmq_sent=True` gezet op de terugbetalingsorder
+
 ## **Story 9: De fysieke badge gebruiken aan de bar**
 
 > _MVP status: secundair (Niet strikt MVP)_
@@ -349,6 +402,12 @@ _Als kassamedewerker wil ik dat de kassa de klant direct herkent zodra de scanne
 3. Wordt de badge niet herkend? Verwijs door naar de foutafhandeling van Story 12.
 4. Bevestig aan de wachtrij dat het bericht verwerkt is.
 
+**DEFINITION OF DONE:**
+
+- [ ] `badge_scanned` correct verwerkt: klantprofiel opgehaald via `x_badge_id` op `res.partner`
+- [ ] Onbekende badge: verwerking van Story 12-flow gestart
+- [ ] `basic_ack` verstuurd in alle gevallen
+
 ## **Story 10: Een nieuwe badge uitgeven**
 
 > _MVP status: secundair (Niet strikt MVP)_
@@ -378,6 +437,12 @@ _Als baliemedewerker wil ik bij aankomst van een gast een blanco badge kunnen pa
 2. Bouw het badge-koppelingssbericht op conform het XSD-schema.
 3. Stuur het bericht naar de wachtrij richting het CRM zodat alle systemen de nieuwe koppeling kennen.
 4. Markeer de actie als verzonden in Odoo.
+
+**DEFINITION OF DONE:**
+
+- [ ] `badge_assigned` verstuurd bij succesvol koppelen van een nieuw badge-ID
+- [ ] `system_error` met code `odoo_api_error` verstuurd bij duplicaat badge-ID
+- [ ] Actie als afgehandeld gemarkeerd in Odoo
 
 ## **Story 11: Digitaal tegoed (Top-up) kopen**
 
@@ -416,6 +481,14 @@ _Als bezoeker wil ik met cash of mijn bankpas virtueel geld op mijn badge kunnen
 4. Stuur tegelijkertijd een saldo-updatebericht naar de wachtrij richting de website.
 5. Markeer de bestelling als verzonden in Odoo.
 
+**DEFINITION OF DONE:**
+
+- [ ] `poller.py` herkent Top-up product via `vat_rate=0` en zet automatisch `item_type=wallet_topup`
+- [ ] `x_wallet_balance` verhoogd in Odoo met het correcte aankoopbedrag
+- [ ] `consumption_order` verstuurd naar `kassa.payments`
+- [ ] `wallet_balance_update` verstuurd naar `frontend.payments`
+- [ ] `x_rabbitmq_sent=True` gezet na succesvolle verzending van alle berichten
+
 ## **Story 12: Wat als we een badge niet kennen?**
 
 > _MVP status: secundair (Niet strikt MVP)_
@@ -446,6 +519,12 @@ _Als kassamedewerker wil ik dat het systeem niet vastloopt als een bezoeker per 
 4. Bevestig aan de wachtrij dat het scanbericht verwerkt is zodat het niet opnieuw aangeboden wordt.
 
 # **EPIC 4: FOUTEN & SYSTEEMMONITORING (RESILIENCE & CONTROLROOM)**
+
+**DEFINITION OF DONE:**
+
+- [ ] `system_error` met code `badge_not_found` verstuurd naar `kassa.errors`
+- [ ] Originele `message_id` van het scanbericht aanwezig als `related_message_id` in het foutbericht
+- [ ] `basic_ack` verstuurd zodat het scanbericht de queue niet blokkeert
 
 ## **Story 13: Zonder internet toch blijven verkopen**
 
@@ -484,6 +563,14 @@ _Als festivalorganisator eis ik dat de barren gewoon drank kunnen blijven verkop
 3. Controleer bij het herstellen van de verbinding of er berichten in de buffer staan en stuur deze alsnog door in volgorde.
 4. Heartbeat-berichten worden nooit gebufferd — die worden bij falen gewoon weggegooid.
 
+**DEFINITION OF DONE:**
+
+- [ ] Berichten correct opgeslagen in `outbox.json` bij RabbitMQ-uitval
+- [ ] Maximum van 500 berichten gerespecteerd — geen enkel bericht voorbij de limiet gebufferd
+- [ ] `flush_buffer()` hersturt alle gebufferde berichten in volgorde bij reconnect
+- [ ] `outbox.json` volledig leeggemaakt na succesvolle hersending
+- [ ] `outbox.json` staat op een Docker named volume — overleeft container-herstart
+
 ## **Story 14: Kassa beschermen tegen foute data**
 
 > _MVP status: MVP_
@@ -521,6 +608,13 @@ _Als beheerder wil ik dat de kassa onleesbare of onbekende berichten vanuit ande
 2. Is het berichttype onbekend of klopt de structuur niet? Gooi het bericht weg en stuur een foutmelding met de juiste foutcode naar de Controlroom.
 3. Bevestig aan de wachtrij dat het bericht verwerkt is zodat het niet blijft herhalen.
 
+**DEFINITION OF DONE:**
+
+- [ ] XSD-validatie actief voor alle inkomende berichttypes op `kassa.incoming`
+- [ ] `system_error` met code `invalid_xml_format` verstuurd bij structuurfout
+- [ ] `system_error` met code `unknown_message_type` verstuurd bij onbekend berichttype
+- [ ] `basic_ack` verstuurd in beide gevallen — queue wordt nooit geblokkeerd
+
 ## **Story 15: Dubbele berichten stil negeren (Idempotentie)**
 
 > _MVP status: MVP_
@@ -551,6 +645,12 @@ _Als systeembeheerder wil ik dat de kassa elk inkomend bericht maar één keer v
 2. Controleer bij elk nieuw bericht of het ID al in de lijst staat.
 3. Staat het er al in? Bevestig aan de wachtrij dat het bericht verwerkt is en stop verdere verwerking.
 4. Staat het er nog niet in? Voeg het toe aan de lijst en verwerk het bericht normaal.
+
+**DEFINITION OF DONE:**
+
+- [ ] `OrderedDict` cache actief in `receiver.py` met maximaal 10.000 items (LRU eviction)
+- [ ] Duplicaat bericht (zelfde `message_id`) wordt stil genegeerd zonder Odoo-acties
+- [ ] `basic_ack` verstuurd op het duplicaat
 
 ## **Story 16: Lokale buffer beschermen tegen overstroming (offline_queue_full)**
 
@@ -588,6 +688,12 @@ _Als IT-beheerder wil ik gewaarschuwd worden als de kassa langdurig offline is e
 
 # **EPIC 5: UITGEBREIDE RANDGEVALLEN (TECHNICAL SAD PATHS)**
 
+**DEFINITION OF DONE:**
+
+- [ ] Limiet van 500 berichten gerespecteerd in `outbox.json` — 501e bericht wordt weggegooid
+- [ ] `system_error` met code `offline_queue_full` verstuurd zodra verbinding hersteld is
+- [ ] Kassa blijft verkopen bij volle buffer — enkel het doorsturen stopt
+
 ## **Story 17: Alcoholcontrole**
 
 > _MVP status: Secundair_
@@ -619,6 +725,13 @@ _Als kassamedewerker wil ik een automatische waarschuwing bij verkoop van alcoho
 2. Controleer bij elk toe te voegen product of het de `x_age_restricted` vlag draagt.
 3. Is de klant jonger dan 18? Toon een blokkerende pop-up en vereist manuele bevestiging.
 4. Implementeer als custom POS JavaScript (uitzondering op architectuurrestrictie).
+
+**DEFINITION OF DONE:**
+
+- [ ] Leeftijdsberekening correct op basis van `x_date_of_birth` t.o.v. de huidige datum
+- [ ] Blokkerende pop-up verschijnt correct bij product met `x_age_restricted=True` én leeftijd < 18
+- [ ] Medewerker kan blokkering manueel overschrijven met verplichte reden
+- [ ] Custom POS JavaScript gedocumenteerd als bewuste architectuuruitzondering
 
 ## **Story 18: Twee POS-profielen**
 
@@ -655,6 +768,13 @@ _Als medewerker wil ik bij opstarten kunnen kiezen tussen "Bar Kassa" en "Inschr
 2. Koppel per configuratie de juiste productcategorieën en betaalmethoden.
 3. De medewerker kiest bij sessiestart het gewenste profiel.
 
+**DEFINITION OF DONE:**
+
+- [ ] Twee POS-configuraties aangemaakt in Odoo: "Bar Kassa" en "Inschrijvingskassa"
+- [ ] `badge_wallet` enkel beschikbaar als betaalmethode op het Bar Kassa-profiel
+- [ ] Beide profielen tonen enkel de correcte productcategorieën
+- [ ] Beide profielen getest bij sessiestart door een medewerker
+
 ## **Story 19: Foutieve betaling met virtueel saldo blokkeren**
 
 > _MVP status: secundair (Niet strikt MVP)_
@@ -688,6 +808,12 @@ _Als financieel beheerder wil ik dat de kassa een betaling met digitaal tegoed s
 3. Stuur een foutmelding naar de Controlroom.
 4. Markeer de bestelling als afgehandeld zodat ze niet blijft hangen.
 
+**DEFINITION OF DONE:**
+
+- [ ] Combinatie anonieme order + Badge Wallet betaling → geen enkel saldo afgetrokken
+- [ ] `system_error` verstuurd naar `kassa.errors` bij deze inconsistente toestand
+- [ ] Order gemarkeerd als afgehandeld in Odoo zodat hij niet blijft herhalen
+
 ## **Story 20: Verbindingsfouten direct alarmeren**
 
 > _MVP status: MVP_
@@ -717,3 +843,9 @@ _Als IT-beheerder wil ik dat verbindingsfouten met Odoo direct als foutmelding n
 1. Zorg voor foutafhandeling rondom alle communicatie met Odoo.
 2. Lukt het ophalen of wegschrijven van data niet? Bouw een foutbericht op met de code odoo_api_error en stuur naar de monitoringswachtrij.
 3. Pauzeer de verwerking kort zodat het systeem niet in een oneindige foutenlus terechtkomt.
+
+**DEFINITION OF DONE:**
+
+- [ ] Alle Odoo XML-RPC aanroepen in `poller.py` en `receiver.py` wrapped in `try/except`
+- [ ] `system_error` met code `odoo_api_error` verstuurd bij elke verbindingsfout of exception
+- [ ] Script pauzeert exact 1 seconde voor retry — geen oneindige foutenlus mogelijk
