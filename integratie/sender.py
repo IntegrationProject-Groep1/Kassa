@@ -250,10 +250,11 @@ def send_message(routing_key: str, message_xml: str) -> None:
         logger.info(f"✅ Sent: routing_key={routing_key}")
 
     except Exception as e:
+        _reset_connection()
+
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
-            f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _reset_connection()
+            f"⚠️  Send failed ({type(e).__name__}), buffering message lokaal...")
         _buffer_message(routing_key, message_xml)
 
 
@@ -445,6 +446,20 @@ def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
     ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "user_id").text = user_id
     ET.SubElement(body, "assigned_at").text = now_utc()
+    return _to_xml(root)
+
+
+def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
+    """Build wallet_balance_update message"""
+    root = ET.Element("message")
+    _make_header(root, "wallet_balance_update")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
+
+    bal = ET.SubElement(body, "new_balance")
+    bal.text = f"{new_balance:.2f}"
+    bal.set("currency", "eur")
+
     return _to_xml(root)
 
 
