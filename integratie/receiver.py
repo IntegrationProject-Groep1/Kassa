@@ -442,11 +442,31 @@ def start_listening():
     Start the receiver.
     Re-publishes buffered messages on connect (flush_buffer).
     Listens on queue.incoming with prefetch_count=1 for fair dispatch.
+    Sets up Dead Letter Exchange and Queue for automated poison-message handling.
     """
     conn = connect_to_rabbitmq()
     channel = conn.channel()
 
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
+    # --- NIEUW: DLQ Setup ---
+    # 1. Maak een Dead Letter Exchange (DLX) aan
+    channel.exchange_declare(exchange='kassa.dlx', exchange_type='direct', durable=True)
+
+    # 2. Maak de daadwerkelijke Dead Letter Queue (DLQ) aan
+    channel.queue_declare(queue='kassa.incoming.dlq', durable=True)
+
+    # 3. Koppel de DLQ aan de DLX
+    channel.queue_bind(exchange='kassa.dlx', queue='kassa.incoming.dlq')
+    # ------------------------
+
+    # 4. Maak de hoofd-queue aan (of update deze) met de verwijzing naar de DLX
+    channel.queue_declare(
+        queue=QUEUE_NAME,
+        durable=True,
+        arguments={
+            'x-dead-letter-exchange': 'kassa.dlx'
+        }
+    )
+
     channel.basic_qos(prefetch_count=1)
 
     flush_buffer()  # re-publish buffered outbox messages after successful connect
