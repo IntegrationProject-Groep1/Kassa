@@ -71,6 +71,10 @@ class OrderPoller:
             if not order_ids:
                 return []
 
+            fields = [
+                'id', 'name', 'partner_id', 'lines', 'amount_total',
+                'amount_tax', 'payment_ids', 'create_date', 'session_id'
+            ]
             try:
                 # Try reading with x_wallet_updated
                 orders = models.execute_kw(self.odoo_db,
@@ -78,34 +82,15 @@ class OrderPoller:
                                            self.odoo_pass,
                                            'pos.order',
                                            'read',
-                                           [order_ids,
-                                            ['id',
-                                             'name',
-                                             'partner_id',
-                                             'lines',
-                                             'amount_total',
-                                             'amount_tax',
-                                             'payment_ids',
-                                             'create_date',
-                                             'session_id',
-                                             'x_wallet_updated']])
-            except Exception:
+                                           [order_ids, fields + ['x_wallet_updated']])
+            except xmlrpc.client.Fault:
                 # Fallback if x_wallet_updated does not exist
                 orders = models.execute_kw(self.odoo_db,
                                            self.odoo_uid,
                                            self.odoo_pass,
                                            'pos.order',
                                            'read',
-                                           [order_ids,
-                                            ['id',
-                                             'name',
-                                             'partner_id',
-                                             'lines',
-                                             'amount_total',
-                                             'amount_tax',
-                                             'payment_ids',
-                                             'create_date',
-                                             'session_id']])
+                                           [order_ids, fields])
 
             return orders
         except Exception as e:
@@ -204,7 +189,7 @@ class OrderPoller:
                             'pos.order', 'write',
                             [[order_id], {'x_wallet_updated': True}]
                         )
-                    except Exception as e:
+                    except xmlrpc.client.Fault as e:
                         logger.warning(f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
 
                     wallet_xml = sender.build_wallet_balance_update_xml(
