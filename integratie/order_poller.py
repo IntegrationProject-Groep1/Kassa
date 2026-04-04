@@ -197,6 +197,15 @@ class OrderPoller:
                         'res.partner', 'write',
                         [[customer_info['id']], {'x_wallet_balance': new_balance}]
                     )
+                    
+                    try:
+                        models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.order', 'write',
+                            [[order_id], {'x_wallet_updated': True}]
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
 
                     try:
                         models.execute_kw(
