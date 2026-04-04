@@ -7,7 +7,6 @@ Versie 3.5 — Uitgaande XSD-validatie voor consumption_order
 import pika
 import json
 import os
-import time
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -15,7 +14,7 @@ import xml.etree.ElementTree as ET
 import logging
 from lxml import etree
 
-from config_utils import get_env, parse_rabbit_port
+from config_utils import parse_rabbit_port
 
 
 class BufferFullError(RuntimeError):
@@ -32,13 +31,13 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 
 
 # Configuration
-RABBIT_HOST = get_env("RABBIT_HOST")
+RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_USER = get_env("RABBIT_USER")
-RABBIT_PASS = get_env("RABBIT_PASS")
-RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
+RABBIT_USER = os.environ.get("RABBIT_USER")
+RABBIT_PASS = os.environ.get("RABBIT_PASS")
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
-    get_env("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
+    os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
 )
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
@@ -121,7 +120,7 @@ def flush_buffer() -> None:
 
     for entry in entries:
         try:
-            _publish_or_raise(entry["routing_key"], entry["xml"])
+            send_message(entry["routing_key"], entry["xml"])
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
@@ -148,32 +147,12 @@ _connection = None
 _channel = None
 
 
-def _reset_connection() -> None:
-    """Close and clear cached RabbitMQ handles."""
-    global _connection, _channel
-    try:
-        if _connection and not _connection.is_closed:
-            _connection.close()
-    except Exception:
-        # Ignore close errors; we are resetting state anyway.
-        pass
-    _connection = None
-    _channel = None
-
-
 def connect_to_rabbitmq():
     """Establish connection to RabbitMQ if not already connected"""
     global _connection, _channel
 
-    if (
-        _connection
-        and not _connection.is_closed
-        and _channel
-        and not _channel.is_closed
-    ):
+    if _connection and not _connection.is_closed:
         return _connection, _channel
-
-    _reset_connection()
 
     credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
@@ -187,32 +166,8 @@ def connect_to_rabbitmq():
 
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
-    # Require broker confirms so publish success reflects broker acknowledgement.
-    _channel.confirm_delivery()
     setup_exchange(_channel)
     return _connection, _channel
-
-
-def _publish_or_raise(routing_key: str, message_xml: str) -> None:
-    """Publish once and retry once with a fresh connection on failure."""
-    for attempt in range(2):
-        try:
-            _, channel = connect_to_rabbitmq()
-            published = channel.basic_publish(
-                exchange=EXCHANGE_NAME,
-                routing_key=routing_key,
-                body=message_xml.encode("utf-8"),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
-            if published is False:
-                raise RuntimeError("RabbitMQ did not confirm message publish")
-            return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):
-            _reset_connection()
-            if attempt == 1:
-                raise
-            # Small backoff prevents immediate hammering when broker path is unstable.
-            time.sleep(0.25)
 
 
 def setup_exchange(channel):
@@ -244,8 +199,16 @@ def setup_exchange(channel):
 
 def send_message(routing_key: str, message_xml: str) -> None:
     """Send message via kassa.exchange using routing key. Buffer on error."""
+    global _connection, _channel
     try:
-        _publish_or_raise(routing_key, message_xml)
+        conn, channel = connect_to_rabbitmq()
+
+        channel.basic_publish(
+            exchange=EXCHANGE_NAME,
+            routing_key=routing_key,
+            body=message_xml.encode("utf-8"),
+            properties=pika.BasicProperties(delivery_mode=2)  # Persistent
+        )
 
         logger.info(f"✅ Sent: routing_key={routing_key}")
 
@@ -254,7 +217,9 @@ def send_message(routing_key: str, message_xml: str) -> None:
 
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
-            f"⚠️  Send failed ({type(e).__name__}), buffering message lokaal...")
+            f"⚠️  Send failed ({type(e).__name__}), buffering message...")
+        _connection = None  # Force reconnect on next try
+        _channel = None
         _buffer_message(routing_key, message_xml)
 
 

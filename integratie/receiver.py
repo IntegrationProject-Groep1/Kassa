@@ -18,16 +18,16 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
 
-from config_utils import get_env, parse_rabbit_port, require_env
+from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
-RABBIT_HOST = get_env("RABBIT_HOST")
+RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
-RABBIT_USER = get_env("RABBIT_USER")
-RABBIT_PASS = get_env("RABBIT_PASS")
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+RABBIT_USER = os.environ.get("RABBIT_USER")
+RABBIT_PASS = os.environ.get("RABBIT_PASS")
 
 ODOO_URL = os.environ.get("ODOO_URL")
 ODOO_DB = os.environ.get("ODOO_DB")
