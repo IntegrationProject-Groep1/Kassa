@@ -31,6 +31,7 @@ class OrderPoller:
         self.odoo_pass = os.environ.get("ODOO_PASS")
 
         self.odoo_uid = None
+        self.models = None
         self.processed_orders = collections.OrderedDict()
 
         # Outbox folder setup
@@ -46,6 +47,8 @@ class OrderPoller:
                 self.odoo_db, self.odoo_user, self.odoo_pass, {})
 
             if self.odoo_uid:
+                self.models = xmlrpc.client.ServerProxy(
+                    f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
                 logger.info("✅ Odoo connection established")
                 return True
             else:
@@ -58,11 +61,9 @@ class OrderPoller:
     def get_pending_orders(self):
         """Fetch completed orders from Odoo POS that haven't been sent yet"""
         try:
-            models = xmlrpc.client.ServerProxy(
-                f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
             # Search for completed orders not yet sent to RabbitMQ
-            order_ids = models.execute_kw(
+            order_ids = self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'search',
                 [[['state', 'in', ['paid', 'done']], ['x_rabbitmq_sent', '=', False]]]
@@ -77,20 +78,16 @@ class OrderPoller:
             ]
             try:
                 # Try reading with x_wallet_updated
-                orders = models.execute_kw(self.odoo_db,
-                                           self.odoo_uid,
-                                           self.odoo_pass,
-                                           'pos.order',
-                                           'read',
-                                           [order_ids, fields + ['x_wallet_updated']])
+                orders = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'read',
+                    [order_ids, fields + ['x_wallet_updated']])
             except xmlrpc.client.Fault:
                 # Fallback if x_wallet_updated does not exist
-                orders = models.execute_kw(self.odoo_db,
-                                           self.odoo_uid,
-                                           self.odoo_pass,
-                                           'pos.order',
-                                           'read',
-                                           [order_ids, fields])
+                orders = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'read',
+                    [order_ids, fields])
 
             return orders
         except Exception as e:
@@ -103,8 +100,6 @@ class OrderPoller:
             return None
 
         try:
-            models = xmlrpc.client.ServerProxy(
-                f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
             # partner_id is usually a tuple like (ID, name)
             if isinstance(partner_id, (list, tuple)):
@@ -112,13 +107,13 @@ class OrderPoller:
 
             base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_wallet_balance']
             try:
-                customer = models.execute_kw(
+                customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields + ['x_user_id']])
             except Exception:
                 # x_user_id is a custom field that may not exist yet in this Odoo instance
                 logger.warning("⚠️  x_user_id field not found on res.partner — fetching without it")
-                customer = models.execute_kw(
+                customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields])
 
@@ -147,8 +142,6 @@ class OrderPoller:
             else:
                 is_anonymous = True
 
-            models = xmlrpc.client.ServerProxy(f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
-
             if order.get('amount_total', 0) < 0:
                 # Het is een terugbetaling
 
@@ -158,7 +151,7 @@ class OrderPoller:
                 refund_method = "Cash/Card"
 
                 if payment_ids:
-                    payments = models.execute_kw(
+                    payments = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.payment', 'read',
                         [payment_ids, ['payment_method_id', 'amount']]
@@ -177,14 +170,14 @@ class OrderPoller:
                     current_balance = customer_info.get('x_wallet_balance') or 0.0
                     new_balance = float(current_balance) + refund_amount_positive
 
-                    models.execute_kw(
+                    self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'res.partner', 'write',
                         [[customer_info['id']], {'x_wallet_balance': new_balance}]
                     )
 
                     try:
-                        models.execute_kw(
+                        self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'pos.order', 'write',
                             [[order_id], {'x_wallet_updated': True}]
@@ -212,32 +205,37 @@ class OrderPoller:
             else:
                 # Reguliere bestelling
                 items = []
-                for line_data in order['lines']:
-                    if isinstance(line_data, (list, tuple)):
-                        line_id = line_data[0]
-                    else:
-                        line_id = line_data
+                # Extract all line IDs
+                line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order['lines']]
 
-                    line_detail = models.execute_kw(
+                if line_ids:
+                    line_details = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.order.line', 'read',
-                        [line_id, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
+                        [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
                     )
+                    # Pre-fetch all associated taxes in one bulk call
+                    all_tax_ids = list(set([tid for line in line_details for tid in line.get('tax_ids', [])]))
+                    tax_map = {}
+                    if all_tax_ids:
+                        tax_details = self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'account.tax', 'read',
+                            [all_tax_ids, ['id', 'amount']]
+                        )
+                        tax_map = {t['id']: t['amount'] for t in tax_details}
 
-                    if line_detail:
-                        line = line_detail[0]
+                    # Iterate through the pre-fetched lines
+                    for line in line_details:
                         product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
 
                         vat_rate = 0
-                        tax_ids = line.get('tax_ids', [])
-                        if tax_ids:
-                            tax_details = models.execute_kw(
-                                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                                'account.tax', 'read',
-                                [tax_ids, ['amount']]
-                            )
-                            if tax_details:
-                                vat_rate = int(max(t['amount'] for t in tax_details))
+                        tax_ids_for_line = line.get('tax_ids', [])
+                        if tax_ids_for_line:
+                            # Use tax_map to find max amount
+                            amounts = [tax_map.get(t_id, 0) for t_id in tax_ids_for_line]
+                            if amounts:
+                                vat_rate = int(max(amounts))
 
                         items.append({
                             'id': f"LINE-{line['id']}",
@@ -256,7 +254,7 @@ class OrderPoller:
                         customer_type = "company"
                     elif customer_info.get('parent_id'):
                         parent_id_val = customer_info['parent_id'][0]
-                        parent_detail = models.execute_kw(
+                        parent_detail = self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'res.partner', 'read',
                             [parent_id_val, ['is_company']]
@@ -285,7 +283,7 @@ class OrderPoller:
             # Persist sent status in Odoo — survives container restarts.
             # at-least-once: if this write fails the in-memory cache still
             # prevents a duplicate storm within the current session.
-            models.execute_kw(
+            self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'write',
                 [[order_id], {'x_rabbitmq_sent': True}]
