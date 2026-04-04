@@ -242,7 +242,7 @@ def setup_exchange(channel):
             )
 
 
-def send_message(routing_key: str, message_xml: str, _is_retry=False) -> None:
+def send_message(routing_key: str, message_xml: str) -> None:
     """Send message via kassa.exchange using routing key. Buffer on error."""
     try:
         _publish_or_raise(routing_key, message_xml)
@@ -251,13 +251,6 @@ def send_message(routing_key: str, message_xml: str, _is_retry=False) -> None:
 
     except Exception as e:
         _reset_connection()
-
-        if not _is_retry and isinstance(
-            e, (pika.exceptions.AMQPConnectionError, pika.exceptions.StreamLostError)
-        ):
-            logger.info("🔄 Reconnecting immediately and sending to RabbitMQ online...")
-            send_message(routing_key, message_xml, _is_retry=True)
-            return
 
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(

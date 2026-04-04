@@ -19,6 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MAX_CACHE_SIZE = 10_000
+PAYMENT_METHOD_WALLET = "Badge Wallet"
 
 
 class OrderPoller:
@@ -161,9 +162,9 @@ class OrderPoller:
                     wallet_refund_amount = 0.0
                     for pm in payments:
                         method_tuple = pm.get('payment_method_id')
-                        if method_tuple and "Badge Wallet" in method_tuple[1]:
+                        if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
                             is_badge_wallet = True
-                            refund_method = "Badge Wallet"
+                            refund_method = PAYMENT_METHOD_WALLET
                             wallet_refund_amount += abs(pm.get('amount', 0.0))
 
                 # 2. Update wallet balance if necessary
