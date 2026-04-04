@@ -13,6 +13,7 @@
 import os
 import pika
 import xmlrpc.client
+from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
@@ -40,9 +41,9 @@ QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration": os.path.join(SCHEMA_DIR, "schema_nieuwe_inschrijving.xsd"),
-    "profile_update": os.path.join(SCHEMA_DIR, "schema_profiel_update.xsd"),
-    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_scan_badge.xsd"),
+    "new_registration": os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
+    "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
+    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
 }
 
@@ -134,8 +135,16 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     company_name = customer.findtext("company_name", "").strip()
     ctype = customer.findtext("type", "private").strip().lower()
     vat_number = customer.findtext("vat_number", "").strip()
-    age_text = customer.findtext("age", "0").strip()
-    age = int(age_text) if age_text.isdigit() else 0
+
+    dob_str = customer.findtext("date_of_birth", "").strip()
+    age = 0
+    if dob_str:
+        try:
+            dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+            today = datetime.now(timezone.utc).date()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        except ValueError:
+            pass
 
     payment_due_el = body.find("payment_due")
     if payment_due_el is None:
@@ -205,8 +214,16 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     company_name = body.findtext("company_name", "").strip()
     ctype = body.findtext("type", "private").strip().lower()
     vat_number = body.findtext("vat_number", "").strip()
-    age_text = body.findtext("age", "0").strip()
-    age = int(age_text) if age_text.isdigit() else 0
+
+    dob_str = body.findtext("date_of_birth", "").strip()
+    age = 0
+    if dob_str:
+        try:
+            dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+            today = datetime.now(timezone.utc).date()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        except ValueError:
+            pass
 
     if not user_id:
         raise ValueError("profile_update: user_id missing in <body>")

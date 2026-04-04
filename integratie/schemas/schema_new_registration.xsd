@@ -32,7 +32,7 @@
       </xs:element>
       <xs:element name="vat_number" type="xs:string" minOccurs="0"/>
       <xs:element name="user_id" type="xs:string"/>
-      <xs:element name="age" type="xs:integer"/>
+      <xs:element name="date_of_birth" type="xs:date"/>
     </xs:sequence>
   </xs:complexType>
 
