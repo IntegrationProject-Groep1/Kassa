@@ -109,6 +109,18 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
 
 # ── Business logic per message type ───────────────────────────────────────────
 
+def calculate_age(dob_str: str) -> int:
+    """Calculate age from date of birth string (YYYY-MM-DD)."""
+    if not dob_str:
+        return 0
+    try:
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+        today = datetime.now(timezone.utc).date()
+        return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    except ValueError:
+        return 0
+
+
 def process_new_registration(root: ET.Element, uid: int, models) -> None:
     """
     Flow 1 – new_registration
@@ -137,14 +149,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     vat_number = customer.findtext("vat_number", "").strip()
 
     dob_str = customer.findtext("date_of_birth", "").strip()
-    age = 0
-    if dob_str:
-        try:
-            dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-            today = datetime.now(timezone.utc).date()
-            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        except ValueError:
-            pass
+    age = calculate_age(dob_str)
 
     payment_due_el = body.find("payment_due")
     if payment_due_el is None:
@@ -216,14 +221,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     vat_number = body.findtext("vat_number", "").strip()
 
     dob_str = body.findtext("date_of_birth", "").strip()
-    age = 0
-    if dob_str:
-        try:
-            dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-            today = datetime.now(timezone.utc).date()
-            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        except ValueError:
-            pass
+    age = calculate_age(dob_str)
 
     if not user_id:
         raise ValueError("profile_update: user_id missing in <body>")
