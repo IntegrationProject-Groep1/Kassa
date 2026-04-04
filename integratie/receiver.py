@@ -135,7 +135,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     company_name = customer.findtext("company_name", "").strip()
     ctype = customer.findtext("type", "private").strip().lower()
     vat_number = customer.findtext("vat_number", "").strip()
-    
+
     dob_str = customer.findtext("date_of_birth", "").strip()
     age = 0
     if dob_str:
@@ -214,7 +214,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     company_name = body.findtext("company_name", "").strip()
     ctype = body.findtext("type", "private").strip().lower()
     vat_number = body.findtext("vat_number", "").strip()
-    
+
     dob_str = body.findtext("date_of_birth", "").strip()
     age = 0
     if dob_str:
