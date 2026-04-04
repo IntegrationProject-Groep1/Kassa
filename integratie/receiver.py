@@ -13,6 +13,7 @@
 import os
 import pika
 import xmlrpc.client
+
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
@@ -40,9 +41,9 @@ QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration": os.path.join(SCHEMA_DIR, "schema_nieuwe_inschrijving.xsd"),
-    "profile_update": os.path.join(SCHEMA_DIR, "schema_profiel_update.xsd"),
-    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_scan_badge.xsd"),
+    "new_registration": os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
+    "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
+    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
 }
 
@@ -134,8 +135,8 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     company_name = customer.findtext("company_name", "").strip()
     ctype = customer.findtext("type", "private").strip().lower()
     vat_number = customer.findtext("vat_number", "").strip()
-    age_text = customer.findtext("age", "0").strip()
-    age = int(age_text) if age_text.isdigit() else 0
+
+    dob_str = customer.findtext("date_of_birth", "").strip()
 
     payment_due_el = body.find("payment_due")
     if payment_due_el is None:
@@ -159,8 +160,9 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
         "email": email,
         "x_user_id": user_id,
         "is_company": ctype == "company",
-        "x_age": age,
     }
+    if dob_str:
+        partner_vals["x_date_of_birth"] = dob_str
     if vat_number:
         partner_vals["vat"] = vat_number
 
@@ -205,8 +207,8 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     company_name = body.findtext("company_name", "").strip()
     ctype = body.findtext("type", "private").strip().lower()
     vat_number = body.findtext("vat_number", "").strip()
-    age_text = body.findtext("age", "0").strip()
-    age = int(age_text) if age_text.isdigit() else 0
+
+    dob_str = body.findtext("date_of_birth", "").strip()
 
     if not user_id:
         raise ValueError("profile_update: user_id missing in <body>")
@@ -221,8 +223,9 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     update_vals = {
         "email": email,
         "is_company": ctype == "company",
-        "x_age": age,
     }
+    if dob_str:
+        update_vals["x_date_of_birth"] = dob_str
     if name:
         update_vals["name"] = name
     if company_name and ctype == "company":
@@ -439,11 +442,31 @@ def start_listening():
     Start the receiver.
     Re-publishes buffered messages on connect (flush_buffer).
     Listens on queue.incoming with prefetch_count=1 for fair dispatch.
+    Sets up Dead Letter Exchange and Queue for automated poison-message handling.
     """
     conn = connect_to_rabbitmq()
     channel = conn.channel()
 
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
+    # --- NIEUW: DLQ Setup ---
+    # 1. Maak een Dead Letter Exchange (DLX) aan
+    channel.exchange_declare(exchange='kassa.dlx', exchange_type='direct', durable=True)
+
+    # 2. Maak de daadwerkelijke Dead Letter Queue (DLQ) aan
+    channel.queue_declare(queue='kassa.incoming.dlq', durable=True)
+
+    # 3. Koppel de DLQ aan de DLX
+    channel.queue_bind(exchange='kassa.dlx', queue='kassa.incoming.dlq')
+    # ------------------------
+
+    # 4. Maak de hoofd-queue aan (of update deze) met de verwijzing naar de DLX
+    channel.queue_declare(
+        queue=QUEUE_NAME,
+        durable=True,
+        arguments={
+            'x-dead-letter-exchange': 'kassa.dlx'
+        }
+    )
+
     channel.basic_qos(prefetch_count=1)
 
     flush_buffer()  # re-publish buffered outbox messages after successful connect

@@ -153,7 +153,7 @@ class TestProcessNewRegistration:
         "<name>Alice</name>"
         "<type>private</type>"
         "<user_id>uid-001</user_id>"
-        "<age>30</age>"
+        "<date_of_birth>1996-01-01</date_of_birth>"
         "</customer>"
         "<payment_due><amount>25.00</amount><status>unpaid</status></payment_due>"
     )
@@ -227,7 +227,7 @@ class TestProcessProfileUpdate:
         "<user_id>uid-003</user_id>"
         "<email>new@example.com</email>"
         "<name>Bob</name>"
-        "<age>40</age>"
+        "<date_of_birth>1986-01-01</date_of_birth>"
         "<type>private</type>"
     )
 
@@ -246,7 +246,7 @@ class TestProcessProfileUpdate:
         assert write_call[0][4] == "write"
         vals = write_call[0][5][1]
         assert vals["email"] == "new@example.com"
-        assert vals["x_age"] == 40
+        assert vals["x_date_of_birth"] == "1986-01-01"
 
     def test_creates_partner_when_not_found(self, odoo):
         uid, models = odoo
@@ -285,7 +285,7 @@ class TestProcessBadgeScan:
         uid, models = odoo
         models.execute_kw.return_value = [
             {"id": 3, "name": "Alice", "x_user_id": "uid-001",
-             "x_wallet_balance": 12.50, "x_age": 30, "is_company": False}
+             "x_wallet_balance": 12.50, "x_date_of_birth": "1996-01-01", "is_company": False}
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
         output = capsys.readouterr().out
@@ -370,7 +370,7 @@ class TestProcessMessage:
             "new_registration",
             "<customer>"
             "<email>x@x.com</email><name>X</name><type>private</type>"
-            "<user_id>uid-999</user_id><age>20</age>"
+            "<user_id>uid-999</user_id><date_of_birth>2006-01-01</date_of_birth>"
             "</customer>"
             "<payment_due><amount>10</amount><status>unpaid</status></payment_due>",
         )
