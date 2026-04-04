@@ -83,6 +83,7 @@ class OrderPoller:
                                          'lines',
                                          'amount_total',
                                          'amount_tax',
+                                         'payment_ids',
                                          'create_date',
                                          'session_id']])
 
@@ -104,7 +105,7 @@ class OrderPoller:
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
 
-            base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id']
+            base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_wallet_balance']
             try:
                 customer = models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
@@ -141,81 +142,124 @@ class OrderPoller:
             else:
                 is_anonymous = True
 
-            # Build items list from order lines
-            models = xmlrpc.client.ServerProxy(
-                f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
+            models = xmlrpc.client.ServerProxy(f'{self.odoo_url}/xmlrpc/2/object', allow_none=True)
 
-            items = []
-            for line_data in order['lines']:
-                # line_data is typically a tuple/list: (line_id,) or just the
-                # id
-                if isinstance(line_data, (list, tuple)):
-                    line_id = line_data[0]
-                else:
-                    line_id = line_data
-
-                # Fetch line details
-                line_detail = models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'pos.order.line', 'read',
-                    [line_id, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
-                )
-
-                if line_detail:
-                    line = line_detail[0]
-                    product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
-
-                    # Fetch tax details
-                    # account.tax.amount is stored as a percentage in Odoo (e.g. 6.0 for 6%)
-                    vat_rate = 0
-                    tax_ids = line.get('tax_ids', [])
-                    if tax_ids:
-                        tax_details = models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'account.tax', 'read',
-                            [tax_ids, ['amount']]
-                        )
-                        if tax_details:
-                            vat_rate = int(max(t['amount'] for t in tax_details))
-
-                    items.append({
-                        'id': f"LINE-{line['id']}",
-                        'sku': str(line['product_id'][0]),
-                        'description': product_name,
-                        'quantity': int(line['qty']),
-                        'unit_price': float(line['price_unit']),
-                        'total_amount': round(line['qty'] * line['price_unit'], 2),
-                        'vat_rate': vat_rate,
-                        'currency': 'eur'
-                    })
-
-            # Determine customer type (company or private) for XML <type> field
-            customer_type = "private"
-            if customer_info:
-                if customer_info.get('is_company'):
-                    customer_type = "company"
-                elif customer_info.get('parent_id'):
-                    # Contact linked to a parent company → buying on behalf of company
-                    parent_id_val = customer_info['parent_id'][0]
-                    parent_detail = models.execute_kw(
+            if order.get('amount_total', 0) < 0:
+                # Het is een terugbetaling
+                
+                # 1. Bekijk de betalingsmethode in Odoo via payment_ids
+                payment_ids = order.get('payment_ids', [])
+                is_badge_wallet = False
+                refund_method = "Cash/Card"
+                
+                if payment_ids:
+                    payments = models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'read',
-                        [parent_id_val, ['is_company']]
+                        'pos.payment', 'read',
+                        [payment_ids, ['payment_method_id']]
                     )
-                    if parent_detail and parent_detail[0].get('is_company'):
+                    for pm in payments:
+                        method_tuple = pm.get('payment_method_id')
+                        if method_tuple and "Badge Wallet" in method_tuple[1]:
+                            is_badge_wallet = True
+                            refund_method = "Badge Wallet"
+                            break
+                            
+                # 2. Update wallet balance if necessary
+                if is_badge_wallet and customer_info:
+                    refund_amount_positive = abs(order['amount_total'])
+                    current_balance = customer_info.get('x_wallet_balance') or 0.0
+                    new_balance = float(current_balance) + refund_amount_positive
+                    
+                    models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'write',
+                        [[customer_info['id']], {'x_wallet_balance': new_balance}]
+                    )
+                    
+                    wallet_xml = sender.build_wallet_balance_update_xml(
+                        user_id=customer_info.get('x_user_id'), 
+                        new_balance=new_balance
+                    )
+                    sender.send_typed_message('wallet_balance_update', wallet_xml)
+                    
+                # 3. Always send refund_processed XML
+                refund_xml = sender.build_refund_processed_xml(
+                    original_payment_msg_id="Unknown",
+                    refund_type="POS_RETURN",
+                    refund_amount=abs(order['amount_total']),
+                    refund_method=refund_method,
+                    refund_reason="Verwerkt via Kassa",
+                    original_transaction_id=str(order['id']),
+                    user_id=customer_info.get('x_user_id') if customer_info else None
+                )
+                sender.send_typed_message('refund_processed', refund_xml)
+            else:
+                # Reguliere bestelling
+                items = []
+                for line_data in order['lines']:
+                    if isinstance(line_data, (list, tuple)):
+                        line_id = line_data[0]
+                    else:
+                        line_id = line_data
+
+                    line_detail = models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order.line', 'read',
+                        [line_id, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
+                    )
+
+                    if line_detail:
+                        line = line_detail[0]
+                        product_name = line['product_id'][1] if line['product_id'] else 'Unknown'
+                        
+                        vat_rate = 0
+                        tax_ids = line.get('tax_ids', [])
+                        if tax_ids:
+                            tax_details = models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'account.tax', 'read',
+                                [tax_ids, ['amount']]
+                            )
+                            if tax_details:
+                                vat_rate = int(max(t['amount'] for t in tax_details))
+                        
+                        items.append({
+                            'id': f"LINE-{line['id']}",
+                            'sku': str(line['product_id'][0]),
+                            'description': product_name,
+                            'quantity': int(line['qty']),
+                            'unit_price': float(line['price_unit']),
+                            'total_amount': round(line['qty'] * line['price_unit'], 2),
+                            'vat_rate': vat_rate,
+                            'currency': 'eur'
+                        })
+
+                customer_type = "private"
+                if customer_info:
+                    if customer_info.get('is_company'):
                         customer_type = "company"
+                    elif customer_info.get('parent_id'):
+                        parent_id_val = customer_info['parent_id'][0]
+                        parent_detail = models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'read',
+                            [parent_id_val, ['is_company']]
+                        )
+                        if parent_detail and parent_detail[0].get('is_company'):
+                            customer_type = "company"
 
-            # Build consumption_order XML using sender builder
-            xml_message = sender.build_consumption_order_xml(
-                items=items,
-                customer_id=str(customer_info['id']) if customer_info else None,
-                user_id=str(customer_info.get('x_user_id')) if customer_info else None,
-                customer_type=customer_type,
-                email=customer_info.get('email', '') if customer_info else '',
-                is_anonymous=is_anonymous)
+                # Build consumption_order XML using sender builder
+                xml_message = sender.build_consumption_order_xml(
+                    items=items,
+                    customer_id=str(customer_info['id']) if customer_info else None,
+                    user_id=str(customer_info.get('x_user_id')) if customer_info else None,
+                    customer_type=customer_type,
+                    email=customer_info.get('email', '') if customer_info else '',
+                    is_anonymous=is_anonymous)
 
-            # Send via sender module (automatically handles RabbitMQ + outbox fallback)
-            sender.send_typed_message('consumption_order', xml_message)
+                # Send via sender module
+                sender.send_typed_message('consumption_order', xml_message)
 
             # Update in-memory cache immediately after send to suppress duplicates
             # within the same session even if the Odoo write below fails.
