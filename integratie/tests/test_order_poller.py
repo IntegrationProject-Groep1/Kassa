@@ -7,7 +7,7 @@ and duplicate suppression via the in-memory cache.
 """
 import os
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +170,9 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
 
     poller._process_refund(order, 10, None)
 
-    mock_sender.send_typed_message.assert_called_once_with('refund_processed', mock_sender.build_refund_processed_xml.return_value)
+    mock_sender.send_typed_message.assert_called_once_with(
+        'refund_processed', mock_sender.build_refund_processed_xml.return_value
+    )
     # Wallet write should NOT have been called
     write_calls = [c for c in poller.models.execute_kw.call_args_list
                    if len(c[0]) > 4 and c[0][3] == 'res.partner']
