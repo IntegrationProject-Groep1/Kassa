@@ -24,6 +24,8 @@ from sender import send_error_to_queue, flush_buffer, now_utc
 
 
 logger = logging.getLogger(__name__)
+
+
 def setup_logging():
     if not logging.getLogger().handlers:
         logging.basicConfig(
