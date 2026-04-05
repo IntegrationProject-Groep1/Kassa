@@ -174,7 +174,7 @@ class OrderPoller:
             except Exception:
                 # x_user_id is a custom field that may not exist yet in this Odoo instance
                 logger.warning("⚠️  x_user_id field not found on res.partner — fetching without it")
-                customer = models.execute_kw(
+                customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields])
 
@@ -231,7 +231,7 @@ class OrderPoller:
                     line_id = line_data
 
                 # Fetch line details
-                line_detail = models.execute_kw(
+                line_detail = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order.line', 'read',
                     [line_id, ['product_id', 'qty', 'price_unit', 'tax_ids']]
@@ -245,7 +245,7 @@ class OrderPoller:
                     vat_rate = 0.0
                     tax_ids = line.get('tax_ids', [])
                     if tax_ids:
-                        tax_details = models.execute_kw(
+                        tax_details = self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'account.tax', 'read',
                             [tax_ids, ['amount']]
@@ -282,7 +282,7 @@ class OrderPoller:
                     # Customer is a contact under a potential parent company;
                     # fetch the parent to confirm it is marked as a company
                     parent_id_val = customer_info['parent_id'][0]
-                    parent_detail = models.execute_kw(
+                    parent_detail = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'res.partner', 'read',
                         [parent_id_val, ['is_company']]

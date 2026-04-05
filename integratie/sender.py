@@ -49,8 +49,6 @@ class BufferFullError(RuntimeError):
     """Raised when the outbox buffer has reached its maximum capacity."""
 
 
-from config_utils import parse_rabbit_port
-
 logger = logging.getLogger(__name__)
 
 
@@ -288,7 +286,6 @@ def send_message(routing_key: str, message_xml: str) -> None:
     globals are reset to None so the next call opens a fresh connection rather
     than retrying a broken one.
     """
-    global _connection, _channel
     try:
         _publish_or_raise(routing_key, message_xml)
         logger.info(f"✅ Sent: routing_key={routing_key}")
