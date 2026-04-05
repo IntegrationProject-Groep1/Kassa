@@ -58,7 +58,7 @@ def odoo_count(user_id: str) -> int:
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
-    ids = models.execute_kw(
+    ids: list = models.execute_kw(  # type: ignore[assignment]
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search",
         [[["x_user_id", "=", user_id]]],
@@ -70,7 +70,7 @@ def odoo_get_partner(user_id: str) -> dict | None:
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
-    results = models.execute_kw(
+    results: list = models.execute_kw(  # type: ignore[assignment]
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
@@ -157,7 +157,7 @@ def test1_valid_registration():
     partner = odoo_get_partner(TEST_USER_ID)
     count = odoo_count(TEST_USER_ID)
 
-    print(f"\n  Odoo result:")
+    print("\n  Odoo result:")
     print(f"    Partners found : {count}")
     if partner:
         print(f"    id             : {partner['id']}")
