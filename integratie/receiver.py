@@ -24,6 +24,11 @@ from sender import send_error_to_queue, flush_buffer, now_utc
 
 
 logger = logging.getLogger(__name__)
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
@@ -455,18 +460,17 @@ def start_listening():
     channel = conn.channel()
 
     # --- DLQ Setup ---
-    # 1. Declare the Dead Letter Exchange (DLX)
-    channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
-
-    # 2. Declare the Dead Letter Queue (DLQ)
-    channel.queue_declare(queue=DLQ_NAME, durable=True)
-
-    # 3. Bind the DLQ to the DLX with an explicit routing key
-    channel.queue_bind(exchange=DLX_NAME, queue=DLQ_NAME, routing_key=DLQ_ROUTING_KEY)
-    # ------------------
-
-    # 4. Declare the main queue with DLX + DLQ routing key settings
     try:
+        # 1. Declare the Dead Letter Exchange (DLX)
+        channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
+
+        # 2. Declare the Dead Letter Queue (DLQ)
+        channel.queue_declare(queue=DLQ_NAME, durable=True)
+
+        # 3. Bind the DLQ to the DLX with an explicit routing key
+        channel.queue_bind(exchange=DLX_NAME, queue=DLQ_NAME, routing_key=DLQ_ROUTING_KEY)
+
+        # 4. Declare the main queue with DLX + DLQ routing key settings
         channel.queue_declare(
             queue=QUEUE_NAME,
             durable=True,
@@ -477,11 +481,15 @@ def start_listening():
         )
     except pika.exceptions.ChannelClosedByBroker as exc:
         if getattr(exc, "reply_code", None) == 406:
-            logger.error(
-                "CRITICAL: Queue '%s' already exists with different arguments. "
-                "Delete the '%s' queue in RabbitMQ management so the DLQ config can be applied.",
+            logger.critical(
+                "RabbitMQ topology conflict (406 PRECONDITION_FAILED). "
+                "A queue/exchange already exists with different arguments. "
+                "Delete and recreate conflicting resources in RabbitMQ management. "
+                "queue=%s, dlx=%s, dlq=%s, broker=%s",
                 QUEUE_NAME,
-                QUEUE_NAME,
+                DLX_NAME,
+                DLQ_NAME,
+                getattr(exc, "reply_text", "unknown"),
             )
         raise
 
