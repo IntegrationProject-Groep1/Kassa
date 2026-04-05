@@ -1,46 +1,45 @@
 # XML_Structuren_Kassa.md
 
-# XML_Structuren_Kassa.docx
+# XML\_Structuren\_Kassa.docx
 
 **Technische Integratiedocumentatie — XML & XSD**
 Team Kassa (Odoo POS) — Versie 2.5 — Geïntegreerd document
-Conform XML_naamgeving standaard (snake_case) | Integratieproject Desideriushogeschool 2026
+Conform XML\_naamgeving standaard (snake\_case) | Integratieproject Desideriushogeschool 2026
 
 # 1\. Overzicht van alle Flows
 
-Alle messageType-waarden zijn conform de snake_case naamgevingsstandaard. Flows 11–16 zijn uitbreidingen op de basisflows.
+Alle messageType-waarden zijn conform de snake\_case naamgevingsstandaard. Flows 11–16 zijn uitbreidingen op de basisflows.
 
-| #   | Richting           | Van  | Naar         | Routing (Exchange & Key)                                            | type (enum)                               | Bestand                            |
-| --- | ------------------ | ---- | ------------ | ------------------------------------------------------------------- | ----------------------------------------- | ---------------------------------- |
-| 1   | Inkomend           | CRM  | Odoo         | kassa.incoming                                                      | new_registration                          | schema_new_registration.xsd        |
-| 2   | Inkomend           | IoT  | Odoo         | kassa.incoming                                                      | badge_scanned                             | schema_badge_scanned.xsd           |
-| 3   | Inkomend           | CRM  | Odoo         | kassa.incoming                                                      | profile_update                            | schema_profile_update.xsd          |
-| 4   | Inkomend           | CRM  | Odoo         | kassa.incoming                                                      | cancel_registration                       | schema_cancel_registration.xsd     |
-| 5A  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.consumption                         | consumption_order                         | schema_consumption_order_v2.3.xsd  |
-| 5B  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.consumption                         | payment_registered                        | schema_payment_registered_v2.1.xsd |
-| 7   | Uitgaand           | Odoo | Elastic      | kassa.exchange → kassa.errors                                       | system_error                              | schema_error.xsd                   |
-| 8   | Uitgaand           | Odoo | Drupal       | kassa.exchange → kassa.frontend.payment                             | payment_status                            | schema_payment_status.xsd          |
-| 9   | Uitgaand           | Odoo | Drupal       | kassa.exchange → kassa.frontend.wallet                              | wallet_balance_update                     | schema_wallet_balance_update.xsd   |
-| 10  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.invoice                             | invoice_request                           | schema_invoice_request.xsd         |
-| 11  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.consumption                         | consumption_order (is_anonymous=true)     | schema_consumption_order_v2.3.xsd  |
-| 12  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.badge                               | badge_assigned                            | schema_badge_assigned.xsd          |
-| 13  | Uitgaand (2-staps) | Odoo | CRM + Drupal | kassa.exchange → kassa.payments.consumption + kassa.frontend.wallet | consumption_order + wallet_balance_update | zie Flow 5A + Flow 9               |
-| 14  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.registration                        | payment_registered (context=registration) | schema_payment_registered_v2.1.xsd |
-| 15  | Uitgaand           | Odoo | CRM          | kassa.exchange → kassa.payments.refund                              | refund_processed                          | schema_refund_processed.xsd        |
-| 16  | Intern sad path    | Odoo | Elastic      | kassa.exchange → kassa.errors                                       | system_error (badge_not_found)            | schema_error.xsd                   |
+| # | Richting | Van | Naar | Routing (Exchange & Key) | type (enum) | Bestand |
+| ---| ---| ---| ---| ---| ---| --- |
+| 1 | Inkomend | CRM | Odoo | kassa.incoming | new\_registration | schema\_new\_registration.xsd |
+| 2 | Inkomend | IoT | Odoo | kassa.incoming | badge\_scanned | schema\_badge\_scanned.xsd |
+| 3 | Inkomend | CRM | Odoo | kassa.incoming | profile\_update | schema\_profile\_update.xsd |
+| 4 | Inkomend | CRM | Odoo | kassa.incoming | cancel\_registration | schema\_cancel\_registration.xsd |
+| 5A | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.consumption | consumption\_order | schema\_consumption\_order\_v2.3.xsd |
+| 5B | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.consumption | payment\_registered | schema\_payment\_registered\_v2.1.xsd |
+| 7 | Uitgaand | Odoo | Elastic | kassa.exchange → kassa.errors | system\_error | schema\_error.xsd |
+| 8 | Uitgaand | Odoo | Drupal | kassa.exchange → kassa.frontend.payment | payment\_status | schema\_payment\_status.xsd |
+| 9 | Uitgaand | Odoo | Drupal | kassa.exchange → kassa.frontend.wallet | wallet\_balance\_update | schema\_wallet\_balance\_update.xsd |
+| 10 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.invoice | invoice\_request | schema\_invoice\_request.xsd |
+| 11 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.consumption | consumption\_order (is\_anonymous=true) | schema\_consumption\_order\_v2.3.xsd |
+| 12 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.badge | badge\_assigned | schema\_badge\_assigned.xsd |
+| 13 | Uitgaand (2-staps) | Odoo | CRM + Drupal | kassa.exchange → kassa.payments.consumption + kassa.frontend.wallet | consumption\_order + wallet\_balance\_update | zie Flow 5A + Flow 9 |
+| 14 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.registration | payment\_registered (context=registration) | schema\_payment\_registered\_v2.1.xsd |
+| 15 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.refund | refund\_processed | schema\_refund\_processed.xsd |
+| 16 | Intern sad path | Odoo | Elastic | kassa.exchange → kassa.errors | system\_error (badge\_not\_found) | schema\_error.xsd |
 
 # 2\. Inkomende Flows (Kassa ontvangt)
 
 | 📥 FLOW 1: Nieuwe Inschrijving<br>CRM (Salesforce) → Odoo (Kassa Team) via kassa.incoming |
-| ----------------------------------------------------------------------------------------- |
-| Van: CRM (Salesforce)                                                                     |
-| Naar: Odoo (Kassa Team)                                                                   |
-| Queue: kassa.incoming                                                                     |
-| type: new_registration                                                                    |
-| Bestand: schema_new_registration.xsd                                                      |
+| --- |
+| Van: CRM (Salesforce) |
+| Naar: Odoo (Kassa Team) |
+| Queue: kassa.incoming |
+| type: new\_registration |
+| Bestand: schema\_new\_registration.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>MSG-CRM-1001</message\\\_id>
@@ -114,16 +113,15 @@ XSD Schema:
 </xs:schema>
 
 | 📥 FLOW 2: Scan Badge<br>IoT (Raspberry Pi) → Odoo (Kassa Team) via kassa.incoming |
-| ---------------------------------------------------------------------------------- |
-| Van: Raspberry Pi (IoT Team)                                                       |
-| Naar: Odoo (Kassa Team)                                                            |
-| Queue: kassa.incoming                                                              |
-| type: badge_scanned                                                                |
-| Bestand: schema_badge_scanned.xsd                                                  |
+| --- |
+| Van: Raspberry Pi (IoT Team) |
+| Naar: Odoo (Kassa Team) |
+| Queue: kassa.incoming |
+| type: badge\_scanned |
+| Bestand: schema\_badge\_scanned.xsd |
 
 Aankopen zonder badge moeten altijd mogelijk zijn (Vraag 7). Het sad path (badge niet herkend) wordt gedocumenteerd in Flow 16.
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>MSG-IOT-5544</message\\\_id>
@@ -157,15 +155,14 @@ XSD Schema:
 </xs:schema>
 
 | 📥 FLOW 3: ProfileUpdate<br>CRM (Salesforce) → Odoo (Kassa Team) via kassa.incoming |
-| ----------------------------------------------------------------------------------- |
-| Van: Salesforce CRM                                                                 |
-| Naar: Odoo (Kassa Team)                                                             |
-| Queue: kassa.incoming                                                               |
-| type: profile_update                                                                |
-| Bestand: schema_profile_update.xsd                                                  |
+| --- |
+| Van: Salesforce CRM |
+| Naar: Odoo (Kassa Team) |
+| Queue: kassa.incoming |
+| type: profile\_update |
+| Bestand: schema\_profile\_update.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>MSG-CRM-7788</message\\\_id>
@@ -218,15 +215,14 @@ XSD Schema (schema\\\_profile\_update.xsd):
 </xs:schema>
 
 | 📥 FLOW 4: CancelRegistration<br>CRM (Salesforce) → Odoo via kassa.incoming |
-| --------------------------------------------------------------------------- |
-| Van: Salesforce CRM                                                         |
-| Naar: Odoo (Kassa Team)                                                     |
-| Queue: kassa.incoming                                                       |
-| type: cancel_registration                                                   |
-| Bestand: schema_cancel_registration.xsd                                     |
+| --- |
+| Van: Salesforce CRM |
+| Naar: Odoo (Kassa Team) |
+| Queue: kassa.incoming |
+| type: cancel\_registration |
+| Bestand: schema\_cancel\_registration.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f12e3d4c-5b6a-7d8e-9f0a-1b2c3d4e5f6a</message\\\_id>
@@ -269,7 +265,6 @@ XSD Schema (schema\\\_cancel\\\_registration.xsd):
 | **XSD versie:** v2.3 — dekt ook anonieme aankopen (Flow 11) en top-up producten (Flow 13); <id> is nu de unieke transactieregel-ID (LINE-xxx / Consumption\_ID), <sku> toegevoegd als fysiek product-ID |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f47ac10b-58cc-4372-a567-0e02b2c3d479</message\\\_id>
@@ -391,7 +386,6 @@ afgedwongen in code, niet door XSD. -->
 | **correlation\_id:** message\_id van de bijhorende consumption\_order |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>a23bc45d-89ef-1234-b567-1f03c3d4e580</message\\\_id>
@@ -470,16 +464,15 @@ XSD Schema: schema\\\_payment\\\_registered\\\_v2.1.xsd (zie ook Flow 14 — zel
 \# 4\\. Uitgaande Flows — Kassa naar Elastic (Monitoring)
 
 | **🚨 FLOW 7: Error Log (Sad Path)**<br>Odoo (Kassa) → Elastic Stack via kassa.errors | routing key: kassa.errors |
-| ------------------------------------------------------------------------------------ | ------------------------- |
-| **Van:** Odoo (Kassa Team)                                                           |
-| **Naar:** Elastic Stack / Admins                                                     |
-| **Exchange:** kassa.exchange                                                         |
-| **Routing key:** kassa.errors                                                        |
-| **type:** system_error                                                               |
-| **Bestand:** schema_error.xsd                                                        |
+| --- |
+| **Van:** Odoo (Kassa Team) |
+| **Naar:** Elastic Stack / Admins |
+| **Exchange:** kassa.exchange |
+| **Routing key:** kassa.errors |
+| **type:** system\_error |
+| **Bestand:** schema\_error.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>c9d2e415-5f6a-4b7c-8e1d-2a3b4c5d6e7f</message\\\_id>
@@ -531,7 +524,6 @@ XSD Schema (schema\\\_error.xsd):
 | **Bestand:** schema\_payment\_status.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>d98a7c65-4b5e-4c6f-8d9e-1a2b3c4d5e6f</message\\\_id>
@@ -576,7 +568,6 @@ XSD Schema (schema\\\_payment\\\_status.xsd):
 | **Triggers:** Na badge-aankoop (Badge Wallet betaling), na top-up (Flow 13), na terugbetaling via badge\_wallet (Flow 15) |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>e54a8b72-1c2d-3e4f-5678-7a8b9c0d1e2f</message\\\_id>
@@ -618,7 +609,6 @@ XSD Schema (schema\\\_wallet\\\_balance\\\_update.xsd):
 | **Bestand:** schema\_invoice\_request.xsd |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>b12c3d4e-5f6a-7890-bcde-f01234567890</message\\\_id>
@@ -690,7 +680,6 @@ XSD Schema (schema\\\_invoice\\\_request.xsd):
 
 Een bezoeker koopt iets aan de kassa zonder badge en zonder account. De <customer>-sectie wordt volledig weggelaten. De XSD (v2.3) valideert dit correct via minOccurs=0 op het <customer> element.
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f11a0000-0000-0000-0000-000000000001</message\\\_id>
@@ -726,7 +715,6 @@ Sad path: Als is\\\_anonymous=false maar <customer> ontbreekt, faalt XSD-validat
 | **Trigger:** Kassamedewerker koppelt badge aan bezoeker bij inschrijvingsbalie |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f12b0000-0000-0000-0000-000000000002</message\\\_id>
@@ -762,17 +750,16 @@ XSD Schema (schema\\\_badge\\\_assigned.xsd):
 </xs:schema>
 
 | 📤 FLOW 13: Badge Saldo Opladen (Top-up Product)<br>Odoo (Kassa) → CRM + Drupal via kassa.payments + frontend.payments |
-| ---------------------------------------------------------------------------------------------------------------------- |
-| Mechanisme: Top-up = gewoon Odoo-product. Geen apart berichttype — gebruikt consumption_order + wallet_balance_update. |
-| Stap 1 — type: consumption_order (Flow 5A) — items bevat het Top-up product met item_type=wallet_topup                 |
-| Stap 1 — Queue: kassa.payments → Salesforce CRM<br>routing key: kassa.payments.consumption                             |
-| Stap 2 — type: wallet_balance_update (Flow 9)                                                                          |
-| Stap 2 — Queue: frontend.payments → Drupal<br>routing key: kassa.frontend.wallet                                       |
-| vat_rate: 0 (saldo-opwaardering is geen belaste dienst)                                                                |
-| Bestand: schema_consumption_order_v2.3.xsd + schema_wallet_balance_update.xsd                                          |
+| --- |
+| Mechanisme: Top-up = gewoon Odoo-product. Geen apart berichttype — gebruikt consumption\_order + wallet\_balance\_update. |
+| Stap 1 — type: consumption\_order (Flow 5A) — items bevat het Top-up product met item\_type=wallet\_topup |
+| Stap 1 — Queue: kassa.payments → Salesforce CRM<br>routing key: kassa.payments.consumption |
+| Stap 2 — type: wallet\_balance\_update (Flow 9) |
+| Stap 2 — Queue: frontend.payments → Drupal<br>routing key: kassa.frontend.wallet |
+| vat\_rate: 0 (saldo-opwaardering is geen belaste dienst) |
+| Bestand: schema\_consumption\_order\_v2.3.xsd + schema\_wallet\_balance\_update.xsd |
 
-Voorbeeld XML — Top-up via consumption_order:
-
+Voorbeeld XML — Top-up via consumption\_order:
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f13c0000-0000-0000-0000-000000000099</message\\\_id>
@@ -816,7 +803,6 @@ Stap 2 — wallet\\\_balance\\\_update naar Drupal: zie Flow 9 XML-voorbeeld. St
 | **Verschil met Flow 5B:** <invoice><id> AFWEZIG (CRM maakt factuur aan). <user\_id> AANWEZIG op body-niveau. |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f14d0000-0000-0000-0000-000000000004</message\\\_id>
@@ -856,7 +842,6 @@ Sad path: Als het CRM de inschrijving niet als betaald kan markeren (CRM down, u
 | **Scope:** Enkel kassacorrecties. Planningswijzigingen zijn verantwoordelijkheid van CRM/Facturatie. |
 
 Voorbeeld XML:
-
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f15e0000-0000-0000-0000-000000000005</message\\\_id>
@@ -928,8 +913,7 @@ XSD Schema (schema\\\_refund\\\_processed.xsd):
 | **Respons:** system\_error naar kassa.errors met error\_code=badge\_not\_found |
 | **ACK strategie:** ACK (niet NACK) — een onbekende badge blijft onbekend totdat Flow 12 uitgevoerd wordt |
 
-Voorbeeld system_error bij badge niet gevonden:
-
+Voorbeeld system\_error bij badge niet gevonden:
 <?xml version="1.0" encoding="UTF-8"?><message>
 <header>
 <message\\\_id>f16f0000-0000-0000-0000-000000000006</message\\\_id>
@@ -946,33 +930,33 @@ Voorbeeld system_error bij badge niet gevonden:
 </message>
 Operationele paden na badge\\\_not\\\_found:
 
-| Beslissing kassamedewerker | Actie                                                                                                                                                |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pad A — Anoniem            | Kassamedewerker klikt 'Anoniem verder'. Kassa gaat door als Flow 11. Geen factuur mogelijk achteraf.                                                 |
-| Pad B — Wachten            | Klant wil badge_wallet of factuur. Medewerker stuurt klant naar inschrijvingsbalie. Badge wordt opnieuw gekoppeld via Flow 12. Volgende scan slaagt. |
-| Pad C — Noodkoppeling      | Medewerker zoekt klant op naam/e-mail in Odoo en voert Flow 12 handmatig uit ter plekke. ~2 minuten tijdsinvestering.                                |
-| Monitoring                 | kassa.errors ontvangt system_error met code badge_not_found. Als dezelfde badge_id >3x mislukt binnen 5 minuten triggert Controlroom een alert.      |
+| Beslissing kassamedewerker | Actie |
+| ---| --- |
+| Pad A — Anoniem | Kassamedewerker klikt 'Anoniem verder'. Kassa gaat door als Flow 11. Geen factuur mogelijk achteraf. |
+| Pad B — Wachten | Klant wil badge\_wallet of factuur. Medewerker stuurt klant naar inschrijvingsbalie. Badge wordt opnieuw gekoppeld via Flow 12. Volgende scan slaagt. |
+| Pad C — Noodkoppeling | Medewerker zoekt klant op naam/e-mail in Odoo en voert Flow 12 handmatig uit ter plekke. ~2 minuten tijdsinvestering. |
+| Monitoring | kassa.errors ontvangt system\_error met code badge\_not\_found. Als dezelfde badge\_id >3x mislukt binnen 5 minuten triggert Controlroom een alert. |
 
-Waarom ACK en geen NACK bij badge_not_found? Een NACK met requeue=True stuurt het bericht opnieuw aan de queue. Maar een badge die nu onbekend is, blijft dat tot Flow 12 uitgevoerd wordt. Onbeperkt retry-en verstopt de queue en produceert een stortvloed aan identieke errors in Elastic. De juiste strategie: ACK + system_error + operationele afhandeling.
-_XSD Schema: hergebruikt schema_error.xsd — zie Flow 7._
+Waarom ACK en geen NACK bij badge\_not\_found? Een NACK met requeue=True stuurt het bericht opnieuw aan de queue. Maar een badge die nu onbekend is, blijft dat tot Flow 12 uitgevoerd wordt. Onbeperkt retry-en verstopt de queue en produceert een stortvloed aan identieke errors in Elastic. De juiste strategie: ACK + system\_error + operationele afhandeling.
+_XSD Schema: hergebruikt schema\_error.xsd — zie Flow 7._
 
 # 8\. Enum Waarden — Volledige Referentie
 
-Gebruik uitsluitend de onderstaande waarden. Conform XML_naamgeving §4.
+Gebruik uitsluitend de onderstaande waarden. Conform XML\_naamgeving §4.
 
-| Element                       | Toegestane waarden                                                                                                                                                                                                  | Toelichting                                                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| <header><type>                | new_registration, badge_scanned, consumption_order, payment_registered, system_error, profile_update, payment_status, cancel_registration, wallet_balance_update, invoice_request, badge_assigned, refund_processed | PM-goedgekeurd (Vraag 37)                                                                                              |
-| <invoice><status>             | paid, pending, cancelled                                                                                                                                                                                            | Status van de factuur                                                                                                  |
-| <transaction><payment_method> | company_link, on_site, online                                                                                                                                                                                       | PM-standaard §4. on_site dekt cash, kaart en badge wallet. Geen andere waarden.                                        |
-| <payment_context>             | registration, consumption                                                                                                                                                                                           | Verplicht veld in payment_registered. Bepaalt ook routing key.                                                         |
-| <customer><type>              | private, company                                                                                                                                                                                                    | Bepaalt of bedrijfsvelden verplicht zijn                                                                               |
-| <payment_due><status>         | unpaid, paid                                                                                                                                                                                                        | Inschrijvingsstatus in new_registration                                                                                |
-| <payment_status>              | paid, pending                                                                                                                                                                                                       | Doorgestuurd naar Drupal — enkel bij payment_context=registration                                                      |
-| <refund><method>              | badge_wallet, cash, card_reversal                                                                                                                                                                                   | Terugbetalingsmethode                                                                                                  |
-| <refund><reason>              | duplicate_payment, customer_request, system_error                                                                                                                                                                   | Gestandaardiseerde reden                                                                                               |
-| <refund_type>                 | consumption_item, partial                                                                                                                                                                                           | Scope van de terugbetaling                                                                                             |
-| <error_code>                  | invalid_xml_format, unknown_message_type, profile_not_found, odoo_api_error, offline_queue_full, badge_not_found                                                                                                    | Altijd lowercase. unknown_message_type: onbekend berichttype ontvangen in [receiver.py](http://receiver.py).           |
-| <vat_rate>                    | 0, 6, 12, 21                                                                                                                                                                                                        | 0 uitsluitend voor Top-up producten. Opgehaald via [account.tax](http://account.tax) in [poller.py](http://poller.py). |
+| Element | Toegestane waarden | Toelichting |
+| ---| ---| --- |
+| <header><type> | new\_registration, badge\_scanned, consumption\_order, payment\_registered, system\_error, profile\_update, payment\_status, cancel\_registration, wallet\_balance\_update, invoice\_request, badge\_assigned, refund\_processed | PM-goedgekeurd (Vraag 37) |
+| <invoice><status> | paid, pending, cancelled | Status van de factuur |
+| <transaction><payment\_method> | company\_link, on\_site, online | PM-standaard §4. on\_site dekt cash, kaart en badge wallet. Geen andere waarden. |
+| <payment\_context> | registration, consumption | Verplicht veld in payment\_registered. Bepaalt ook routing key. |
+| <customer><type> | private, company | Bepaalt of bedrijfsvelden verplicht zijn |
+| <payment\_due><status> | unpaid, paid | Inschrijvingsstatus in new\_registration |
+| <payment\_status> | paid, pending | Doorgestuurd naar Drupal — enkel bij payment\_context=registration |
+| <refund><method> | badge\_wallet, cash, card\_reversal | Terugbetalingsmethode |
+| <refund><reason> | duplicate\_payment, customer\_request, system\_error | Gestandaardiseerde reden |
+| <refund\_type> | consumption\_item, partial | Scope van de terugbetaling |
+| <error\_code> | invalid\_xml\_format, unknown\_message\_type, profile\_not\_found, odoo\_api\_error, offline\_queue\_full, badge\_not\_found | Altijd lowercase. unknown\_message\_type: onbekend berichttype ontvangen in [receiver.py](http://receiver.py). |
+| <vat\_rate> | 0, 6, 12, 21 | 0 uitsluitend voor Top-up producten. Opgehaald via [account.tax](http://account.tax) in [poller.py](http://poller.py). |
 
-Team Kassa | XML Structuren v2.4 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | XML Structuren v2.4 | Conform XML\_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
