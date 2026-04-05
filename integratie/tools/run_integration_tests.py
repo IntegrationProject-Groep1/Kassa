@@ -74,7 +74,7 @@ def odoo_get_partner(user_id: str) -> dict | None:
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
-        {"fields": ["id", "name", "email", "x_user_id", "x_age", "is_company"], "limit": 1},
+        {"fields": ["id", "name", "email", "x_user_id", "x_date_of_birth", "is_company"], "limit": 1},
     )
     return results[0] if results else None
 
@@ -111,7 +111,7 @@ def build_valid_registration(message_id: str, user_id: str) -> str:
       </contact>
       <type>private</type>
       <user_id>{user_id}</user_id>
-      <age>30</age>
+      <date_of_birth>1996-01-01</date_of_birth>
     </customer>
     <payment_due>
       <amount>25.00</amount>
@@ -137,7 +137,7 @@ def build_invalid_registration_missing_contact() -> str:
       <email>broken@test.be</email>
       <type>private</type>
       <user_id>broken-user-no-contact</user_id>
-      <age>25</age>
+      <date_of_birth>2001-01-01</date_of_birth>
     </customer>
   </body>
 </message>"""
@@ -164,7 +164,7 @@ def test1_valid_registration():
         print(f"    name           : {partner['name']}")
         print(f"    email          : {partner['email']}")
         print(f"    x_user_id      : {partner['x_user_id']}")
-        print(f"    x_age          : {partner['x_age']}")
+        print(f"    x_date_of_birth: {partner['x_date_of_birth']}")
         print(f"    is_company     : {partner['is_company']}")
 
     ok = (
@@ -173,7 +173,7 @@ def test1_valid_registration():
         and partner["name"] == "Kassa TestUser"
         and partner["email"] == "kassa.testuser@test.be"
         and partner["x_user_id"] == TEST_USER_ID
-        and partner["x_age"] == 30
+        and partner["x_date_of_birth"] == "1996-01-01"
         and partner["is_company"] is False
     )
     result = "PASS" if ok else "FAIL"

@@ -327,7 +327,7 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_badge_id", "=", badge_id]]],
-        {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_age", "is_company"], "limit": 1},
+        {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_date_of_birth", "is_company"], "limit": 1},
     )
 
     message_id = root.findtext("header/message_id")
