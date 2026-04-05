@@ -205,7 +205,7 @@ class OrderPoller:
         if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
             refund_amount_positive = wallet_refund_amount
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = float(current_balance) + refund_amount_positive
+            new_balance = round(float(current_balance) + refund_amount_positive, 2)
 
             self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
