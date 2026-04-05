@@ -172,24 +172,24 @@ def connect_to_rabbitmq():
 
 
 def _publish_or_raise(routing_key: str, message_xml: str) -> None:
-    """Publish once and retry once with a fresh connection on failure."""
+    """Publish with one retry and backoff on transient failures."""
     for attempt in range(2):
         try:
             _, channel = connect_to_rabbitmq()
-            published = channel.basic_publish(
+            channel.basic_publish(
                 exchange=EXCHANGE_NAME,
                 routing_key=routing_key,
                 body=message_xml.encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
             )
-            if published is False:
-                raise RuntimeError("RabbitMQ did not confirm message publish")
             return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):
-            _reset_connection()  # noqa: F821
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+            global _connection, _channel
+            _connection = None
+            _channel = None
             if attempt == 1:
                 raise
-            # Small backoff prevents immediate hammering when broker path is unstable.
+            # Small backoff prevents immediate hammering when broker is unstable.
             time.sleep(0.25)
 
 
@@ -222,25 +222,13 @@ def setup_exchange(channel):
 
 def send_message(routing_key: str, message_xml: str) -> None:
     """Send message via kassa.exchange using routing key. Buffer on error."""
-    global _connection, _channel
     try:
-        conn, channel = connect_to_rabbitmq()
-
-        channel.basic_publish(
-            exchange=EXCHANGE_NAME,
-            routing_key=routing_key,
-            body=message_xml.encode("utf-8"),
-            properties=pika.BasicProperties(delivery_mode=2)  # Persistent
-        )
-
+        _publish_or_raise(routing_key, message_xml)
         logger.info(f"✅ Sent: routing_key={routing_key}")
-
     except Exception as e:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _connection = None  # Force reconnect on next try
-        _channel = None
         _buffer_message(routing_key, message_xml)
 
 

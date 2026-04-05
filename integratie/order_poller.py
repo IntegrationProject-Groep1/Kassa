@@ -250,6 +250,9 @@ class OrderPoller:
                         if orig_line_data and orig_line_data[0].get('order_id'):
                             orig_order = orig_line_data[0]['order_id']
                             orig_order_id = orig_order[0] if isinstance(orig_order, (list, tuple)) else orig_order
+                            # TODO: Replace ORDER-{id} with Master UUID once available project-wide.
+                            # The correlation_id spec (Datamapping_Kassa.md §246) expects a UUID v4.
+                            # For now we use the Odoo order ID as a stable, human-readable reference.
                             original_msg_id = f"ORDER-{orig_order_id}"
                             break
             except Exception as e:
