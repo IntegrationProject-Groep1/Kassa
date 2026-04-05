@@ -42,10 +42,24 @@ FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
         "x_user_id":        {"ttype": "char",    "string": "External User ID"},
         "x_badge_id":       {"ttype": "char",    "string": "Badge ID"},
         "x_wallet_balance": {"ttype": "float",   "string": "Wallet Balance (EUR)"},
-        "x_age":            {"ttype": "integer", "string": "Age"},
+        "x_date_of_birth":  {"ttype": "date",    "string": "Date of Birth"},
+        "x_age":            {
+            "ttype": "integer",
+            "string": "Age",
+            "compute": (
+                "for rec in self:\n"
+                "    if rec.x_date_of_birth:\n"
+                "        rec['x_age'] = (datetime.date.today() - rec.x_date_of_birth).days // 365\n"
+                "    else:\n"
+                "        rec['x_age'] = 0"
+            ),
+            "depends": "x_date_of_birth",
+            "readonly": True
+        },
     },
     "pos.order": {
         "x_rabbitmq_sent": {"ttype": "boolean", "string": "Sent to RabbitMQ"},
+        "x_wallet_updated": {"ttype": "boolean", "string": "Wallet Refund Processed"},
     },
 }
 
@@ -75,16 +89,22 @@ def _existing_field_names(models, model_name: str, field_names: list[str]) -> se
 
 
 def _create_field(models, model_id: int, fname: str, fdef: dict) -> int:
+    vals = {
+        "model_id":          model_id,
+        "name":              fname,
+        "field_description": fdef["string"],
+        "ttype":             fdef["ttype"],
+        "store":             True,
+    }
+    if "compute" in fdef:
+        vals["compute"] = fdef["compute"]
+        vals["depends"] = fdef.get("depends", "")
+        vals["readonly"] = fdef.get("readonly", True)
+
     return models.execute_kw(
         ODOO_DB, _uid, ODOO_PASS,
         "ir.model.fields", "create",
-        [{
-            "model_id":          model_id,
-            "name":              fname,
-            "field_description": fdef["string"],
-            "ttype":             fdef["ttype"],
-            "store":             True,
-        }],
+        [vals],
     )
 
 
@@ -144,7 +164,24 @@ def main() -> None:
             ttype = fdef["ttype"]
             label = fdef["string"]
             if fname in existing:
-                print(f"[SETUP]   {fname:<22} ({ttype:<8})  already exists    – skipped")
+                print(f"[SETUP]   {fname:<22} ({ttype:<8})  already exists    – skipped (or updated)")
+                if "compute" in fdef:
+                    # Update existing fields to ensure they receive compute logic
+                    field_ids = models.execute_kw(
+                        ODOO_DB, _uid, ODOO_PASS,
+                        "ir.model.fields", "search",
+                        [[["model", "=", model_name], ["name", "=", fname]]]
+                    )
+                    if field_ids:
+                        models.execute_kw(
+                            ODOO_DB, _uid, ODOO_PASS,
+                            "ir.model.fields", "write",
+                            [field_ids, {
+                                "compute": fdef["compute"],
+                                "depends": fdef["depends"],
+                                "readonly": fdef["readonly"]
+                            }]
+                        )
                 total_skipped += 1
             else:
                 fid = _create_field(models, model_id, fname, fdef)

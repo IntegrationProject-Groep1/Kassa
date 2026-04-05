@@ -1,15 +1,15 @@
-**Technische Gids & Opstartplan**
+# Technische Gids & Opstartplan
 
 Team Kassa (Odoo POS) | Versie 3.2 - Definitief geïntegreerd document
 
 Integratieproject Desideriushogeschool 2026
 
-|     |     |
+| |     |
 | --- | --- |
 | **Veld** | **Waarde** |
 | Project | Integratieproject Desideriushogeschool 2026 |
 | Team | Kassa (Odoo POS) |
-| Versie | 3.3 — Routing key tabel gecorrigeerd; sender v3.4 (now_utc publiek, buffer limiet, \_make_header refactor); receiver v3.3; CI/CD SSH-setup |
+| Versie | 3.4 — sender v3.5 (total_amount per item); poller v1.2 (total_amount berekening); XSD consumption_order → v2.2 |
 | Tech stack | Odoo 17, PostgreSQL 15, Python 3.12, RabbitMQ, Docker, GitHub Actions |
 
 # **1\. Het grote plaatje — hoe hangt alles samen?**
@@ -20,7 +20,7 @@ Loosely coupled: elk systeem staat op zichzelf en kent andere systemen NIET rech
 
 ## **1.1 Alle systemen op een rij**
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Systeem** | **Software** | **Wat doet het?** | **Contact met Kassa?** |
 | Frontend | Drupal | Website — inschrijvingen, saldo tonen | Ja — stuurt inschrijvingen / ontvangt betaalstatus |
@@ -37,7 +37,7 @@ Loosely coupled: elk systeem staat op zichzelf en kent andere systemen NIET rech
 
 Stel: een zakelijke bezoeker rekent zijn consumpties af aan de bar. Dit is wat er stap voor stap gebeurt:
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Stap** | **Wie** | **Actie** |
 | 1   | Kassamedewerker | Klikt 'Betaling bevestigd' in Odoo POS |
@@ -64,21 +64,18 @@ Kassa verstuurt berichten via kassa.exchange (topic exchange). Het Controlroom-t
 
 Routing keys voor payment_registered zijn gesplitst per payment_context. Gebruik altijd de specifieke msg_type in send_typed_message().
 
-|     |     |     |     |     |
+| |     | |     | |
 | --- | --- | --- | --- | --- |
 | **Queue** | **Routing key** | **Verstuurt** | **Leest** | **Waarvoor** |
-| queue.incoming | —   | Frontend, CRM, IoT | Odoo (Kassa) | Inschrijvingen, profielupdates, badge scans |
-| pos.payments | kassa.payments.consumption | Odoo (Kassa) | Salesforce CRM | consumption_order, payment_registered (consumption) |
-| pos.payments | kassa.payments.registration | Odoo (Kassa) | Salesforce CRM | payment_registered (registration) |
-| pos.payments | kassa.payments.refund | Odoo (Kassa) | Salesforce CRM | refund_processed |
-| pos.payments | kassa.payments.badge | Odoo (Kassa) | Salesforce CRM | badge_assigned |
-| pos.payments | kassa.payments.invoice | Odoo (Kassa) | Salesforce CRM | invoice_request |
+| kassa.incoming | —   | Frontend, CRM, IoT | Odoo (Kassa) | Inschrijvingen, profielupdates, badge scans |
+| kassa.payments | kassa.payments.consumption | Odoo (Kassa) | Salesforce CRM | consumption_order, payment_registered (consumption) |
+| kassa.payments | kassa.payments.registration | Odoo (Kassa) | Salesforce CRM | payment_registered (registration) |
+| kassa.payments | kassa.payments.refund | Odoo (Kassa) | Salesforce CRM | refund_processed |
+| kassa.payments | kassa.payments.badge | Odoo (Kassa) | Salesforce CRM | badge_assigned |
+| kassa.payments | kassa.payments.invoice | Odoo (Kassa) | Salesforce CRM | invoice_request |
 | frontend.payments | kassa.frontend.payment | Odoo (Kassa) | Drupal | payment_status |
 | frontend.payments | kassa.frontend.wallet | Odoo (Kassa) | Drupal | wallet_balance_update |
-| queue.heartbeats | Direct (geen exchange) | Elk systeem (1x/sec) | Elastic Stack | Bewaken of systemen online zijn |
-| queue.errors | kassa.errors | Odoo (Kassa) bij fout | Elastic Stack | Fouten melden |
-
-Heartbeats worden DIRECT naar queue.heartbeats gepubliceerd — niet via kassa.exchange. Dit is bewust: het Monitoring-team verwacht heartbeats op een vaste, stabiele queue onafhankelijk van de exchange-routering.
+| kassa.errors | kassa.errors | Odoo (Kassa) bij fout | Elastic Stack | Fouten melden |
 
 # **3\. Odoo POS — hoe werkt het en hoe schrijf je er code voor?**
 
@@ -94,11 +91,11 @@ Odoo heeft een ingebouwde XML-RPC API. Je stuurt een verzoek, Odoo antwoordt met
 
 import xmlrpc.client
 
-ODOO_URL = 'http://localhost:8069'
+ODOO_URL = '<http://localhost:8069>'
 
 ODOO_DB = 'odoo_kassa'
 
-ODOO_USER = 'admin@school.be'
+ODOO_USER = '<admin@school.be>'
 
 ODOO_PASS = 'jouw_wachtwoord'
 
@@ -134,9 +131,34 @@ else:
 
 print('Klant niet gevonden -> nieuwe registratie aanmaken')
 
+## **3.2.1 Incident: Odoo webassets 500 na container herstart**
+
+Symptoom: Odoo POS of backend laadt niet volledig en geeft 500-fouten op paden zoals /web/assets/... met FileNotFoundError in ir_attachment.
+
+Root cause: de database verwijst naar asset-bijlagen in de filestore, maar die bestanden ontbreken op schijf. Dit gebeurt typisch wanneer /var/lib/odoo niet persistent gemount is en de container opnieuw aangemaakt werd.
+
+Preventie (verplicht): mount altijd een Docker named volume op /var/lib/odoo in de kassa-web service.
+
+Herstelprocedure op VM:
+
+1. Compose met persistent filestore deployen.
+
+2. Odoo container recreaten:
+docker compose up -d --force-recreate kassa-web
+
+3. Enkel asset-records laten herbouwen:
+docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"
+
+4. Odoo herstarten:
+docker compose restart kassa-web
+
+5. Browser hard refresh (Ctrl+F5).
+
+Opmerking: XML-RPC deprecation warnings in Odoo 19 zijn informatief en niet de oorzaak van deze 500-fouten.
+
 ## **3.3 Belangrijke Odoo modellen**
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Model** | **Wat stelt het voor?** | **Wanneer gebruiken?** |
 | res.partner | Klanten en bedrijven | Profiel opzoeken via x_user_id, aanmaken, updaten |
@@ -151,18 +173,18 @@ print('Klant niet gevonden -> nieuwe registratie aanmaken')
 
 De integratie vereist een aantal custom velden op res.partner en pos.order. Deze worden aangemaakt via Odoo > Instellingen > Technisch > Velden — geen module of code in Odoo nodig.
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Model** | **Veldnaam** | **Type** | **Gebruik** |
 | res.partner | x_user_id | Char | Externe UUID van het CRM — primaire koppelsleutel |
 | res.partner | x_badge_id | Char | Badge ID — aangemaakt bij Flow 12 (badge_assigned) |
 | res.partner | x_wallet_balance | Float | Badge saldo in EUR — Single Source of Truth |
-| res.partner | x_age | Integer | Leeftijd bezoeker — voor alcoholcontrole |
+| res.partner | x_date_of_birth | Date | Geboortedatum bezoeker — voor alcoholcontrole (leeftijd berekend in code) |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
 
 **Betaalmethoden aanmaken in Odoo POS (geen custom veld nodig):**
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Betaalmethode** | **Aanmaken via** | **Gebruik** |
 | Cash | Odoo > Point of Sale > Configuratie > Betaalmethoden | Contante betaling |
@@ -173,11 +195,17 @@ De betaalmethode 'Badge Wallet' is uitsluitend intern in Odoo. In de externe XML
 
 # **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
 
-## **4.1 De Sender — berichten versturen (v3.4)**
+## **4.1 De Sender — berichten versturen (v3.5)**
 
 sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. bufferlimiet), exchange-setup, routing key mapping, alle builder-functies voor de 7 uitgaande berichttypes, send_error_to_queue en de publieke hulpfunctie now_utc().
 
-**Wijzigingen t.o.v. v3.3:**
+**Wijzigingen t.o.v. v3.4:**
+
+• total_amount toegevoegd aan build_consumption_order_xml per item (quantity × unit_price)
+
+• schema_consumption_order_v2.2.xsd → v2.2
+
+**Wijzigingen t.o.v. v3.3 (eerder):**
 
 • ROUTING_KEYS gesplitst: payment_registered_consumption (kassa.payments.consumption) en payment_registered_registration (kassa.payments.registration)
 
@@ -189,7 +217,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • Alle 9 functies aanwezig: 7 builders + send_error_to_queue + send_typed_message (dispatcher)
 
-\# sender.py — v3.4 — Exchange-routing + lokale buffer + send_error_to_queue
+\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.2)
 
 \# Alle berichten via kassa.exchange (topic). Bij verbindingsverlies
 
@@ -489,6 +517,14 @@ up.text = str(i\["unit_price"\])
 
 up.set("currency", i.get("currency", "eur"))
 
+\# total_amount: quantity × unit_price, berekend door poller.py (v1.2)
+
+tp = ET.SubElement(el, "total_amount")
+
+tp.text = f"{i\['total_amount'\]:.2f}"
+
+tp.set("currency", i.get("currency", "eur"))
+
 ET.SubElement(el, "vat_rate").text = str(i\["vat_rate"\])
 
 if i.get("item_type"):
@@ -713,7 +749,7 @@ print(f"\[SENDER\] Kon error niet sturen naar queue: {err}")
 
 ## **4.2 De Receiver — berichten ontvangen (v3.3)**
 
-receiver.py verwerkt alle inkomende berichten van queue.incoming. Bevat idempotentie-check, XSD-validatie placeholder en correcte error handling.
+receiver.py verwerkt alle inkomende berichten van kassa.incoming. Bevat idempotentie-check, XSD-validatie placeholder en correcte error handling.
 
 **Wijzigingen t.o.v. v3.2:**
 
@@ -875,11 +911,11 @@ print(f"\[RECEIVER\] Luisteren op queue: {queue_name} ...")
 
 channel.start_consuming()
 
-## **4.3 De Heartbeat — degraded state logica (v2.1)**
+## **4.3 Heartbeat — afgehandeld door sidecar (niet meer in kassa-code)**
 
 heartbeat.py is gedocumenteerd in een apart document: Heartbeat_Kassa.docx. Samenvatting:
 
-• Stuurt DIRECT naar queue.heartbeats — niet via kassa.exchange.
+• Stuurt DIRECT naar heartbeat — niet via kassa.exchange.
 
 • get_system_status() evalueert 3 condities: Odoo bereikbaar, RabbitMQ OK, foutenteller.
 
@@ -889,11 +925,15 @@ heartbeat.py is gedocumenteerd in een apart document: Heartbeat_Kassa.docx. Same
 
 • Timestamp formaat: YYYY-MM-DDTHH:MM:SSZ via strftime (identiek aan now_utc() in sender.py).
 
-## **4.4 De Poller — POS events triggeren (v1.1)**
+## **4.4 De Poller — POS events triggeren (v1.2)**
 
 Omdat er geen code in Odoo geschreven mag worden, gebruikt de integratie een polling-mechanisme. poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden op nieuwe 'done' POS-orders via XML-RPC.
 
-**Wijzigingen t.o.v. v1.0:**
+**Wijzigingen t.o.v. v1.1:**
+
+• total_amount berekening toegevoegd aan item dict in process_order() (line_total = round(qty × price_unit, 2))
+
+**Wijzigingen t.o.v. v1.0 (eerder):**
 
 • due_date: order\['date_order'\]\[:10\] — YYYY-MM-DD, datum van de aankoop zelf
 
@@ -913,7 +953,7 @@ Omdat er geen code in Odoo geschreven mag worden, gebruikt de integratie een pol
 
 Hoe het werkt:
 
-|     |     |
+| |     |
 | --- | --- |
 | **Stap** | **Actie** |
 | 1   | Kassamedewerker bevestigt betaling in Odoo POS → order krijgt state='done' |
@@ -928,7 +968,7 @@ Hoe het werkt:
 
 payment_status naar Drupal wordt ENKEL verstuurd bij payment_context=registration (inschrijvingsgeld betaald aan kassa — Flow 14). De poller verwerkt uitsluitend consumption orders. Registratiebetalingen aan de kassa zijn een apart manueel getriggerd flow.
 
-\# poller.py — v1.1 — Fixes: due_date, BTW-lookup, badge wallet detectie,
+\# poller.py — v1.2 — total_amount berekening per orderregel toegevoegd
 
 \# wallet balance update, company via parent_id
 
@@ -950,7 +990,7 @@ send_typed_message, flush_buffer, send_error_to_queue
 
 )
 
-ODOO_URL = os.environ.get("ODOO_URL", "http://odoo:8069")
+ODOO_URL = os.environ.get("ODOO_URL", "<http://odoo:8069>")
 
 ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
 
@@ -1170,6 +1210,8 @@ item = {
 
 "unit_price": l\["price_unit"\],
 
+"total_amount": round(l\["qty"\] * l\["price_unit"\], 2),  \# quantity × unit_price
+
 "vat_rate": vat_rate,
 
 "currency": "eur",
@@ -1372,7 +1414,7 @@ poller_thread.start()
 
 Odoo werkt intern met twee klant-identifiers met fundamenteel verschillende scope.
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Identifier** | **Formaat** | **Scope** | **Beheerd door** |
 | &lt;user_id&gt; | UUID v4 (string) | Extern — uniek over ALLE systemen (CRM, Drupal, Kassa) | Salesforce CRM — aangemaakt bij registratie |
@@ -1438,7 +1480,7 @@ db, uid, password, 'res.partner', 'search_read',
 
 {'fields': \['id', 'name', 'x_user_id',
 
-'x_wallet_balance', 'x_age', 'is_company'\],
+'x_wallet_balance', 'x_date_of_birth', 'is_company'\],
 
 'limit': 1}
 
@@ -1462,7 +1504,7 @@ return None # -> kassa toont foutmelding, medewerker beslist anoniem/wachten
 
 Voor de demo kiest het team 5 fictieve standaardproducten. De klant beheert de catalogus achteraf zelf in Odoo via Point of Sale > Producten. Geen synchronisatie met de Frontend nodig.
 
-|     |     |     |     |
+| |     | |     |
 | --- | --- | --- | --- |
 | **Product** | **Prijs** | **BTW** | **Type** |
 | Koffie | EUR 2.50 | 6%  | Normaal product |
@@ -1544,11 +1586,11 @@ container_name: kassa-integratie
 
 environment:
 
-\- ODOO_URL=http://odoo:8069
+\- ODOO_URL=<http://odoo:8069>
 
 \- ODOO_DB=odoo_kassa
 
-\- ODOO_USER=admin@school.be
+\- ODOO_USER=<admin@school.be>
 
 \- ODOO_PASS=${ODOO_PASS}
 
@@ -1586,7 +1628,7 @@ outbox-data: # Named volume voor outbox.json (buffer Vraag 11 & 17)
 
 ## **5.2 Nuttige Docker commando's**
 
-|     |     |
+| |     |
 | --- | --- |
 | **Commando** | **Wat doet het?** |
 | docker-compose up -d | Start alle containers op de achtergrond |
@@ -1599,7 +1641,7 @@ outbox-data: # Named volume voor outbox.json (buffer Vraag 11 & 17)
 
 ## **6.1 Git branches — verplicht in de opdracht**
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Branch** | **Waarvoor?** | **Wie mag pushen?** |
 | main | Stabiele, goedgekeurde code — altijd werkend | Niemand direct — via merge |
@@ -1678,15 +1720,14 @@ ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'cd /app/kassa && git 
 
 De kassa moet blijven werken ook als externe systemen tijdelijk uitvallen. Onderstaande tabel vat de strategie per situatie samen.
 
-|     |     |     |
+| |     | |
 | --- | --- | --- |
 | **Situatie** | **Gedrag** | **Bron** |
 | CRM (Salesforce) down | Kassa werkt verder op lokale Odoo-cache. Berichten worden gebufferd in outbox.json en hersturd bij reconnect. | Vraag 17 |
 | RabbitMQ verbinding weg | Berichten worden gebufferd. flush_buffer() hersturt alles bij volgende succesvolle connectie. | Vraag 11 |
 | Odoo POS zelf uitvalt | Geen aankopen mogelijk — Odoo is het kassasysteem. | Vraag 11 |
-| Heartbeat mislukking | NIET bufferen. Drop de heartbeat, stuur volgende seconde een nieuwe realtime heartbeat. | Heartbeat_Kassa.docx |
 | Meerdere kassa's actief | Eén gedeelde Odoo-instantie met meerdere POS-sessies. Geen synchronisatieproblemen. | Vraag 12 |
 
-Buffer NOOIT heartbeats — alleen berichten die data bevatten (bestellingen, betalingen, etc.). outbox.json staat op een Docker named volume (outbox-data). Zonder volume-mount gaan gebufferde berichten verloren bij een container-herstart. Controleer docker-compose.yml.
+outbox.json staat op een Docker named volume (outbox-data). Zonder volume-mount gaan gebufferde berichten verloren bij een container-herstart. Controleer docker-compose.yml.
 
-Team Kassa | Technische Gids v3.3 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | Technische Gids v3.4 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
