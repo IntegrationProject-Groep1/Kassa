@@ -254,11 +254,11 @@ def send_message(routing_key: str, message_xml: str) -> None:
 
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
-            f"⚠️  Send failed ({type(e).__name__}), buffering message lokaal...")
+            f"⚠️  Send failed ({type(e).__name__}), buffering message locally...")
         _buffer_message(routing_key, message_xml)
 
 
-# ── Uitgaande XSD-validatie ────────────────────────────────────────────────────
+# ── Outgoing XSD validation ────────────────────────────────────────────────────
 _SCHEMA_DIR = Path(__file__).parent / "schemas"
 
 _OUTGOING_SCHEMA_MAP = {
@@ -284,7 +284,7 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Uitgaande XSD-validatie mislukt voor '{msg_type}':\n{errors}")
+        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
 def send_typed_message(msg_type: str, message_xml: str) -> None:
@@ -292,7 +292,7 @@ def send_typed_message(msg_type: str, message_xml: str) -> None:
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD-validatie mislukt voor '{msg_type}': {str(e)[:300]} — bericht wordt toch verstuurd")
+        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     send_message(routing_key, message_xml)
