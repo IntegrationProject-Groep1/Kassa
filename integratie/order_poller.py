@@ -19,8 +19,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MAX_CACHE_SIZE = 10_000
+
+# Odoo POS payment method name (must match Odoo configuration exactly)
 PAYMENT_METHOD_WALLET = "Badge Wallet"
-DEFAULT_REFUND_METHOD = "Cash/Card"
+
+# XSD enum values for refund_processed XML (per Datamapping_Kassa.md line 284)
+XML_REFUND_METHOD_WALLET = "badge_wallet"
+XML_REFUND_METHOD_CASH = "cash"
+
+# Default fallback values for refund XML fields
+DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
 DEFAULT_REFUND_REASON = "Processed via POS"
 
 
@@ -164,7 +172,7 @@ class OrderPoller:
                 [[order_id], {'x_rabbitmq_sent': True}]
             )
 
-            status_text = "ANONYMOUS" if is_anonymous else (customer_info['name'] if customer_info else "ANONYMOUS")
+            status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
             logger.info(f"📦 Order {order_id}: {status_text}")
             return True
 
@@ -190,7 +198,7 @@ class OrderPoller:
                 method_tuple = pm.get('payment_method_id')
                 if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
                     is_badge_wallet = True
-                    refund_method = PAYMENT_METHOD_WALLET
+                    refund_method = XML_REFUND_METHOD_WALLET
                     wallet_refund_amount += abs(pm.get('amount', 0.0))
 
         # 2. Update wallet balance if necessary

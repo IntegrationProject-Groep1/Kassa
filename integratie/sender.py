@@ -7,6 +7,7 @@ Versie 3.5 — Uitgaande XSD-validatie voor consumption_order
 import pika
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -191,6 +192,7 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
             # Small backoff prevents immediate hammering when broker path is unstable.
             time.sleep(0.25)
 
+
 def setup_exchange(channel):
     """Declare the topic exchange"""
     channel.exchange_declare(
@@ -234,8 +236,6 @@ def send_message(routing_key: str, message_xml: str) -> None:
         logger.info(f"✅ Sent: routing_key={routing_key}")
 
     except Exception as e:
-        _reset_connection()
-
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
