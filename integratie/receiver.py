@@ -11,6 +11,7 @@
 # Idempotency via OrderedDict LRU cache (max 10,000 items)
 
 import os
+import logging
 import pika
 import xmlrpc.client
 
@@ -20,6 +21,17 @@ from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
+
+
+logger = logging.getLogger(__name__)
+
+
+def setup_logging():
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
@@ -35,6 +47,9 @@ ODOO_USER = os.environ.get("ODOO_USER")
 ODOO_PASS = os.environ.get("ODOO_PASS")
 
 QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
+DLX_NAME = os.environ.get("RABBIT_DLX", "kassa.dlx")
+DLQ_NAME = os.environ.get("RABBIT_DLQ", "kassa.incoming.dlq")
+DLQ_ROUTING_KEY = os.environ.get("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
 
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 # Paths to XSD files in the container (/app/schemas/)
@@ -447,25 +462,39 @@ def start_listening():
     conn = connect_to_rabbitmq()
     channel = conn.channel()
 
-    # --- NIEUW: DLQ Setup ---
-    # 1. Maak een Dead Letter Exchange (DLX) aan
-    channel.exchange_declare(exchange='kassa.dlx', exchange_type='direct', durable=True)
+    # --- DLQ Setup ---
+    try:
+        # 1. Declare the Dead Letter Exchange (DLX)
+        channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
 
-    # 2. Maak de daadwerkelijke Dead Letter Queue (DLQ) aan
-    channel.queue_declare(queue='kassa.incoming.dlq', durable=True)
+        # 2. Declare the Dead Letter Queue (DLQ)
+        channel.queue_declare(queue=DLQ_NAME, durable=True)
 
-    # 3. Koppel de DLQ aan de DLX
-    channel.queue_bind(exchange='kassa.dlx', queue='kassa.incoming.dlq')
-    # ------------------------
+        # 3. Bind the DLQ to the DLX with an explicit routing key
+        channel.queue_bind(exchange=DLX_NAME, queue=DLQ_NAME, routing_key=DLQ_ROUTING_KEY)
 
-    # 4. Maak de hoofd-queue aan (of update deze) met de verwijzing naar de DLX
-    channel.queue_declare(
-        queue=QUEUE_NAME,
-        durable=True,
-        arguments={
-            'x-dead-letter-exchange': 'kassa.dlx'
-        }
-    )
+        # 4. Declare the main queue with DLX + DLQ routing key settings
+        channel.queue_declare(
+            queue=QUEUE_NAME,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": DLX_NAME,
+                "x-dead-letter-routing-key": DLQ_ROUTING_KEY,
+            }
+        )
+    except pika.exceptions.ChannelClosedByBroker as exc:
+        if getattr(exc, "reply_code", None) == 406:
+            logger.critical(
+                "RabbitMQ topology conflict (406 PRECONDITION_FAILED). "
+                "A queue/exchange already exists with different arguments. "
+                "Delete and recreate conflicting resources in RabbitMQ management. "
+                "queue=%s, dlx=%s, dlq=%s, broker=%s",
+                QUEUE_NAME,
+                DLX_NAME,
+                DLQ_NAME,
+                getattr(exc, "reply_text", "unknown"),
+            )
+        raise
 
     channel.basic_qos(prefetch_count=1)
 
