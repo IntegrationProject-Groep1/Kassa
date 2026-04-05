@@ -7,6 +7,7 @@ Versie 3.5 — Uitgaande XSD-validatie voor consumption_order
 import pika
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -170,6 +171,28 @@ def connect_to_rabbitmq():
     return _connection, _channel
 
 
+def _publish_or_raise(routing_key: str, message_xml: str) -> None:
+    """Publish with one retry and backoff on transient failures."""
+    for attempt in range(2):
+        try:
+            _, channel = connect_to_rabbitmq()
+            channel.basic_publish(
+                exchange=EXCHANGE_NAME,
+                routing_key=routing_key,
+                body=message_xml.encode("utf-8"),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+            return
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+            global _connection, _channel
+            _connection = None
+            _channel = None
+            if attempt == 1:
+                raise
+            # Small backoff prevents immediate hammering when broker is unstable.
+            time.sleep(0.25)
+
+
 def setup_exchange(channel):
     """Declare the topic exchange"""
     channel.exchange_declare(
@@ -199,31 +222,17 @@ def setup_exchange(channel):
 
 def send_message(routing_key: str, message_xml: str) -> None:
     """Send message via kassa.exchange using routing key. Buffer on error."""
-    global _connection, _channel
     try:
-        conn, channel = connect_to_rabbitmq()
-
-        channel.basic_publish(
-            exchange=EXCHANGE_NAME,
-            routing_key=routing_key,
-            body=message_xml.encode("utf-8"),
-            properties=pika.BasicProperties(delivery_mode=2)  # Persistent
-        )
-
+        _publish_or_raise(routing_key, message_xml)
         logger.info(f"✅ Sent: routing_key={routing_key}")
-
     except Exception as e:
-        _reset_connection()
-
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _connection = None  # Force reconnect on next try
-        _channel = None
         _buffer_message(routing_key, message_xml)
 
 
-# ── Uitgaande XSD-validatie ────────────────────────────────────────────────────
+# ── Outgoing XSD validation ────────────────────────────────────────────────────
 _SCHEMA_DIR = Path(__file__).parent / "schemas"
 
 _OUTGOING_SCHEMA_MAP = {
@@ -249,7 +258,7 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Uitgaande XSD-validatie mislukt voor '{msg_type}':\n{errors}")
+        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
 def send_typed_message(msg_type: str, message_xml: str) -> None:
@@ -257,7 +266,7 @@ def send_typed_message(msg_type: str, message_xml: str) -> None:
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD-validatie mislukt voor '{msg_type}': {str(e)[:300]} — bericht wordt toch verstuurd")
+        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     send_message(routing_key, message_xml)
