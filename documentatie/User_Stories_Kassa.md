@@ -19,7 +19,7 @@ _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automati
 **ACCEPTATIECRITERIA:**
 
 - Het receiver.py script luistert op de achtergrond naar new_registration berichten vanuit het CRM via de RabbitMQ kassa.incoming.
-- Elk inkomend bericht wordt gevalideerd tegen het XSD-schema. Is het bericht ongeldig? Dan wordt het weggegooid en een system_error verstuurd naar kassa.errors.
+- Elk inkomend bericht wordt gevalideerd tegen het XSD-schema. Is het bericht ongeldig? Dan wordt een system_error verstuurd naar kassa.errors en wordt het bericht met basic_nack(requeue=false) naar de DLQ afgevoerd.
 - De kassa controleert via het unieke x_user_id of de klant al bestaat. Bestaat hij? Update zijn gegevens. Bestaat hij niet? Maak een nieuw profiel aan met alle gegevens uit het bericht (naam, e-mail, geboortedatum (date_of_birth), optioneel bedrijfsnaam en BTW-nummer).
 - Na succesvolle verwerking wordt een basic_ack gestuurd naar RabbitMQ zodat het bericht niet opnieuw aangeboden wordt.
 
@@ -47,14 +47,16 @@ _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automati
 
 **Wanneer** receiver.py de XSD-validatie uitvoert
 
-**Dan** wordt het bericht weggegooid, een system_error met code invalid_xml_format verstuurd naar kassa.errors, en toch een basic_ack gestuurd
+**Dan** wordt een system_error met code invalid_xml_format verstuurd naar kassa.errors
+
+**En** wordt het bericht met basic_nack(requeue=false) naar de DLQ afgevoerd
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
 1. Zorg dat het ontvangstscript continu luistert op de inkomende wachtrij voor nieuwe berichten.
-2. Controleer elk binnenkomend bericht op de correcte structuur via het bijhorende XSD-schema. Is het bericht fout? Gooi het weg en stuur een foutmelding naar de Controlroom.
+2. Controleer elk binnenkomend bericht op de correcte structuur via het bijhorende XSD-schema. Is het bericht fout? Stuur een foutmelding naar de Controlroom en stuur het bericht via basic_nack(requeue=false) naar de DLQ.
 3. Zoek de klant op in Odoo via zijn uniek klantnummer. Bestaat hij al? Update zijn gegevens. Bestaat hij nog niet? Maak een nieuw profiel aan met alle gegevens uit het bericht.
-4. Bevestig aan de wachtrij dat het bericht verwerkt is, zodat het niet opnieuw aangeboden wordt.
+4. Stuur basic_ack bij succesvolle verwerking of duplicaten; gebruik basic_nack(requeue=false) voor onherstelbare validatiefouten.
 
 **DEFINITION OF DONE:**
 
@@ -63,7 +65,8 @@ _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automati
 - [ ] XSD-validatie actief op `schema_new_registration.xsd`
 - [ ] Idempotentie getest: zelfde `message_id` twee keer → tweede keer stil genegeerd
 - [ ] `system_error` met code `invalid_xml_format` verstuurd naar `kassa.errors` bij invalide XML
-- [ ] `basic_ack` verstuurd in alle gevallen (ook bij fout)
+- [ ] Succes en duplicaten krijgen `basic_ack`
+- [ ] Invalide XML krijgt `basic_nack(requeue=false)` en belandt in de DLQ
 
 ## **Story 2: Klantgegevens up-to-date houden**
 
@@ -76,7 +79,7 @@ _Als bezoeker wil ik dat wijzigingen in mijn profiel (zoals een nieuw e-mailadre
 - Als iemand zijn gegevens aanpast in het centrale CRM, krijgt de kassa via een profile_update bericht bericht van.
 - De kassa zoekt de betreffende klant op via zijn uniek x_user_id.
 - De velden naam, e-mail, geboortedatum, bedrijfsnaam en BTW-nummer worden direct overschreven met de nieuwe waarden.
-- Wordt de klant niet gevonden? Dan wordt een system_error met code profile_not_found verstuurd naar kassa.errors en toch een basic_ack gestuurd.
+- Wordt de klant niet gevonden? Dan maakt de kassa een nieuw profiel aan met de ontvangen gegevens (upsert-gedrag) en wordt geen system_error verstuurd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
@@ -90,22 +93,22 @@ _Als bezoeker wil ik dat wijzigingen in mijn profiel (zoals een nieuw e-mailadre
 
 **Wanneer** receiver.py het bericht verwerkt
 
-**Dan** wordt een system_error met code profile_not_found verstuurd naar kassa.errors
+**Dan** wordt een nieuw klantprofiel aangemaakt in Odoo met de ontvangen velden
 
-**En** stuurt receiver.py toch een basic_ack naar RabbitMQ
+**En** stuurt receiver.py een basic_ack naar RabbitMQ
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
 1. Herken het profielwijzigingsbericht in het ontvangstscript en valideer de structuur via het XSD-schema.
 2. Zoek de klant op in Odoo via zijn uniek klantnummer.
 3. Overschrijf de gewijzigde gegevens (naam, e-mail, bedrijfsnaam, BTW-nummer, geboortedatum) in het lokale profiel.
-4. Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
+4. Wordt de klant niet gevonden? Maak een nieuw profiel aan (upsert) en bevestig dat het bericht verwerkt is.
 
 **DEFINITION OF DONE:**
 
 - [ ] `receiver.py` overschrijft alle velden correct in het bestaande `res.partner` record, inclusief `x_date_of_birth`
-- [ ] `system_error` met code `profile_not_found` verstuurd bij onbekend `x_user_id`
-- [ ] `basic_ack` verstuurd in alle gevallen, ook als de klant niet gevonden werd
+- [ ] Onbekend `x_user_id` bij `profile_update` resulteert in creatie van een nieuw `res.partner` record (upsert)
+- [ ] `basic_ack` verstuurd na succesvolle verwerking (zowel update als create)
 
 ## **Story 3: Geannuleerde inschrijvingen blokkeren**
 
@@ -117,7 +120,7 @@ _Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa 
 
 - De kassa ontvangt annuleringen exclusief vanuit het CRM-systeem via een cancel_registration bericht.
 - Bij een annulering zoekt de kassa het profiel op via x_user_id en zet de active flag in Odoo op False.
-- Wordt de klant niet gevonden? Dan wordt een system_error met code profile_not_found verstuurd naar kassa.errors en toch een basic_ack gestuurd.
+- Wordt de klant niet gevonden? Dan wordt de annulering als no-op behandeld (geen profielwijziging), zonder system_error, en toch met basic_ack bevestigd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
@@ -133,7 +136,7 @@ _Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa 
 
 **Wanneer** receiver.py het bericht verwerkt
 
-**Dan** wordt een system_error met code profile_not_found verstuurd naar kassa.errors
+**Dan** wordt er geen profiel aangepast (no-op)
 
 **En** stuurt receiver.py toch een basic_ack naar RabbitMQ
 
@@ -142,14 +145,14 @@ _Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa 
 1. Herken het annuleringsbericht in het ontvangstscript en valideer de structuur via het XSD-schema.
 2. Zoek de klant op in Odoo via zijn uniek klantnummer.
 3. Zet het klantprofiel op inactief zodat de medewerker weet dat deze persoon niet meer verwacht wordt.
-4. Wordt de klant niet gevonden? Stuur een foutmelding naar de Controlroom en bevestig toch dat het bericht verwerkt is.
+4. Wordt de klant niet gevonden? Behandel het bericht als no-op en bevestig toch dat het verwerkt is.
 
 # **EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)**
 
 **DEFINITION OF DONE:**
 
 - [ ] `receiver.py` zet `active=False` correct op het juiste `res.partner` record
-- [ ] `system_error` met code `profile_not_found` verstuurd bij onbekend `x_user_id`
+- [ ] Onbekend `x_user_id` bij `cancel_registration` wordt no-op afgehandeld zonder `system_error`
 - [ ] `basic_ack` verstuurd in alle gevallen
 
 ## **Story 4: Anoniem een drankje kopen**
@@ -580,9 +583,9 @@ _Als beheerder wil ik dat de kassa onleesbare of onbekende berichten vanuit ande
 **ACCEPTATIECRITERIA:**
 
 - Elk inkomend bericht wordt gevalideerd via het bijhorende XSD-schema.
-- Klopt de structuur niet? Dan wordt het bericht weggegooid en een system_error met code invalid_xml_format verstuurd naar kassa.errors.
+- Klopt de structuur niet? Dan wordt een system_error met code invalid_xml_format verstuurd naar kassa.errors en gaat het bericht via basic_nack(requeue=false) naar de DLQ.
 - Is het berichttype onbekend? Dan wordt een system_error met code unknown_message_type verstuurd naar kassa.errors.
-- In beide gevallen krijgt het bericht een basic_ack zodat de queue niet geblokkeerd wordt.
+- In beide gevallen krijgt het bericht een basic_nack(requeue=false), zodat het niet blijft herhalen en traceerbaar in de DLQ terechtkomt.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
@@ -590,30 +593,30 @@ _Als beheerder wil ik dat de kassa onleesbare of onbekende berichten vanuit ande
 
 **Wanneer** receiver.py de validatie uitvoert
 
-**Dan** wordt het bericht weggegooid en een system_error met code invalid_xml_format verstuurd naar kassa.errors
+**Dan** wordt een system_error met code invalid_xml_format verstuurd naar kassa.errors
 
-**En** stuurt receiver.py een basic_ack zodat het bericht de queue niet blokkeert
+**En** stuurt receiver.py een basic_nack(requeue=false) zodat het bericht in de DLQ belandt
 
 **Gegeven** dat een inkomend bericht een onbekend type heeft
 
 **Wanneer** receiver.py het berichttype controleert
 
-**Dan** wordt het bericht weggegooid en een system_error met code unknown_message_type verstuurd naar kassa.errors
+**Dan** wordt een system_error met code unknown_message_type verstuurd naar kassa.errors
 
-**En** stuurt receiver.py een basic_ack
+**En** stuurt receiver.py een basic_nack(requeue=false) zodat het bericht in de DLQ belandt
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
 1. Controleer elk inkomend bericht eerst op geldige XML-structuur via het bijhorende XSD-schema.
-2. Is het berichttype onbekend of klopt de structuur niet? Gooi het bericht weg en stuur een foutmelding met de juiste foutcode naar de Controlroom.
-3. Bevestig aan de wachtrij dat het bericht verwerkt is zodat het niet blijft herhalen.
+2. Is het berichttype onbekend of klopt de structuur niet? Stuur een foutmelding met de juiste foutcode naar de Controlroom.
+3. Verstuur basic_nack(requeue=false) zodat het bericht niet blijft herhalen en in de DLQ terechtkomt voor analyse.
 
 **DEFINITION OF DONE:**
 
 - [ ] XSD-validatie actief voor alle inkomende berichttypes op `kassa.incoming`
 - [ ] `system_error` met code `invalid_xml_format` verstuurd bij structuurfout
 - [ ] `system_error` met code `unknown_message_type` verstuurd bij onbekend berichttype
-- [ ] `basic_ack` verstuurd in beide gevallen — queue wordt nooit geblokkeerd
+- [ ] `basic_nack(requeue=false)` verstuurd in beide gevallen — berichten gaan gecontroleerd naar de DLQ
 
 ## **Story 15: Dubbele berichten stil negeren (Idempotentie)**
 
@@ -824,7 +827,8 @@ _Als IT-beheerder wil ik dat verbindingsfouten met Odoo direct als foutmelding n
 
 - Zodra het script de Odoo XML-RPC API niet kan bereiken, wordt dit gedetecteerd.
 - Er wordt een system_error bericht met code odoo_api_error verstuurd naar kassa.errors.
-- Het script pauzeert één seconde voor een nieuwe poging om een oneindige foutenlus te voorkomen.
+- Het script pauzeert één seconde voor een nieuwe poging.
+- Retries zijn begrensd (bijvoorbeeld maximaal 3 pogingen per bericht); na het bereiken van de limiet wordt het bericht met basic_nack(requeue=false) naar de DLQ gestuurd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
@@ -836,16 +840,21 @@ _Als IT-beheerder wil ik dat verbindingsfouten met Odoo direct als foutmelding n
 
 **Dan** wordt een system_error met code odoo_api_error verstuurd naar kassa.errors
 
-**En** pauzeert het script één seconde voor een nieuwe poging zodat er geen oneindige foutenlus ontstaat
+**En** pauzeert het script één seconde voor een nieuwe poging
+
+**En** wordt na het overschrijden van de retry-limiet een basic_nack(requeue=false) gestuurd zodat het bericht in de DLQ komt
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
 1. Zorg voor foutafhandeling rondom alle communicatie met Odoo.
 2. Lukt het ophalen of wegschrijven van data niet? Bouw een foutbericht op met de code odoo_api_error en stuur naar de monitoringswachtrij.
-3. Pauzeer de verwerking kort zodat het systeem niet in een oneindige foutenlus terechtkomt.
+3. Pauzeer de verwerking telkens 1 seconde en probeer opnieuw met een begrensd aantal retries.
+4. Bij het bereiken van de retry-limiet: stuur basic_nack(requeue=false) zodat het bericht in de DLQ belandt voor latere analyse/herverwerking.
 
 **DEFINITION OF DONE:**
 
 - [ ] Alle Odoo XML-RPC aanroepen in `poller.py` en `receiver.py` wrapped in `try/except`
 - [ ] `system_error` met code `odoo_api_error` verstuurd bij elke verbindingsfout of exception
-- [ ] Script pauzeert exact 1 seconde voor retry — geen oneindige foutenlus mogelijk
+- [ ] Script pauzeert exact 1 seconde tussen retries
+- [ ] Retry-limiet is actief (bijvoorbeeld max 3 pogingen per bericht)
+- [ ] Overschrijden retry-limiet resulteert in `basic_nack(requeue=false)` naar de DLQ
