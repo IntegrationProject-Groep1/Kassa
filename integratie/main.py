@@ -124,7 +124,7 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
             "x_user_id":        ("char",    "External User ID"),
             "x_badge_id":       ("char",    "Badge ID"),
             "x_wallet_balance": ("float",   "Wallet Balance (EUR)"),
-            "x_age":            ("integer", "Age"),
+            "x_date_of_birth":  ("date",    "Date of Birth"),
         },
         "pos.order": {
             "x_rabbitmq_sent": ("boolean", "Sent to RabbitMQ"),
