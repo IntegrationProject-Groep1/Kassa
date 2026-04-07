@@ -277,7 +277,7 @@ def setup_exchange(channel):
             )
 
 
-def send_message(routing_key: str, message_xml: str) -> None:
+def send_message(routing_key: str, message_xml: str) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
@@ -285,15 +285,18 @@ def send_message(routing_key: str, message_xml: str) -> None:
     is written to the local outbox buffer instead of being lost. The connection
     globals are reset to None so the next call opens a fresh connection rather
     than retrying a broken one.
+    Returns True if successfully sent, False if buffered.
     """
     try:
         _publish_or_raise(routing_key, message_xml)
         logger.info(f"✅ Sent: routing_key={routing_key}")
+        return True
     except Exception as e:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
         _buffer_message(routing_key, message_xml)
+        return False
 
 
 # ── Outgoing XSD validation ────────────────────────────────────────────────────
@@ -325,7 +328,7 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str) -> None:
+def send_typed_message(msg_type: str, message_xml: str) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
@@ -333,7 +336,7 @@ def send_typed_message(msg_type: str, message_xml: str) -> None:
         logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    send_message(routing_key, message_xml)
+    return send_message(routing_key, message_xml)
 
 
 def now_utc() -> str:

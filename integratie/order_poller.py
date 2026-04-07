@@ -36,6 +36,7 @@ import time
 import logging
 from pathlib import Path
 import collections
+import xml.etree.ElementTree as ET
 import sender  # Import the sender module
 
 # Logging setup
@@ -217,24 +218,25 @@ class OrderPoller:
                 is_anonymous = True
 
             if order.get('amount_total', 0) < 0:
-                self._process_refund(order, order_id, customer_info)
+                success = self._process_refund(order, order_id, customer_info)
             else:
-                self._process_consumption(order, customer_info, is_anonymous)
+                success = self._process_consumption(order, customer_info, is_anonymous)
 
             # Update in-memory cache immediately after send to suppress duplicates
-            # within the same session even if the Odoo write below fails.
+            # within the same session even if the Odoo write below fails or is skipped.
             self.processed_orders[order_id] = True
             if len(self.processed_orders) > MAX_CACHE_SIZE:
                 self.processed_orders.popitem(last=False)
 
-            # Persist sent status in Odoo — survives container restarts.
-            # at-least-once: if this write fails the in-memory cache still
-            # prevents a duplicate storm within the current session.
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.order', 'write',
-                [[order_id], {'x_rabbitmq_sent': True}]
-            )
+            if success:
+                # Persist sent status in Odoo — survives container restarts.
+                # at-least-once: if this write fails the in-memory cache still
+                # prevents a duplicate storm within the current session.
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'write',
+                    [[order_id], {'x_rabbitmq_sent': True}]
+                )
 
             status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
             logger.info(f"📦 Order {order_id}: {status_text}")
@@ -290,7 +292,9 @@ class OrderPoller:
                 user_id=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
-            sender.send_typed_message('wallet_balance_update', wallet_xml)
+            success1 = sender.send_typed_message('wallet_balance_update', wallet_xml)
+        else:
+            success1 = True
         # 3. Always send refund_processed XML
         original_msg_id = "Unknown"
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order.get('lines', [])]
@@ -332,7 +336,8 @@ class OrderPoller:
             original_transaction_id=str(order['id']),
             user_id=customer_info.get('x_user_id') if customer_info else None
         )
-        sender.send_typed_message('refund_processed', refund_xml)
+        success2 = sender.send_typed_message('refund_processed', refund_xml)
+        return success1 and success2
 
     def _process_consumption(self, order, customer_info, is_anonymous):
         """Handle regular sales orders and dispatch consumption_order"""
@@ -404,7 +409,47 @@ class OrderPoller:
             is_anonymous=is_anonymous)
 
         # Send via sender module
-        sender.send_typed_message('consumption_order', xml_message)
+        success1 = sender.send_typed_message('consumption_order', xml_message)
+
+        # Extract message_id to link payment
+        correlation_id = ET.fromstring(xml_message).find('.//message_id').text
+
+        # Determine payment method
+        payment_method = "cash"
+        payment_ids = order.get('payment_ids', [])
+        if payment_ids:
+            payments = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.payment', 'read',
+                [payment_ids, ['payment_method_id']]
+            )
+            for pm in payments:
+                method_tuple = pm.get('payment_method_id')
+                if method_tuple:
+                    name_lower = method_tuple[1].lower()
+                    if "wallet" in name_lower or "badge" in name_lower:
+                        payment_method = "wallet"
+                        break
+                    elif "card" in name_lower or "bancontact" in name_lower or "bank" in name_lower:
+                        payment_method = "card"
+                        break
+
+        # Format date for XML
+        create_date = order.get('create_date', '')
+        due_date = create_date.replace(" ", "T") + "Z" if create_date else "1970-01-01T00:00:00Z"
+
+        payment_xml = sender.build_payment_registered_xml(
+            payment_context="consumption",
+            invoice_status="paid",
+            amount_paid=float(order.get('amount_total', 0.0)),
+            due_date=due_date,
+            trx_id=str(order['id']),
+            payment_method=payment_method,
+            user_id=str(customer_info.get('x_user_id')) if customer_info else None,
+            correlation_id=correlation_id
+        )
+        success2 = sender.send_typed_message('payment_registered', payment_xml)
+        return success1 and success2
 
     def poll(self, interval=5):
         """
