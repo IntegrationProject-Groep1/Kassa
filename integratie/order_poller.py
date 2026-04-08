@@ -36,6 +36,7 @@ import time
 import logging
 from pathlib import Path
 import collections
+import xml.etree.ElementTree as ET
 import sender  # Import the sender module
 
 # Logging setup
@@ -405,6 +406,30 @@ class OrderPoller:
 
         # Send via sender module
         sender.send_typed_message('consumption_order', xml_message)
+
+        # Extract message_id to link payment
+        correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
+
+        # Determine payment method (on_site covers cash, card, and wallet per Datamapping_Kassa.md)
+        payment_method = "on_site"
+
+        # Format date for XML (requires YYYY-MM-DD for xs:date)
+        create_date = order.get('create_date', '')
+        due_date = create_date.split(" ")[0] if create_date else "1970-01-01"
+
+        user_id_val = customer_info.get('x_user_id') if customer_info else None
+
+        payment_xml = sender.build_payment_registered_xml(
+            payment_context="consumption",
+            invoice_status="paid",
+            amount_paid=float(order.get('amount_total', 0.0)),
+            due_date=due_date,
+            trx_id=str(order['id']),
+            payment_method=payment_method,
+            user_id=str(user_id_val) if user_id_val else None,
+            correlation_id=correlation_id
+        )
+        sender.send_typed_message('payment_registered_consumption', payment_xml)
 
     def poll(self, interval=5):
         """

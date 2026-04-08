@@ -270,7 +270,10 @@ def test_process_refund_tracing_fallback_on_error(mock_sender, poller):
 @patch('order_poller.sender')
 def test_process_consumption_sends_consumption_order(mock_sender, poller):
     """Regular order sends a consumption_order message."""
-    order = {'id': 20, 'lines': [(10,), (11,)]}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 20, 'lines': [(10,), (11,)], 'amount_total': 15.0}
     poller.models.execute_kw.side_effect = [
         # pos.order.line read
         [
@@ -283,7 +286,7 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
 
     poller._process_consumption(order, None, is_anonymous=True)
 
-    mock_sender.send_typed_message.assert_called_once_with(
+    mock_sender.send_typed_message.assert_any_call(
         'consumption_order', mock_sender.build_consumption_order_xml.return_value
     )
 
@@ -291,7 +294,10 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
 @patch('order_poller.sender')
 def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
     """Taxes are fetched in a single bulk call, not per line."""
-    order = {'id': 21, 'lines': [(10,), (11,)]}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 21, 'lines': [(10,), (11,)], 'amount_total': 15.0}
     poller.models.execute_kw.side_effect = [
         [
             {'id': 10, 'product_id': (1, 'A'), 'qty': 1, 'price_unit': 5.0, 'tax_ids': [3]},
@@ -311,7 +317,10 @@ def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
 @patch('order_poller.sender')
 def test_process_consumption_company_customer_type(mock_sender, poller):
     """A customer linked to a parent company has customer_type 'company'."""
-    order = {'id': 22, 'lines': []}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 22, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 5, 'name': 'John', 'is_company': False,
                      'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': ''}
     # Parent company lookup
@@ -326,7 +335,10 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
 @patch('order_poller.sender')
 def test_process_consumption_private_customer_type(mock_sender, poller):
     """A customer with no parent and is_company=False has customer_type 'private'."""
-    order = {'id': 23, 'lines': []}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 23, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 6, 'name': 'Jane', 'is_company': False,
                      'parent_id': False, 'x_user_id': None, 'email': ''}
 
