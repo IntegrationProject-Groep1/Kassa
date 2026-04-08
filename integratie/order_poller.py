@@ -416,7 +416,7 @@ class OrderPoller:
         # Format date for XML (requires YYYY-MM-DD for xs:date)
         create_date = order.get('create_date', '')
         due_date = create_date.split(" ")[0] if create_date else "1970-01-01"
-        
+
         user_id_val = customer_info.get('x_user_id') if customer_info else None
 
         payment_xml = sender.build_payment_registered_xml(
