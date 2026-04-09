@@ -14,11 +14,11 @@ import time
 import xmlrpc.client
 import requests
 
-logging.getLogger("pika").setLevel(logging.WARNING)
-
 import receiver
 import sender
 from order_poller import OrderPoller
+
+logging.getLogger("pika").setLevel(logging.WARNING)
 
 
 def _run_receiver() -> None:
@@ -79,7 +79,7 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
             allow_redirects=True
         )
         if resp.status_code in (200, 302):
-            print(f"✅ Database creation request accepted", flush=True)
+            print("✅ Database creation request accepted", flush=True)
         else:
             print(f"ℹ️  Database creation returned {resp.status_code} — may already exist, continuing", flush=True)
     except Exception as e:
@@ -99,7 +99,7 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
         if (attempt + 1) % 6 == 0:
             print(f"   ⏳ Still waiting for DB... ({(attempt + 1) * 5}s elapsed)", flush=True)
 
-    print(f"❌ Database not accessible after 10 minutes", flush=True)
+    print("❌ Database not accessible after 10 minutes", flush=True)
     return False
 
 
@@ -301,7 +301,7 @@ def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
                       "price_include_override": "tax_included"}]
                 )
                 print(f"   ✅ Created {rate}% inclusive tax (division + price_include_override)", flush=True)
-            
+
             tax_map_by_rate[rate] = tax_id
 
         target_tax_id = tax_map_by_rate[TARGET_VAT_RATE]
@@ -310,7 +310,7 @@ def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
         company_ids = models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "search", [[]])
         if company_ids:
             models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "write",
-                               [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
+                              [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
             print(f"   ✅ Set default sales tax to BTW {TARGET_VAT_RATE}% incl.", flush=True)
 
         # Check all POS products
@@ -373,17 +373,26 @@ def ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass):
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
         def get_or_create_category(name, color=1):
-            existing = models.execute_kw(odoo_db, uid, odoo_pass, "pos.category", "search_read", [[["name", "=", name]]], {"fields": ["id"]})
+            existing = models.execute_kw(
+                odoo_db, uid, odoo_pass, "pos.category", "search_read",
+                [[["name", "=", name]]], {"fields": ["id"]}
+            )
             if not existing:
-                cat_id = models.execute_kw(odoo_db, uid, odoo_pass, "pos.category", "create", [{"name": name, "color": color}])
+                cat_id = models.execute_kw(
+                    odoo_db, uid, odoo_pass, "pos.category", "create",
+                    [{"name": name, "color": color}]
+                )
                 print(f"   ✅ Created POS category '{name}'", flush=True)
                 return cat_id
             else:
-                models.execute_kw(odoo_db, uid, odoo_pass, "pos.category", "write", [[existing[0]["id"]], {"color": color}])
+                models.execute_kw(
+                    odoo_db, uid, odoo_pass, "pos.category", "write",
+                    [[existing[0]["id"]], {"color": color}]
+                )
             return existing[0]["id"]
 
-        topup_cat_id = get_or_create_category("Top-ups", 2) # Light blue
-        drinks_cat_id = get_or_create_category("Drinks", 3) # Yellow
+        topup_cat_id = get_or_create_category("Top-ups", 2)  # Light blue
+        drinks_cat_id = get_or_create_category("Drinks", 3)  # Yellow
         return topup_cat_id, drinks_cat_id
     except Exception as e:
         print(f"⚠️  Could not verify POS categories: {e}", flush=True)
@@ -402,7 +411,7 @@ def ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass):
             {"name": "Bancontact", "is_cash_count": False},
             {"name": "Badge Wallet", "is_cash_count": False}
         ]
-        
+
         method_ids = []
         for method in needed:
             existing = models.execute_kw(
@@ -421,7 +430,7 @@ def ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass):
                 )
                 print(f"   ✅ Created payment method: {method['name']}", flush=True)
                 method_ids.append(pm_id)
-        
+
         return method_ids
     except Exception as e:
         print(f"⚠️  Could not verify payment methods: {e}", flush=True)
@@ -447,11 +456,39 @@ def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, 
 
         # list_price IS the final customer price (tax included) because we use amount_type='division'
         demo_products = [
-            {"name": "Cola",       "list_price": 2.50,  "taxes_id": [(6, 0, [tax_6])]  if tax_6  else [], "available_in_pos": True, "type": "consu",   "color": 3, "image_1920": False, "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []},
-            {"name": "Koffie",     "list_price": 2.80,  "taxes_id": [(6, 0, [tax_6])]  if tax_6  else [], "available_in_pos": True, "type": "consu",   "color": 3, "image_1920": False, "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []},
-            {"name": "Pintje",     "list_price": 3.00,  "taxes_id": [(6, 0, [tax_21])] if tax_21 else [], "available_in_pos": True, "type": "consu",   "x_age_restricted": True, "color": 3, "image_1920": False, "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []},
-            {"name": "Top-up €10", "list_price": 10.00, "taxes_id": [(6, 0, [tax_0])]  if tax_0  else [], "available_in_pos": True, "type": "service", "x_is_topup": True, "color": 2, "image_1920": False, "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []},
-            {"name": "Top-up €20", "list_price": 20.00, "taxes_id": [(6, 0, [tax_0])]  if tax_0  else [], "available_in_pos": True, "type": "service", "x_is_topup": True, "color": 2, "image_1920": False, "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []},
+            {
+                "name": "Cola", "list_price": 2.50,
+                "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
+                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Koffie", "list_price": 2.80,
+                "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
+                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Pintje", "list_price": 3.00,
+                "taxes_id": [(6, 0, [tax_21])] if tax_21 else [],
+                "available_in_pos": True, "type": "consu", "x_age_restricted": True,
+                "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Top-up €10", "list_price": 10.00,
+                "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
+                "available_in_pos": True, "type": "service", "x_is_topup": True,
+                "color": 2, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []
+            },
+            {
+                "name": "Top-up €20", "list_price": 20.00,
+                "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
+                "available_in_pos": True, "type": "service", "x_is_topup": True,
+                "color": 2, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []
+            },
         ]
 
         for product in demo_products:
@@ -469,8 +506,11 @@ def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, 
                 )
                 print(f"   ✅ Created demo product: {product['name']}", flush=True)
             else:
-                models.execute_kw(odoo_db, uid, odoo_pass, "product.template", "write", [[existing[0]["id"]], {"color": product["color"], "image_1920": False}])
-                
+                models.execute_kw(
+                    odoo_db, uid, odoo_pass, "product.template", "write",
+                    [[existing[0]["id"]], {"color": product["color"], "image_1920": False}]
+                )
+
     except Exception as e:
         print(f"⚠️  Could not create demo products: {e}", flush=True)
 
@@ -503,7 +543,7 @@ def ensure_pos_config(odoo_url, odoo_db, odoo_user, odoo_pass, pm_ids):
             desired_vals["name"] = "Bar Kassa"
             config_id = models.execute_kw(odoo_db, uid, odoo_pass, "pos.config", "create", [desired_vals])
             print(f"   ✅ Created POS configuration 'Bar Kassa' (id={config_id})", flush=True)
-                
+
     except Exception as e:
         print(f"⚠️  Could not update POS config: {e}", flush=True)
 
