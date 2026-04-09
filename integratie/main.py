@@ -276,7 +276,7 @@ def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if not uid:
             print("⚠️  Cannot check tax settings — Odoo auth failed", flush=True)
-            return
+            return {}
 
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
@@ -445,9 +445,12 @@ def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, 
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
         def get_tax_id(rate):
-            t = models.execute_kw(odoo_db, uid, odoo_pass, "account.tax", "search_read",
-                                  [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]]]],
-                                  {"limit": 1})
+            t = models.execute_kw(
+                odoo_db, uid, odoo_pass, "account.tax", "search_read",
+                [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                  ["amount_type", "=", "division"], ["price_include_override", "=", "tax_included"]]],
+                {"fields": ["id"], "limit": 1}
+            )
             return t[0]["id"] if t else None
 
         tax_0 = tax_map.get(0.0) if tax_map else get_tax_id(0.0)
