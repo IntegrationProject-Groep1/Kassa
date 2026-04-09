@@ -449,7 +449,7 @@ def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, 
                 odoo_db, uid, odoo_pass, "account.tax", "search_read",
                 [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
                   ["amount_type", "=", "division"], ["price_include_override", "=", "tax_included"]]],
-                {"limit": 1}
+                {"fields": ["id"], "limit": 1}
             )
             return t[0]["id"] if t else None
 
