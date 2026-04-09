@@ -6,12 +6,15 @@
 #   - poller     → polls Odoo for new POS orders  (when available)
 #   - heartbeat  → sends periodic heartbeat        (when available)
 
+import logging
 import os
 import sys
 import threading
 import time
 import xmlrpc.client
 import requests
+
+logging.getLogger("pika").setLevel(logging.WARNING)
 
 import receiver
 import sender
