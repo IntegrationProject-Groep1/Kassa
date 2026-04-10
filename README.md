@@ -218,6 +218,6 @@ The GitHub Actions pipeline is triggered automatically upon a push to `dev` or `
 
 | Role | Name |
 | :--- | :--- |
-| **Team Lead** | [Jeremy Luyckfasseel] |
-| **Developer** | [Ahmed Takadoumi] |
-| **Developer** | [Zeno Van Neygen] |
+| **Team Lead** | Jeremy Luyckfasseel |
+| **Developer** | Ahmed Takadoumi |
+| **Developer** | Zeno Van Neygen |
