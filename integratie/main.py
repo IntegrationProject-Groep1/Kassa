@@ -17,6 +17,7 @@ import requests
 import receiver
 import sender
 from order_poller import OrderPoller
+from pos_profiles import ensure_pos_profiles
 
 logging.getLogger("pika").setLevel(logging.WARNING)
 
@@ -518,39 +519,6 @@ def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, 
         print(f"⚠️  Could not create demo products: {e}", flush=True)
 
 
-def ensure_pos_config(odoo_url, odoo_db, odoo_user, odoo_pass, pm_ids):
-    print("🔍 Checking standard POS configuration...", flush=True)
-    try:
-        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
-        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
-        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
-
-        desired_vals = {
-            "limit_categories": False,
-            "iface_tax_included": "total",
-            "payment_method_ids": [(6, 0, pm_ids)],
-        }
-
-        configs = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            "pos.config", "search_read",
-            [[["name", "=", "Bar Kassa"]]],
-            {"fields": ["id"], "limit": 1}
-        )
-
-        if configs:
-            config_id = configs[0]["id"]
-            models.execute_kw(odoo_db, uid, odoo_pass, "pos.config", "write", [[config_id], desired_vals])
-            print(f"   ✅ Updated 'Bar Kassa' POS config (id={config_id})", flush=True)
-        else:
-            desired_vals["name"] = "Bar Kassa"
-            config_id = models.execute_kw(odoo_db, uid, odoo_pass, "pos.config", "create", [desired_vals])
-            print(f"   ✅ Created POS configuration 'Bar Kassa' (id={config_id})", flush=True)
-
-    except Exception as e:
-        print(f"⚠️  Could not update POS config: {e}", flush=True)
-
-
 def main():
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
@@ -585,8 +553,10 @@ def main():
     # Step 6: Setup POS base data (categories, payment methods, demo products, pos.config)
     topup_cat_id, drinks_cat_id = ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass)
     pm_ids = ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
+    common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+    uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map)
-    ensure_pos_config(odoo_url, odoo_db, odoo_user, odoo_pass, pm_ids)
+    ensure_pos_profiles(odoo_url, odoo_db, uid, odoo_pass)
 
     # ── Receiver thread ────────────────────────────────────────────────────────
     receiver_thread = threading.Thread(
