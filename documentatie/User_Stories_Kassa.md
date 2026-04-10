@@ -168,7 +168,7 @@ _Als kassamedewerker wil ik bestellingen aan de bar supersnel kunnen afrekenen v
 
 - De medewerker slaat producten aan zonder een klant te selecteren.
 - De bestelling wordt succesvol afgerekend en er rolt een bonnetje uit.
-- poller.py pikt de afgeronde bestelling op en verstuurt een consumption_order met is_anonymous=true en is_company_linked=false naar kassa.payments, gevolgd door een payment_registered bericht.
+- poller.py pikt de afgeronde bestelling op en verstuurt een consumption_order met is_anonymous=true naar kassa.payments, gevolgd door een payment_registered bericht.
 - De bestelling wordt in Odoo gemarkeerd als verzonden (x_rabbitmq_sent=True) na succesvolle doorstuur.
 - Lukt het versturen niet? Dan worden beide berichten opgeslagen in outbox.json.
 
@@ -178,7 +178,7 @@ _Als kassamedewerker wil ik bestellingen aan de bar supersnel kunnen afrekenen v
 
 **Wanneer** poller.py deze order detecteert
 
-**Dan** wordt een consumption_order XML verstuurd naar kassa.payments met is_anonymous=true en is_company_linked=false
+**Dan** wordt een consumption_order XML verstuurd naar kassa.payments met is_anonymous=true
 
 **En** wordt daarna een payment_registered XML verstuurd naar dezelfde queue
 
@@ -221,7 +221,7 @@ _Als zakelijke bezoeker wil ik dat mijn bestellingen aan de bar direct geregistr
 **ACCEPTATIECRITERIA:**
 
 - De bestelling wordt in de kassa gekoppeld aan een geïdentificeerde klant.
-- Na het afrekenen stuurt poller.py een consumption_order bericht met is_anonymous=false en is_company_linked=true, en een payment_registered bericht met payment_context=consumption naar kassa.payments.
+- Na het afrekenen stuurt poller.py een consumption_order bericht met is_anonymous=false en `<type>company</type>`, en een payment_registered bericht met payment_context=consumption naar kassa.payments.
 - Als de klant afrekent met digitaal tegoed (Badge Wallet), verlaagt poller.py lokaal het saldo (x_wallet_balance) in Odoo én stuurt een wallet_balance_update bericht naar frontend.payments.
 - De bestelling wordt in Odoo gemarkeerd als verzonden (x_rabbitmq_sent=True) na succesvolle doorstuur.
 
@@ -231,7 +231,7 @@ _Als zakelijke bezoeker wil ik dat mijn bestellingen aan de bar direct geregistr
 
 **Wanneer** poller.py deze order detecteert
 
-**Dan** wordt een consumption_order XML verstuurd naar kassa.payments met is_anonymous=false en is_company_linked=true
+**Dan** wordt een consumption_order XML verstuurd naar kassa.payments met is_anonymous=false en `<type>company</type>` conform XSD v2.3
 
 **En** wordt daarna een payment_registered XML verstuurd naar dezelfde queue
 
@@ -349,14 +349,14 @@ _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annul
 **ACCEPTATIECRITERIA:**
 
 - De medewerker registreert een terugbetaling (negatief bedrag) in de kassa.
-- De kassa verstuurt een refund_processed bericht naar kassa.payments, gekoppeld aan het originele transactienummer.
+- De kassa verstuurt een refund_processed bericht naar kassa.payments, met als correlation_id de message_id (UUID) van de originele payment_registered.
 - Als de klant oorspronkelijk met badge-tegoed had betaald, wordt het x_wallet_balance in Odoo verhoogd en een wallet_balance_update verstuurd naar frontend.payments.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
 **Gegeven** dat er een afgeronde pos.order staat in Odoo met een negatief totaalbedrag en x_rabbitmq_sent=False
 **Wanneer** poller.py deze order detecteert
-**Dan** wordt een refund_processed XML verstuurd naar kassa.payments, gekoppeld aan het originele transactie-ID
+**Dan** wordt een refund_processed XML verstuurd naar kassa.payments met correlation_id gelijk aan de message_id (UUID) van de originele payment_registered
 **En** wordt x_rabbitmq_sent=True gezet op de order in Odoo
 
 **Gegeven** dat de originele betaling via Badge Wallet was
@@ -420,10 +420,15 @@ _Als kassamedewerker wil ik dat de kassa de klant direct herkent zodra de scanne
 2. Zoek het badge-ID op in Odoo en haal het bijhorende klantprofiel op.
 3. Wordt de badge niet herkend? Verwijs door naar de foutafhandeling van Story 12.
 4. Bevestig aan de wachtrij dat het bericht verwerkt is.
+5. Push een event via de **Odoo bus** (`bus.bus`) naar de actieve POS-sessie met het opgehaalde klantprofiel.
+6. Een **OWL-component** in de POS-frontend luistert op dit bus-event en selecteert automatisch de klant in de lopende bestelling. Dit vereist een custom Odoo addon (`kassa_pos_custom`) met een JavaScript OWL-component onder `static/src/js/`.
 
 **DEFINITION OF DONE:**
 
 - [ ] `badge_scanned` correct verwerkt: klantprofiel opgehaald via `x_badge_id` op `res.partner`
+- [ ] `receiver.py` pusht het klantprofiel via de Odoo bus naar de actieve POS-sessie na succesvolle lookup
+- [ ] OWL-component in de POS ontvangt het bus-event en selecteert de klant automatisch in de lopende bestelling
+- [ ] Custom Odoo addon (`kassa_pos_custom`) aangemaakt met correct `__manifest__.py` en POS asset-registratie
 - [ ] Onbekende badge: verwerking van Story 12-flow gestart
 - [ ] `basic_ack` verstuurd in alle gevallen
 
@@ -746,15 +751,15 @@ _Als kassamedewerker wil ik een automatische waarschuwing bij verkoop van alcoho
 
 1. Bereken de actuele leeftijd op basis van `x_date_of_birth` op het moment van scan.
 2. Controleer bij elk toe te voegen product of het de `x_age_restricted` vlag draagt.
-3. Is de klant jonger dan 18? Toon een blokkerende pop-up en vereist manuele bevestiging.
-4. Implementeer als custom POS JavaScript.
+3. Is de klant jonger dan 18? Toon een blokkerende pop-up en vereist manuele bevestiging met verplichte reden.
+4. Implementeer als **OWL-component** binnen een custom Odoo addon (`kassa_pos_custom`). De component overschrijft de standaard `OrderWidget` of `Orderline` en voegt de leeftijdscheck toe bij het toevoegen van een product. De pop-up is een `AbstractAwaitablePopup`. Registreer de JavaScript-bestanden in `__manifest__.py` onder `point_of_sale._assets_pos`.
 
 **DEFINITION OF DONE:**
 
 - [ ] Leeftijdsberekening correct op basis van `x_date_of_birth` t.o.v. de huidige datum
 - [ ] Blokkerende pop-up verschijnt correct bij product met `x_age_restricted=True` én leeftijd < 18
 - [ ] Medewerker kan blokkering manueel overschrijven met verplichte reden
-- [ ] Custom POS JavaScript gedocumenteerd als bewuste architectuuruitzondering
+- [ ] Custom Odoo addon (`kassa_pos_custom`) aangemaakt met OWL-component en correct geregistreerd onder `point_of_sale._assets_pos` in `__manifest__.py`
 
 ## **Story 18: Twee POS-profielen**
 
@@ -826,14 +831,15 @@ _Als financieel beheerder wil ik dat de kassa een betaling met digitaal tegoed s
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1. Controleer vlak voor elke saldo-afschrijving of er een klant gekoppeld is aan de bestelling.
-2. Is de bestelling anoniem maar wordt er toch via badge-tegoed betaald? Stop de afschrijving onmiddellijk.
-3. Stuur een foutmelding naar de Controlroom.
-4. Markeer de bestelling als afgehandeld zodat ze niet blijft hangen.
+1. Blokkeer de Badge Wallet betaalmethode in de POS-frontend wanneer geen klant gekoppeld is aan de lopende bestelling. Implementeer als **OWL-component** in `kassa_pos_custom` die de betaalknop voor Badge Wallet verbergt of uitschakelt zolang `order.partner` leeg is.
+2. Mocht de inconsistente toestand toch de backend bereiken (anonieme order met Badge Wallet): stop de afschrijving onmiddellijk in `order_poller.py`.
+3. Stuur een `system_error` met de juiste foutcode naar `kassa.errors`.
+4. Markeer de bestelling als afgehandeld in Odoo zodat ze niet blijft hangen.
 
 **DEFINITION OF DONE:**
 
-- [ ] Combinatie anonieme order + Badge Wallet betaling → geen enkel saldo afgetrokken
+- [ ] OWL-component in `kassa_pos_custom` verbergt/uitschakelt Badge Wallet betaalmethode wanneer geen klant geselecteerd is in de POS
+- [ ] Combinatie anonieme order + Badge Wallet betaling die toch de backend bereikt → geen enkel saldo afgetrokken in `order_poller.py`
 - [ ] `system_error` verstuurd naar `kassa.errors` bij deze inconsistente toestand
 - [ ] Order gemarkeerd als afgehandeld in Odoo zodat hij niet blijft herhalen
 
