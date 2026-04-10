@@ -8,7 +8,7 @@ Project: Integratieproject Desideriushogeschool 2026
 
 Datum: 25 maart 2026
 
-# **EPIC 1: PROFIELEN & INSCHRIJVINGEN (INKOMENDE FLOWS)**
+## **EPIC 1: PROFIELEN & INSCHRIJVINGEN (INKOMENDE FLOWS)**
 
 ## **Story 1: Nieuwe Inschrijvingen automatisch inladen**
 
@@ -147,7 +147,7 @@ _Als organisatie wil ik dat bezoekers die hun ticket annuleren, ook in de kassa 
 3. Zet het klantprofiel op inactief zodat de medewerker weet dat deze persoon niet meer verwacht wordt.
 4. Wordt de klant niet gevonden? Behandel het bericht als no-op en bevestig toch dat het verwerkt is.
 
-# **EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)**
+## **EPIC 2: KASSAVERKOOP & BETALINGEN (UITGAANDE FLOWS)**
 
 **DEFINITION OF DONE:**
 
@@ -361,7 +361,7 @@ _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annul
 3. Controleer of de originele betaling via badge-tegoed was. Zo ja, verhoog het lokale saldo in Odoo en stuur een saldo-update naar de website.
 4. Markeer de terugbetaling als verzonden in Odoo.
 
-# **EPIC 3: BADGES & SALDO (IOT & WALLET)**
+## **EPIC 3: BADGES & SALDO (IOT & WALLET)**
 
 **DEFINITION OF DONE:**
 
@@ -455,14 +455,14 @@ _Als bezoeker wil ik met cash of mijn bankpas virtueel geld op mijn badge kunnen
 
 **ACCEPTATIECRITERIA:**
 
-- De medewerker slaat een Top-up product (0% BTW) aan in Odoo POS.
+- De medewerker slaat een product aan uit de POS-categorie 'Top-ups' in Odoo POS. Het systeem herkent dit als een saldo-verhoging.
 - Het bedrag wordt opgeteld bij het x_wallet_balance van de klant in Odoo.
 - Er wordt een consumption_order bericht verstuurd naar kassa.payments richting het CRM.
 - Er wordt een wallet_balance_update bericht verstuurd naar frontend.payments richting de website.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat er een afgeronde pos.order staat in Odoo met een product van 0% BTW en x_rabbitmq_sent=False
+**Gegeven** dat er een afgeronde pos.order staat in Odoo met een product uit de categorie 'Top-ups' (of `x_is_topup=True`) en x_rabbitmq_sent=False
 
 **En** de order heeft een gekoppelde klant met een x_badge_id
 
@@ -478,7 +478,7 @@ _Als bezoeker wil ik met cash of mijn bankpas virtueel geld op mijn badge kunnen
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1. Herken in het pollerscript een Top-up aankoop op basis van het 0% BTW-tarief van het product.
+1. Herken in het pollerscript een Top-up aankoop op basis van de POS-categorie 'Top-ups' of het custom veld `x_is_topup` via `is_topup_product()`. Forceer `vat_rate=0` in de XML-export voor deze producten.
 2. Verhoog het lokale badge-saldo van de klant in Odoo met het aangekochte bedrag.
 3. Bouw het bestellingsbericht op conform het XSD-schema en stuur naar de wachtrij richting het CRM.
 4. Stuur tegelijkertijd een saldo-updatebericht naar de wachtrij richting de website.
@@ -486,7 +486,7 @@ _Als bezoeker wil ik met cash of mijn bankpas virtueel geld op mijn badge kunnen
 
 **DEFINITION OF DONE:**
 
-- [ ] `poller.py` herkent Top-up product via `vat_rate=0` en zet automatisch `item_type=wallet_topup`
+- [ ] `poller.py` herkent Top-up product via `is_topup_product()` (categorie-check of `x_is_topup`); forceert `vat_rate=0` en zet `item_type=wallet_topup` in de uitgaande XML
 - [ ] `x_wallet_balance` verhoogd in Odoo met het correcte aankoopbedrag
 - [ ] `consumption_order` verstuurd naar `kassa.payments`
 - [ ] `wallet_balance_update` verstuurd naar `frontend.payments`
@@ -521,7 +521,7 @@ _Als kassamedewerker wil ik dat het systeem niet vastloopt als een bezoeker per 
 3. Stuur het foutbericht naar de monitoringswachtrij richting de Controlroom.
 4. Bevestig aan de wachtrij dat het scanbericht verwerkt is zodat het niet opnieuw aangeboden wordt.
 
-# **EPIC 4: FOUTEN & SYSTEEMMONITORING (RESILIENCE & CONTROLROOM)**
+## **EPIC 4: FOUTEN & SYSTEEMMONITORING (RESILIENCE & CONTROLROOM)**
 
 **DEFINITION OF DONE:**
 
@@ -689,7 +689,7 @@ _Als IT-beheerder wil ik gewaarschuwd worden als de kassa langdurig offline is e
 3. Stuur een foutbericht met de code offline_queue_full naar de Controlroom zodat IT gewaarschuwd wordt.
 4. De kassa blijft gewoon verkopen — enkel het doorsturen stopt.
 
-# **EPIC 5: UITGEBREIDE RANDGEVALLEN (TECHNICAL SAD PATHS)**
+## **EPIC 5: UITGEBREIDE RANDGEVALLEN (TECHNICAL SAD PATHS)**
 
 **DEFINITION OF DONE:**
 
@@ -708,7 +708,6 @@ _Als kassamedewerker wil ik een automatische waarschuwing bij verkoop van alcoho
 - De kassa berekent de actuele leeftijd op basis van het `x_date_of_birth` veld in Odoo (geboortedatum, type Date).
 - Bij producten met de vlag `x_age_restricted` en berekende leeftijd < 18 jaar verschijnt een blokkerende pop-up.
 - De kassamedewerker kan de blokkering handmatig overschrijven met een reden.
-- **Let op:** Vereist custom POS JavaScript — dit is een bewuste uitzondering op de "geen code in Odoo" architectuurrestrictie.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
@@ -727,7 +726,7 @@ _Als kassamedewerker wil ik een automatische waarschuwing bij verkoop van alcoho
 1. Bereken de actuele leeftijd op basis van `x_date_of_birth` op het moment van scan.
 2. Controleer bij elk toe te voegen product of het de `x_age_restricted` vlag draagt.
 3. Is de klant jonger dan 18? Toon een blokkerende pop-up en vereist manuele bevestiging.
-4. Implementeer als custom POS JavaScript (uitzondering op architectuurrestrictie).
+4. Implementeer als custom POS JavaScript.
 
 **DEFINITION OF DONE:**
 

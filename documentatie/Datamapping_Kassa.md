@@ -4,7 +4,7 @@ Versie 2.5 — Conform XML_naamgeving standaard (snake_case) | Geintegreerd docu
 
 Integratieproject Desideriushogeschool 2026
 
-# 1\. Systeemlegenda
+## 1\. Systeemlegenda
 
 | |     | |     |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ Integratieproject Desideriushogeschool 2026
 | CRM | Salesforce — klantdata, facturatie-coördinatie, profielbeheer. | Elastic | Elastic Stack — monitoring, heartbeats, error alerts. |
 | Drupal | Frontend website — ontvangt betaalstatus en wallet-saldo updates. | FOSSBilling | Facturatiesysteem — aangestuurd door CRM, nooit rechtstreeks door Kassa. |
 
-# 2\. Berichtflow per Scenario
+## 2\. Berichtflow per Scenario
 
 Overzicht van alle berichten die verstuurd worden, met type-waarden conform snake_case standaard.
 
@@ -37,7 +37,7 @@ Overzicht van alle berichten die verstuurd worden, met type-waarden conform snak
 | Top-up via kassa (Flow 13) | wallet_balance_update | Kassa | Drupal | kassa.exchange → kassa.frontend.wallet | Klant koopt een Top-up product aan de kassa _(Saldo stijgt)_ |
 | Terugbetaling badge (Flow 15) | wallet_balance_update | Kassa | Drupal | kassa.exchange → kassa.frontend.wallet | Klant krijgt een refund uitbetaald op de badge_wallet _(Saldo stijgt)_ |
 
-# 3\. Master Datamapping Overzicht
+## 3\. Master Datamapping Overzicht
 
 Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatieregels.
 
@@ -129,8 +129,8 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Item | &lt;item&gt;&lt;quantity&gt; | Integer | Ja  | Positief geheel getal, min. 1 |
 | Item | &lt;item&gt;&lt;unit_price currency="eur"&gt; | Decimal | Ja  | Positief decimaal, excl. BTW. Attribuut currency altijd eur. |
 | Item | &lt;item&gt;&lt;total_amount currency="eur"&gt; | Decimal | Ja  | Totaalbedrag voor deze bestelregel (quantity × unit_price). Berekend door poller.py. Attribuut currency altijd eur. Toegevoegd in schema v2.2. |
-| Item | &lt;item&gt;&lt;vat_rate&gt; | Integer | Ja  | Enum: 0, 6, 12 of 21. Waarde 0 is toegestaan voor Top-up producten. Opgehaald via account.tax. |
-| Item | &lt;item&gt;&lt;item_type&gt; | String | Nee | Optioneel. Waarde wallet_topup voor Top-up producten. Automatisch gezet door poller als vat_rate=0. |
+| Item | &lt;item&gt;&lt;vat_rate&gt; | Integer | Ja  | Enum: 0, 6, 12 of 21. Waarde 0 voor Top-up producten. De poller identificeert Top-up producten op basis van de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — niet enkel op BTW-tarief. Voor deze producten wordt `vat_rate=0` altijd geforceerd in de XML-export door `poller.py`, ongeacht de BTW-instelling in Odoo. |
+| Item | &lt;item&gt;&lt;item_type&gt; | String | Nee | Optioneel. Waarde `wallet_topup` voor producten uit de categorie 'Top-ups' of met `x_is_topup=True`. De poller stelt dit in via `is_topup_product()` en forceert hierbij altijd `vat_rate=0` in de XML, ongeacht andere instellingen in Odoo. |
 
 | |
 | --- |
@@ -253,7 +253,7 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 | Body | &lt;original_transaction_id&gt; | String | Ja  | Odoo POS transactie-ID van de oorspronkelijke betaling |
 | Body | &lt;new_wallet_balance currency="eur"&gt; | Decimal | Cond. | Nieuw saldo na terugbetaling. Alleen aanwezig als method=badge_wallet. |
 
-# 4\. Conditionele Velden — Businessregels
+## 4\. Conditionele Velden — Businessregels
 
 | |     | |     |
 | --- | --- | --- | --- |
@@ -267,7 +267,7 @@ Het veld &lt;payment_context&gt; onderscheidt inschrijvingsbetalingen (registrat
 
 Conditionele logica (zoals vat_number verplicht als type=company) wordt afgedwongen in de Python receiver, niet door het basis-XSD.
 
-# 5\. Enum Waarden — Volledige Referentie
+## 5\. Enum Waarden — Volledige Referentie
 
 Gebruik uitsluitend de onderstaande waarden. Geen hoofdletters, geen spaties, geen Nederlandse varianten.
 
@@ -285,6 +285,6 @@ Gebruik uitsluitend de onderstaande waarden. Geen hoofdletters, geen spaties, ge
 | &lt;refund&gt;&lt;reason&gt; | duplicate_payment, customer_request, system_error | Gestandaardiseerde reden voor terugbetaling |
 | &lt;refund_type&gt; | consumption_item, partial | Scope van de terugbetaling |
 | &lt;payment_context&gt; | registration, consumption | Onderscheidt inschrijvings- van consumptiebetaling in payment_registered |
-| &lt;vat_rate&gt; | 0, 6, 12, 21 | 0 uitsluitend voor Top-up producten. Waarde opgehaald via account.tax in poller.py. |
+| &lt;vat_rate&gt; | 0, 6, 12, 21 | 0 voor Top-up producten. De poller identificeert deze producten via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product`, niet enkel op het BTW-tarief. `vat_rate=0` wordt altijd geforceerd in de XML-export voor deze producten door `poller.py`. BTW-percentage voor overige producten opgehaald via `account.tax`. |
 
 Team Kassa | Datamapping v2.5 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
