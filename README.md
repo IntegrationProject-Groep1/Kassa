@@ -1,6 +1,6 @@
-# Kassa Integratie — Odoo POS
+# POS Integration — Odoo POS
 
-> *Generiek herbruikbaar event-kassasysteem gebouwd op Odoo POS.*
+> *Generic reusable event Point of Sale system built on Odoo POS.*
 
 ![Odoo](https://img.shields.io/badge/Odoo_Point_Of_Sale-714B67?style=for-the-badge&logo=odoo&logoColor=white)
 ![Python](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
@@ -8,40 +8,40 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-> Officiële repository van Team Kassa voor het integratieproject Desideriushogeschool 2026.
-> Dit project beheert het Point of Sale (POS) systeem en handelt de asynchrone communicatie af met CRM (Salesforce), de Frontend (Drupal), het monitoringsysteem (Elastic) en de IoT-badgescanners via RabbitMQ.
+> Official repository of Team POS (Kassa) for the Integration Project Desideriushogeschool 2026.
+> This project manages the Point of Sale (POS) system and handles asynchronous communication with the CRM (Salesforce), Frontend (Drupal), Monitoring System (Elastic), and IoT Badge Scanners via RabbitMQ.
 
 ---
 
-## 📋 Inhoudsopgave
+## 📋 Table of Contents
 
-- [Systeemarchitectuur](#systeemarchitectuur)
-- [Berichtenflows & Routing](#berichtenflows--routing)
-- [Documentatie & Datamapping](#documentatie--datamapping)
-- [Lokale Ontwikkeling & Setup](#lokale-ontwikkeling--setup)
-- [Repository Structuur](#repository-structuur)
+- [System Architecture](#system-architecture)
+- [Message Flows & Routing](#message-flows--routing)
+- [Documentation & Data Mapping](#documentation--data-mapping)
+- [Local Development & Setup](#local-development--setup)
+- [Repository Structure](#repository-structure)
 - [CI/CD & Deployment](#cicd--deployment)
-- [Teamrollen](#teamrollen)
+- [Team Roles](#team-roles)
 
 ---
 
-## 🏗️ Systeemarchitectuur
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Inkomend
+    subgraph Incoming
         CRM[Salesforce CRM]
         IoT[IoT Badge Scanners]
     end
 
     RMQ{RabbitMQ\nkassa.exchange}
 
-    subgraph Team Kassa
-        PY[Python Kassa-Integratie\nsender · receiver · poller]
+    subgraph Team POS
+        PY[Python POS Integration\nsender · receiver · poller]
         ODOO[(Odoo POS\n+ PostgreSQL)]
     end
 
-    subgraph Uitgaand
+    subgraph Outgoing
         CRM2[Salesforce CRM]
         DRUPAL[Drupal Frontend]
         ELASTIC[Elastic Monitoring]
@@ -57,32 +57,32 @@ flowchart LR
     RMQ -- "kassa.errors" --> ELASTIC
 ```
 
-De Python kassa-integratie container communiceert met Odoo uitsluitend via de ingebouwde XML-RPC API. Asynchrone communicatie met externe systemen verloopt uitsluitend via gestructureerde XML-berichten over RabbitMQ.
+The Python POS Integration container communicates with Odoo exclusively via the built-in XML-RPC API. Asynchronous communication with external systems operates strictly through structured XML messages over RabbitMQ.
 
-**Kernprincipes:**
+**Core Principles:**
 
-- **Loosely Coupled:** Elk systeem kent andere systemen niet rechtstreeks — alles loopt via `kassa.exchange` (topic exchange).
-- **Offline-first buffering:** Bij uitval van RabbitMQ worden berichten lokaal opgeslagen in `outbox.json` (Docker named volume `outbox-data`) en automatisch hersturd bij reconnect via `flush_buffer()`. De kassa blijft verkopen ook zonder netwerkverbinding.
-- **Lokale Odoo-cache:** Bij uitval van het CRM werkt de kassa verder op lokaal gecachte klantprofielen in Odoo. Inkomende berichten worden pas verwerkt zodra de verbinding hersteld is.
-- **Foutafhandeling:** Ongeldige berichten worden niet geretried maar afgevangen als `system_error` naar `kassa.errors`. Het originele bericht wordt vervolgens met `basic_nack(requeue=false)` afgewezen zodat het veilig in de Dead Letter Queue (DLQ) belandt voor analyse.
-- **Heartbeats:** Worden afgehandeld door een aparte monitoring sidecar container — niet door de kassa-integratie zelf.
+- **Loosely Coupled:** Systems do not communicate directly with each other — everything flows through `kassa.exchange` (topic exchange).
+- **Offline-first buffering:** If RabbitMQ is down, messages are stored locally in `outbox.json` (Docker named volume `outbox-data`) and automatically retried upon reconnection via `flush_buffer()`. The POS continues selling even without network connectivity.
+- **Local Odoo Cache:** When the CRM is unreachable, the POS continues operating on locally cached customer profiles in Odoo. Incoming messages are processed once the connection is restored.
+- **Error Handling:** Invalid messages are not retried but caught as `system_error` and routed to `kassa.errors`. The original message is then rejected with `basic_nack(requeue=false)` to safely land in the Dead Letter Queue (DLQ) for analysis.
+- **Heartbeats:** Managed by a separate monitoring sidecar container — not by the POS integration itself.
 
 ---
 
-## 📨 Berichtenflows & Routing
+## 📨 Message Flows & Routing
 
-### Inkomend (`kassa.incoming`)
+### Incoming (`kassa.incoming`)
 
-| type | Van | Actie |
+| Type | From | Action |
 | :--- | :--- | :--- |
-| `new_registration` | CRM | Klantprofiel aanmaken of updaten in Odoo |
-| `profile_update` | CRM | Klantprofiel bijwerken in Odoo |
-| `cancel_registration` | CRM | Klantprofiel deactiveren in Odoo |
-| `badge_scanned` | IoT | Badge opzoeken, klantprofiel laden in POS |
+| `new_registration` | CRM | Create or update customer profile in Odoo |
+| `profile_update` | CRM | Update customer profile in Odoo |
+| `cancel_registration` | CRM | Deactivate customer profile in Odoo |
+| `badge_scanned` | IoT | Look up badge, load customer profile in POS |
 
-### Uitgaand (`kassa.exchange`)
+### Outgoing (`kassa.exchange`)
 
-| type | Routing key | Naar |
+| Type | Routing key | To |
 | :--- | :--- | :--- |
 | `consumption_order` | `kassa.payments.consumption` | Salesforce CRM |
 | `payment_registered` | `kassa.payments.consumption` / `kassa.payments.registration` | Salesforce CRM |
@@ -93,99 +93,101 @@ De Python kassa-integratie container communiceert met Odoo uitsluitend via de in
 | `wallet_balance_update` | `kassa.frontend.wallet` | Drupal |
 | `system_error` | `kassa.errors` | Elastic |
 
-> Het Controlroom-team kan passief meeluisteren op alle kassa-berichten via de wildcard binding `kassa.#`.
+> The Controlroom team can passively monitor all POS messages via the wildcard binding `kassa.#`.
 
 ---
 
-## 📚 Documentatie & Datamapping
+## 📚 Documentation & Data Mapping
 
-Onze volledige architectuur, dataflows en XML-standaarden zijn gedocumenteerd in de `documentatie/` map:
+Our complete architecture, data flows, and XML standards are documented in the `documentatie/` directory:
 
-| Bestand | Inhoud |
+| File | Contents |
 | :--- | :--- |
-| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Volledige architectuur, alle scripts met codevoorbeelden, Docker setup, CI/CD |
-| [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologieën, Python-bibliotheken, environment variables, architectuurrestricties |
-| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | Exacte XML-voorbeelden en XSD-schema's per flow |
-| [Datamapping_Kassa.md](documentatie/Datamapping_Kassa.md) | Veldmapping van Odoo naar XML per berichttype, enum-waarden |
-| [User_Stories_Kassa.md](documentatie/User_Stories_Kassa.md) | MVP-features, BDD-scenario's, acceptatiecriteria, Definition of Done |
-| [Vragen_Kassa.md](documentatie/Vragen_Kassa.md) | Beslissingslogboek — alle technische en functionele keuzes onderbouwd |
+| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all scripts with code examples, Docker setup, CI/CD |
+| [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologies, Python libraries, environment variables, architecture constraints |
+| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | Exact XML examples and XSD schemas per flow |
+| [Datamapping_Kassa.md](documentatie/Datamapping_Kassa.md) | Field mapping from Odoo to XML per message type, enum values |
+| [User_Stories_Kassa.md](documentatie/User_Stories_Kassa.md) | MVP features, BDD scenarios, acceptance criteria, Definition of Done |
+| [Vragen_Kassa.md](documentatie/Vragen_Kassa.md) | Decision log — all technical and functional choices explained |
+
+*(Note: The actual documentation files are currently written in Dutch).*
 
 ---
 
-## 💻 Lokale Ontwikkeling & Setup
+## 💻 Local Development & Setup
 
-### Vereisten
+### Requirements
 
 - Docker & Docker Compose
 - Git
 
-### Opstarten
+### Startup
 
-1. **Environment configureren:** Kopieer `.env.example` naar `.env` en vul de credentials in.
+1. **Configure Environment:** Copy `.env.example` to `.env` and fill in the credentials.
 
    ```bash
    cp .env.example .env
    ```
 
-2. **Stack starten:**
+2. **Start Stack:**
 
    ```bash
    docker-compose up -d
    ```
 
-3. **Connectietest:** Valideer de XML-RPC verbinding met Odoo:
+3. **Connection Test:** Validate the XML-RPC connection to Odoo:
 
    ```bash
    docker-compose exec kassa-integratie python tools/ping_odoo.py
    ```
 
-   *Verwachte output:* `✅ Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.`
+   *Expected output:* `✅ Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.` *(Authentication successful! Scripts can safely write data.)*
 
-### Handige commando's
+### Useful Commands
 
-| Commando | Wat doet het? |
+| Command | What it does |
 | :--- | :--- |
-| `docker-compose up -d` | Start alle containers op de achtergrond |
-| `docker-compose down` | Stop en verwijder alle containers |
-| `docker-compose logs -f kassa-integratie` | Live logs van de integratie-container |
-| `docker-compose logs -f odoo` | Live logs van Odoo |
-| `docker-compose exec kassa-integratie bash` | Open een shell in de integratie-container |
+| `docker-compose up -d` | Start all containers in the background |
+| `docker-compose down` | Stop and remove all containers |
+| `docker-compose logs -f kassa-integratie` | Live logs from the integration container |
+| `docker-compose logs -f odoo` | Live logs from Odoo |
+| `docker-compose exec kassa-integratie bash` | Open a shell in the integration container |
 
-### Scripts uitvoeren
+### Run Scripts
 
 ```bash
 docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 ```
 
-### ⚠️ Bekende valkuil — Odoo webassets 500 na herstart
+### ⚠️ Known Pitfall — Odoo webassets 500 after restart
 
-Als Odoo POS na een container-herstart een 500-fout geeft op `/web/assets/...`, voer dan uit:
+If Odoo POS throws a 500 error on `/web/assets/...` after a container restart, run:
 
 ```bash
 docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"
 docker-compose restart kassa-web
 ```
 
-Zie §3.2.1 van de Technische Gids voor de volledige uitleg.
+See §3.2.1 of the Technical Guide for a comprehensive explanation.
 
 ---
 
-## 📁 Repository Structuur
+## 📁 Repository Structure
 
 ```text
 📦 Kassa-dev
- ┣ 📂 documentatie/          # Architectuur, mapping en flow documentatie
- ┣ 📂 integratie/            # Python integratiescripts
- ┃ ┣ 📂 schemas/             # XSD validatiebestanden
+ ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
+ ┣ 📂 integratie/            # Python integration scripts
+ ┃ ┣ 📂 schemas/             # XSD validation files
  ┃ ┣ 📂 tests/               # Pytest files
- ┃ ┣ 📂 tools/               # Ping- en diagnosescripts
- ┃ ┣ 📜 main.py              # Opstartbestand — start receiver + poller
- ┃ ┣ 📜 receiver.py          # Verwerkt inkomende RabbitMQ-berichten
- ┃ ┣ 📜 sender.py            # Bouwt en verstuurt uitgaande XML-berichten
- ┃ ┗ 📜 poller.py            # Pollt Odoo op nieuwe POS-orders, triggert flows
- ┣ 📂 outbox/                # Gemount als Docker volume — outbox.json buffer
- ┣ 📜 .env.example           # Voorbeeld environment variabelen
- ┣ 📜 docker-compose.yml     # Odoo + PostgreSQL + kassa-integratie stack
+ ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
+ ┃ ┣ 📜 main.py              # Entrypoint — starts receiver + poller
+ ┃ ┣ 📜 receiver.py          # Processes incoming RabbitMQ messages
+ ┃ ┣ 📜 sender.py            # Builds and dispatches outgoing XML messages
+ ┃ ┗ 📜 poller.py            # Polls Odoo for new POS orders, triggers flows
+ ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
+ ┣ 📜 .env.example           # Example environment variables
+ ┣ 📜 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
  ┗ 📜 README.md
 ```
 
@@ -193,29 +195,29 @@ Zie §3.2.1 van de Technische Gids voor de volledige uitleg.
 
 ## 🔄 CI/CD & Deployment
 
-De GitHub Actions pipeline draait automatisch bij een push naar `dev` of `prod`:
+The GitHub Actions pipeline is triggered automatically upon a push to `dev` or `prod`:
 
-| Stap | Trigger | Actie |
+| Step | Trigger | Action |
 | :--- | :--- | :--- |
-| **Tests** | push naar `dev` of `prod` | `pytest tests/ -v` |
-| **Deploy** | push naar `prod` | SSH deploy naar server via `docker-compose up -d --build` |
+| **Tests** | push to `dev` or `prod` | `pytest tests/ -v` |
+| **Deploy** | push to `prod` | SSH deploy to server via `docker-compose up -d --build` |
 
-### Branch strategie
+### Branch Strategy
 
-| Branch | Waarvoor? |
+| Branch | Purpose |
 | :--- | :--- |
-| `main` | Stabiele, goedgekeurde code |
-| `prod` | Productiecode — deploy trigger |
-| `dev` | Actieve ontwikkeling |
-| `feature/...` | Nieuwe functies |
-| `fix/...` | Bugfixes |
+| `main` | Stable, approved code |
+| `prod` | Production code — triggers deployment |
+| `dev` | Active development |
+| `feature/...` | New features |
+| `fix/...` | Bug fixes |
 
 ---
 
 ## 👥 Team
 
-| Rol | Naam |
+| Role | Name |
 | :--- | :--- |
-| **Team Lead** | [naam] |
-| **Developer** | [naam] |
-| **Developer** | [naam] |
+| **Team Lead** | [name] |
+| **Developer** | [name] |
+| **Developer** | [name] |
