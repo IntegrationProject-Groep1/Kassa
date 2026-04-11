@@ -105,7 +105,7 @@ BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
 
-def _buffer_message(routing_key: str, message_xml: str) -> None:
+def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
@@ -114,8 +114,14 @@ def _buffer_message(routing_key: str, message_xml: str) -> None:
     memory usage at the cost of losing the oldest un-sendable message once the
     buffer is full — acceptable because a full buffer means the broker has been
     down for an extended period.
+
+    order_id, when provided, is stored in the entry so that flush_buffer() can
+    return the Odoo order IDs of successfully flushed messages and the poller
+    can then write x_rabbitmq_sent=True for those orders.
     """
     entry = {"routing_key": routing_key, "xml": message_xml}
+    if order_id is not None:
+        entry["order_id"] = order_id
     entries = _read_buffer()
 
     if len(entries) >= BUFFER_MAX_MESSAGES:
@@ -145,7 +151,7 @@ def _read_buffer() -> list:
         return []
 
 
-def flush_buffer() -> None:
+def flush_buffer() -> list:
     """
     Replay buffered messages in order, stopping at the first send failure.
 
@@ -154,10 +160,13 @@ def flush_buffer() -> None:
     so the next call can try again. Stopping on the first error preserves
     message order — partial replays could deliver later messages before earlier
     ones if we skipped failures and continued.
+
+    Returns a list of Odoo order IDs for entries that were successfully flushed,
+    so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
     """
     entries = _read_buffer()
     if not entries:
-        return
+        return []
 
     logger.info(f"🔄 Flushing {len(entries)} buffered messages...")
     succeeded = []
@@ -185,6 +194,8 @@ def flush_buffer() -> None:
     if succeeded:
         logger.info(
             f"✅ Successfully flushed {len(succeeded)} buffered messages")
+
+    return [e["order_id"] for e in succeeded if "order_id" in e]
 
 
 _connection = None
@@ -277,7 +288,7 @@ def setup_exchange(channel):
             )
 
 
-def send_message(routing_key: str, message_xml: str) -> bool:
+def send_message(routing_key: str, message_xml: str, order_id: int | None = None) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
@@ -286,6 +297,9 @@ def send_message(routing_key: str, message_xml: str) -> bool:
     globals are reset to None so the next call opens a fresh connection rather
     than retrying a broken one.
     Returns True if successfully sent, False if buffered.
+
+    order_id is stored in the buffer entry when provided, so that
+    flush_buffer() can report which Odoo orders were successfully flushed.
     """
     try:
         _publish_or_raise(routing_key, message_xml)
@@ -295,7 +309,7 @@ def send_message(routing_key: str, message_xml: str) -> bool:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml)
+        _buffer_message(routing_key, message_xml, order_id=order_id)
         return False
 
 
@@ -330,7 +344,7 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str) -> bool:
+def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
@@ -338,7 +352,12 @@ def send_typed_message(msg_type: str, message_xml: str) -> bool:
         logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml)
+    return send_message(routing_key, message_xml, order_id=order_id)
+
+
+def get_buffered_order_ids() -> set:
+    """Return the set of Odoo order IDs currently waiting in the outbox buffer."""
+    return {e["order_id"] for e in _read_buffer() if "order_id" in e}
 
 
 def now_utc() -> str:
