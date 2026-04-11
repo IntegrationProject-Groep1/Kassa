@@ -576,13 +576,13 @@ def start_listening():
     if flushed_ids:
         try:
             uid, models = get_odoo_connection()
-            for order_id in set(flushed_ids):
-                models.execute_kw(
-                    ODOO_DB, uid, ODOO_PASS,
-                    'pos.order', 'write',
-                    [[order_id], {'x_rabbitmq_sent': True}]
-                )
-            print(f"[RECEIVER] ✓ Marked {len(set(flushed_ids))} buffered orders as sent after flush")
+            unique_ids = list(set(flushed_ids))
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            print(f"[RECEIVER] ✓ Marked {len(unique_ids)} buffered orders as sent after flush")
         except Exception as e:
             print(f"[RECEIVER] ⚠️  Could not mark flushed orders as sent: {e}")
 

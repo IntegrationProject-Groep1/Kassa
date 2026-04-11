@@ -488,16 +488,18 @@ class OrderPoller:
     def _mark_orders_sent(self, order_ids: list) -> None:
         """Write x_rabbitmq_sent=True in Odoo for orders that were just successfully
         flushed from the outbox buffer."""
-        for order_id in set(order_ids):
-            try:
-                self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'pos.order', 'write',
-                    [[order_id], {'x_rabbitmq_sent': True}]
-                )
-                logger.info(f"✅ Order {order_id} marked as sent after buffer flush")
-            except Exception as e:
-                logger.warning(f"⚠️  Could not mark order {order_id} as sent after flush: {e}")
+        unique_ids = list(set(order_ids))
+        if not unique_ids:
+            return
+        try:
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            logger.info(f"✅ Marked {len(unique_ids)} orders as sent after buffer flush")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not mark orders as sent after flush: {e}")
 
 
 def main():
