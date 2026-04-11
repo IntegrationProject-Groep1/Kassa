@@ -485,7 +485,6 @@ class OrderPoller:
                 logger.error(f"Unexpected error in main loop: {e}")
                 time.sleep(interval)
 
-
     def _mark_orders_sent(self, order_ids: list) -> None:
         """Write x_rabbitmq_sent=True in Odoo for orders that were just successfully
         flushed from the outbox buffer."""
