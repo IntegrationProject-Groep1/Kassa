@@ -180,6 +180,8 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | res.partner | x_badge_id | Char | Badge ID — aangemaakt bij Flow 12 (badge_assigned) |
 | res.partner | x_wallet_balance | Float | Badge saldo in EUR — Single Source of Truth |
 | res.partner | x_date_of_birth | Date | Geboortedatum bezoeker — voor alcoholcontrole (leeftijd berekend in code) |
+| res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<payment_due><amount>` in `new_registration` / `profile_update`. Gereset naar 0 door `order_poller.py` na succesvolle betaling via Inschrijvingskassa (Story 21). |
+| res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<payment_due><status>` (`unpaid` of `paid`). Gezet op `paid` door `order_poller.py` na succesvolle betaling (Story 21). |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
 | product.product | x_is_topup | Boolean | Markeert een product als Top-up — primair identificatiekenmerk voor `poller.py`. Alternatief voor categorie-check. Aanmaken via Odoo > Instellingen > Technisch > Velden op model `product.product`. |
 
@@ -193,6 +195,22 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | Badge Wallet | Odoo > Point of Sale > Configuratie > Betaalmethoden | Badge-saldo betaling — naam moet overeenkomen met BADGE_PAYMENT_METHOD_NAME in poller.py |
 
 De betaalmethode 'Badge Wallet' is uitsluitend intern in Odoo. In de externe XML (payment_registered) wordt altijd 'on_site' verstuurd — dit is conform de PM-standaard.
+
+## **3.5 Odoo Addon: kassa_pos_custom**
+
+De `kassa_pos_custom` addon breidt de standaard Odoo POS-interface uit via OWL-componenten (het JavaScript UI-framework van Odoo 17). Deze addon is vereist voor Stories 9, 17, 19 en 21.
+
+**Afhankelijkheid Story 21 — real-time cache update:**
+
+Na het verwerken van een `new_registration` of `profile_update` publiceert `receiver.py` een `bus.bus` event via Odoo XML-RPC. Een OWL-component in `kassa_pos_custom` luistert op dit event. Bij ontvangst haalt de component via één gerichte RPC-aanroep enkel die ene partner op en voegt hem toe aan (of update hem in) de lokale POS model store — **zonder volledige partnerlijst te herladen en zonder lopende transacties te onderbreken**.
+
+Dit mechanisme is dezelfde `bus.bus` infrastructuur als Story 9 (badge wallet saldo update in de POS UI).
+
+**Vereiste configuratie:**
+
+- `kassa_pos_custom` addon geïnstalleerd en geactiveerd in Odoo
+- `bus.bus` polling actief in de POS-sessie (standaard ingeschakeld in Odoo 17 POS)
+- Custom velden `x_outstanding_amount` en `x_payment_status` aangemaakt op `res.partner` (zie §3.4)
 
 ## **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
 

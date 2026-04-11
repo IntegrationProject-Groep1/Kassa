@@ -59,8 +59,8 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Customer | &lt;customer&gt;&lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;date_of_birth&gt; | Date (xs:date) | Ja  | Geboortedatum (YYYY-MM-DD). Gebruikt voor leeftijdsberekening bij alcoholcontrole. Vervangt age. |
-| Betaling | &lt;payment_due&gt;&lt;amount&gt; | Decimal | Ja  | Te betalen inschrijvingsbedrag |
-| Betaling | &lt;payment_due&gt;&lt;status&gt; | Enum | Ja  | unpaid of paid |
+| Betaling | &lt;payment_due&gt;&lt;amount&gt; | Decimal | Ja  | Te betalen inschrijvingsbedrag. Opgeslagen in Odoo als `res.partner.x_outstanding_amount`. |
+| Betaling | &lt;payment_due&gt;&lt;status&gt; | Enum | Ja  | Status inschrijvingsbetaling: `unpaid` of `paid`. Opgeslagen in Odoo als `res.partner.x_payment_status`. |
 
 | |     | |     | |
 | --- | --- | --- | --- | --- |
