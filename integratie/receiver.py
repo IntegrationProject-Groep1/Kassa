@@ -569,7 +569,22 @@ def start_listening():
 
     channel.basic_qos(prefetch_count=1)
 
-    flush_buffer()  # re-publish buffered outbox messages after successful connect
+    # Re-publish buffered outbox messages after successful (re)connect.
+    # flush_buffer() returns the Odoo order IDs of successfully flushed messages;
+    # mark those orders as sent so the poller does not re-process them.
+    flushed_ids = flush_buffer()
+    if flushed_ids:
+        try:
+            uid, models = get_odoo_connection()
+            unique_ids = list(set(flushed_ids))
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            print(f"[RECEIVER] ✓ Marked {len(unique_ids)} buffered orders as sent after flush")
+        except Exception as e:
+            print(f"[RECEIVER] ⚠️  Could not mark flushed orders as sent: {e}")
 
     channel.basic_consume(
         queue=QUEUE_NAME,
