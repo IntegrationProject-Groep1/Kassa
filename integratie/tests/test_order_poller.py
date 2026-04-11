@@ -151,6 +151,39 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     assert {'x_rabbitmq_sent': True} in payload
 
 
+@patch('order_poller.sender')
+def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, poller):
+    """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
+    order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
+
+    with patch.object(poller, '_process_consumption', return_value=False):
+        poller.models.execute_kw.return_value = True
+        poller.process_order(order)
+
+    # Verify x_rabbitmq_sent was NOT written
+    all_calls = poller.models.execute_kw.call_args_list
+    write_calls = [c for c in all_calls if len(c[0]) > 4
+                   and c[0][3] == 'pos.order' and c[0][4] == 'write']
+    assert len(write_calls) == 0
+
+
+def test_mark_orders_sent_writes_bulk_to_odoo(poller):
+    """_mark_orders_sent executes a bulk write using a list of unique IDs."""
+    order_ids = [11, 22, 11, 33]  # includes a duplicate
+    
+    poller._mark_orders_sent(order_ids)
+    
+    # Verify bulk write was called exactly once with unique IDs [11, 22, 33]
+    poller.models.execute_kw.assert_called_once()
+    call_args = poller.models.execute_kw.call_args[0]
+    assert call_args[3] == 'pos.order'
+    assert call_args[4] == 'write'
+    
+    payload = call_args[5]
+    assert set(payload[0]) == {11, 22, 33}
+    assert payload[1] == {'x_rabbitmq_sent': True}
+
+
 # ---------------------------------------------------------------------------
 # _process_refund
 # ---------------------------------------------------------------------------
