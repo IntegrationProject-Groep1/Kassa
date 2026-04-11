@@ -884,3 +884,62 @@ _Als IT-beheerder wil ik dat verbindingsfouten met Odoo direct als foutmelding n
 - [ ] Script pauzeert exact 1 seconde tussen retries
 - [ ] Retry-limiet is actief (bijvoorbeeld max 3 pogingen per bericht)
 - [ ] Overschrijden retry-limiet resulteert in `basic_nack(requeue=false)` naar de DLQ
+
+## **EPIC 6: INSCHRIJVINGSKASSA FLOWS**
+
+## **Story 21: Nieuwe inschrijving direct zichtbaar en afrekenbaar in de kassa**
+
+> _MVP status: MVP_
+
+_Als kassamedewerker wil ik dat een bezoeker die zich via het tweede scherm aan de balie inschrijft direct zichtbaar is in de kassa met het juiste openstaande bedrag, zodat ik direct kan afrekenen zonder de kassasessie te herstarten of het bedrag handmatig in te typen._
+
+**ACCEPTATIECRITERIA:**
+
+- Zodra `receiver.py` een `new_registration` bericht verwerkt, slaat het naast de profielgegevens ook het openstaande bedrag (`payment_due.amount`) en de betaalstatus (`payment_due.status`) op als custom velden op het `res.partner` record in Odoo.
+- De actieve POS-sessie op de Inschrijvingskassa ontvangt automatisch een cache-update voor deze ene partner — zonder sessie-herstart en zonder lopende transacties te onderbreken.
+- Wanneer de medewerker de klant opzoekt en selecteert, toont de POS het openstaande bedrag duidelijk en wordt automatisch een generiek "Inschrijving" product aan het winkelmandje toegevoegd met het juiste openstaande bedrag als prijs.
+- Hetzelfde geldt bij een `profile_update` die het bedrag of de status wijzigt.
+- Zodra de inschrijving in de kassa is afgerekend, wordt het openstaande bedrag van de klant automatisch gereset naar €0,00 zodat dit bij een volgend bar-bezoek niet meer in beeld staat.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat een kassasessie actief is op de Inschrijvingskassa
+
+**En** een bezoeker registreert zich via het tweede scherm aan de balie (website)
+
+**Wanneer** `receiver.py` het `new_registration` bericht verwerkt
+
+**Dan** wordt `x_outstanding_amount` en `x_payment_status` opgeslagen op het `res.partner` record in Odoo
+
+**En** ontvangt de actieve POS-sessie een granulair cache-event voor enkel deze partner via de Odoo bus
+
+**En** is de klant binnen enkele seconden vindbaar in de POS-zoekfunctie
+
+**En** ziet de medewerker het openstaande bedrag bij het selecteren van de klant
+
+**Gegeven** dat een lopende betaling of transactie actief is in de POS op het moment van de cache-update
+
+**Wanneer** het bus-event binnenkomt
+
+**Dan** wordt de actieve transactie niet onderbroken — de update gebeurt op de achtergrond
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. Voeg twee custom velden toe aan `res.partner` in `main.py` via `ensure_custom_fields()`: `x_outstanding_amount` (float, "Openstaand bedrag") en `x_payment_status` (char, "Betaalstatus"). Deze worden aangemaakt bij opstarten van het integratiescript.
+2. Sla in `process_new_registration()` in `receiver.py` na de partner-aanmaak of -update ook `x_outstanding_amount` en `x_payment_status` op in Odoo. Doe hetzelfde in `process_profile_update()` als het bericht een `payment_due`-element bevat.
+3. Publiceer na de succesvolle write een `bus.bus` event via Odoo XML-RPC met het `partner_id` en de gewijzigde velden (naam, `x_outstanding_amount`, `x_payment_status`). Gebruik hetzelfde bus-mechanisme als Story 9.
+4. Implementeer in `kassa_pos_custom` een OWL-component dat luistert op dit bus-event. Bij ontvangst: haal via één gerichte RPC-aanroep enkel die ene partner op uit Odoo en voeg hem toe aan (of update hem in) de lokale POS model store — **geen volledige partnerlijst herladen**. Dit is niet-blokkerend: lopende transacties worden niet aangeraakt.
+5. Toon `x_outstanding_amount` en `x_payment_status` zichtbaar in de POS wanneer de medewerker de klant selecteert. Voeg daarnaast automatisch een generiek "Inschrijving" product toe aan de orderregel met het openstaande bedrag als prijs — zodat de medewerker niets handmatig hoeft in te typen. Dit product moet vooraf aangemaakt zijn in de Inschrijvingskassa (één generiek product, geen product per sessie).
+6. Zodra de betaling succesvol verwerkt is in de Inschrijvingskassa, zet `order_poller.py` het `x_outstanding_amount` van de klant op `0` en `x_payment_status` op `paid` in Odoo — zodat bij een volgende kassa-interactie (bv. een consumptie aan de bar) geen openstaand bedrag meer getoond wordt.
+
+**DEFINITION OF DONE:**
+
+- [ ] `x_outstanding_amount` (float) en `x_payment_status` (char) aangemaakt als custom velden op `res.partner` via `main.py`
+- [ ] `receiver.py` slaat `payment_due.amount` en `payment_due.status` op in deze velden na elke `new_registration` en relevante `profile_update`
+- [ ] `receiver.py` publiceert een `bus.bus` event na succesvolle write met `partner_id` en gewijzigde velden
+- [ ] OWL-component in `kassa_pos_custom` ontvangt het event en voegt **enkel de betrokken partner** granulair toe aan de lokale POS cache — geen volledige herlaad, geen transactie-onderbreking
+- [ ] Openstaand bedrag en betaalstatus zichtbaar in POS bij selectie van de klant
+- [ ] Bij selectie van klant met `x_outstanding_amount > 0`: OWL-component voegt automatisch een generiek "Inschrijving" product toe aan de orderregel met het openstaande bedrag als prijs
+- [ ] Na succesvolle betaling via Inschrijvingskassa: `order_poller.py` zet `x_outstanding_amount = 0` en `x_payment_status = paid` op het `res.partner` record in Odoo
+- [ ] Werkt ook bij `profile_update` met gewijzigd bedrag of status
+- [ ] Vereist `kassa_pos_custom` addon (gedeeld met Story 9, 17 en 19)
