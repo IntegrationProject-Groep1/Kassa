@@ -171,7 +171,7 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
     poller._process_refund(order, 10, None)
 
     mock_sender.send_typed_message.assert_called_once_with(
-        'refund_processed', mock_sender.build_refund_processed_xml.return_value
+        'refund_processed', mock_sender.build_refund_processed_xml.return_value, order_id=10
     )
     # Wallet write should NOT have been called
     write_calls = [c for c in poller.models.execute_kw.call_args_list
@@ -287,7 +287,7 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
     poller._process_consumption(order, None, is_anonymous=True)
 
     mock_sender.send_typed_message.assert_any_call(
-        'consumption_order', mock_sender.build_consumption_order_xml.return_value
+        'consumption_order', mock_sender.build_consumption_order_xml.return_value, order_id=20
     )
 
 
