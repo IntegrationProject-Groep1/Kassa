@@ -170,15 +170,15 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
 def test_mark_orders_sent_writes_bulk_to_odoo(poller):
     """_mark_orders_sent executes a bulk write using a list of unique IDs."""
     order_ids = [11, 22, 11, 33]  # includes a duplicate
-    
+
     poller._mark_orders_sent(order_ids)
-    
+
     # Verify bulk write was called exactly once with unique IDs [11, 22, 33]
     poller.models.execute_kw.assert_called_once()
     call_args = poller.models.execute_kw.call_args[0]
     assert call_args[3] == 'pos.order'
     assert call_args[4] == 'write'
-    
+
     payload = call_args[5]
     assert set(payload[0]) == {11, 22, 33}
     assert payload[1] == {'x_rabbitmq_sent': True}
