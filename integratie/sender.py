@@ -119,7 +119,7 @@ def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = N
     return the Odoo order IDs of successfully flushed messages and the poller
     can then write x_rabbitmq_sent=True for those orders.
     """
-    entry = {"routing_key": routing_key, "xml": message_xml}
+    entry: dict[str, str | int] = {"routing_key": routing_key, "xml": message_xml}
     if order_id is not None:
         entry["order_id"] = order_id
     entries = _read_buffer()
