@@ -301,6 +301,7 @@ def test_process_refund_tracing_fallback_on_error(mock_sender, poller):
 # _process_consumption
 # ---------------------------------------------------------------------------
 
+
 @patch('order_poller.sender')
 def test_process_consumption_sends_consumption_order(mock_sender, poller):
     """Regular order sends a consumption_order message."""
@@ -345,8 +346,11 @@ def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
 
     poller._process_consumption(order, None, is_anonymous=True)
     all_calls = poller.models.execute_kw.call_args_list
-    tax_calls = [c for c in all_calls 
+    tax_calls = [c for c in all_calls
                  if len(c[0]) > 3 and c[0][3] == 'account.tax']
+    assert len(tax_calls) == 1
+
+
 @patch('order_poller.sender')
 def test_process_consumption_company_customer_type(mock_sender, poller):
     """A customer linked to a parent company has customer_type 'company'."""
@@ -382,6 +386,6 @@ def test_process_consumption_private_customer_type(mock_sender, poller):
         '<message><header><message_id>12345</message_id></header></message>'
     )
     poller._process_consumption(order, customer_info, is_anonymous=False)
-    
+
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
     assert call_kwargs['customer_type'] == 'private'

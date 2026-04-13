@@ -600,7 +600,7 @@ def build_refund_processed_xml(
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
-    
+
     if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
 

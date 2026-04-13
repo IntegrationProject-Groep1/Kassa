@@ -341,7 +341,7 @@ class OrderPoller:
                         if orig_line_data and orig_line_data[0].get('order_id'):
                             orig_order = orig_line_data[0]['order_id']
                             orig_order_id = orig_order[0] if isinstance(orig_order, (list, tuple)) else orig_order
-                            
+
                             # Fetch x_payment_message_id from the original order
                             orig_order_full = self.models.execute_kw(
                                 self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -351,7 +351,9 @@ class OrderPoller:
                             if orig_order_full and orig_order_full[0].get('x_payment_message_id'):
                                 original_msg_id = orig_order_full[0]['x_payment_message_id']
                             else:
-                                logger.warning(f"⚠️ Original order {orig_order_id} has no x_payment_message_id! Fallback to UUID.")
+                                logger.warning(
+                                    f"⚠️ Original order {orig_order_id} has no x_payment_message_id! Fallback to UUID."
+                                )
                                 import uuid
                                 original_msg_id = str(uuid.uuid4())
                             break
@@ -382,7 +384,7 @@ class OrderPoller:
         ok_refund = sender.send_typed_message('refund_processed', refund_xml, order_id=order_id)
         return ok_wallet and ok_refund
 
-    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str|None]:
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle regular sales orders and dispatch consumption_order.
         Returns a tuple: (all_sent_boolean, payment_message_id_string)."""
         items = []
