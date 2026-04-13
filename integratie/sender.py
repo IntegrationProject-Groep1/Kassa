@@ -320,6 +320,7 @@ _OUTGOING_SCHEMA_MAP = {
     "consumption_order": _SCHEMA_DIR / "schema_consumption_order_v2.3.xsd",
     "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
+    "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -573,7 +574,8 @@ def build_refund_processed_xml(
     refund_type: str, refund_amount: float,
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
-    user_id=None, description=None, new_wallet_balance=None
+    user_id=None, description=None, new_wallet_balance=None,
+    is_anonymous=False
 ) -> str:
     """
     Build a refund_processed message confirming a refund was issued.
@@ -597,10 +599,12 @@ def build_refund_processed_xml(
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "refund_type").text = refund_type
-
-    if user_id:
+    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
+    
+    if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
+
+    ET.SubElement(body, "refund_type").text = refund_type
 
     refund = ET.SubElement(body, "refund")
     amt = ET.SubElement(refund, "amount")

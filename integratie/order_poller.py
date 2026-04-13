@@ -140,13 +140,13 @@ class OrderPoller:
                 'amount_tax', 'payment_ids', 'create_date', 'session_id'
             ]
             try:
-                # Try reading with x_wallet_updated
+                # Try reading with x_wallet_updated and x_payment_message_id
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
-                    [order_ids, fields + ['x_wallet_updated']])
+                    [order_ids, fields + ['x_wallet_updated', 'x_payment_message_id']])
             except xmlrpc.client.Fault:
-                # Fallback if x_wallet_updated does not exist
+                # Fallback if fields do not exist
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
@@ -225,15 +225,27 @@ class OrderPoller:
                 is_anonymous = True
 
             if order.get('amount_total', 0) < 0:
-                all_sent = self._process_refund(order, order_id, customer_info)
+                all_sent = self._process_refund(order, order_id, customer_info, is_anonymous)
+                payment_msg_id = None
             else:
-                all_sent = self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
             self.processed_orders[order_id] = True
             if len(self.processed_orders) > MAX_CACHE_SIZE:
                 self.processed_orders.popitem(last=False)
+
+            # Mark payment msg id in odoo if generated
+            if payment_msg_id:
+                try:
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'write',
+                        [[order_id], {'x_payment_message_id': payment_msg_id}]
+                    )
+                except xmlrpc.client.Fault as e:
+                    logger.warning(f"⚠️ Could not set x_payment_message_id on order: {e}")
 
             if all_sent:
                 # All messages reached RabbitMQ — safe to mark as sent in Odoo.
@@ -256,7 +268,7 @@ class OrderPoller:
             logger.error(f"❌ Error processing order {order_id}: {e}")
             return False
 
-    def _process_refund(self, order, order_id, customer_info) -> bool:
+    def _process_refund(self, order, order_id, customer_info, is_anonymous) -> bool:
         """Handle refund logic and wallet updates. Returns True if all messages were sent
         (not buffered), False if any message ended up in the outbox buffer."""
         # 1. Determine the payment method in Odoo via payment_ids
@@ -306,7 +318,8 @@ class OrderPoller:
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
         # 3. Always send refund_processed XML
-        original_msg_id = "Unknown"
+        import uuid
+        original_msg_id = str(uuid.uuid4())
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order.get('lines', [])]
 
         if line_ids:
@@ -328,15 +341,34 @@ class OrderPoller:
                         if orig_line_data and orig_line_data[0].get('order_id'):
                             orig_order = orig_line_data[0]['order_id']
                             orig_order_id = orig_order[0] if isinstance(orig_order, (list, tuple)) else orig_order
-                            # TODO: Replace ORDER-{id} with Master UUID once available project-wide.
-                            # The correlation_id spec (Datamapping_Kassa.md §246) expects a UUID v4.
-                            # For now we use the Odoo order ID as a stable, human-readable reference.
-                            original_msg_id = f"ORDER-{orig_order_id}"
+                            
+                            # Fetch x_payment_message_id from the original order
+                            orig_order_full = self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'read',
+                                [[orig_order_id], ['x_payment_message_id']]
+                            )
+                            if orig_order_full and orig_order_full[0].get('x_payment_message_id'):
+                                original_msg_id = orig_order_full[0]['x_payment_message_id']
+                            else:
+                                logger.warning(f"⚠️ Original order {orig_order_id} has no x_payment_message_id! Fallback to UUID.")
+                                import uuid
+                                original_msg_id = str(uuid.uuid4())
                             break
             except Exception as e:
                 logger.warning(f"⚠️ Could not fetch original order ID for refund: {e}")
 
         logger.info(f"🔍 Refund order {order['id']} traced to: {original_msg_id}")
+
+        if is_anonymous:
+            # Enforce non-badge_wallet constraints for anonymous users
+            user_id_val = None
+            if is_badge_wallet or refund_method == XML_REFUND_METHOD_WALLET:
+                refund_method = "cash"
+                is_badge_wallet = False
+        else:
+            user_id_val = customer_info.get('x_user_id')
+
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
             refund_type="POS_RETURN",
@@ -344,14 +376,15 @@ class OrderPoller:
             refund_method=refund_method,
             refund_reason=DEFAULT_REFUND_REASON,
             original_transaction_id=str(order['id']),
-            user_id=customer_info.get('x_user_id') if customer_info else None
+            user_id=user_id_val,
+            is_anonymous=is_anonymous
         )
         ok_refund = sender.send_typed_message('refund_processed', refund_xml, order_id=order_id)
         return ok_wallet and ok_refund
 
-    def _process_consumption(self, order, customer_info, is_anonymous) -> bool:
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str|None]:
         """Handle regular sales orders and dispatch consumption_order.
-        Returns True if all messages were sent (not buffered), False if any was buffered."""
+        Returns a tuple: (all_sent_boolean, payment_message_id_string)."""
         items = []
         # Extract all line IDs
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order['lines']]
@@ -446,7 +479,8 @@ class OrderPoller:
             correlation_id=correlation_id
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, order_id=order_id)
-        return ok_consumption and ok_payment
+        payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
+        return (ok_consumption and ok_payment), payment_msg_id
 
     def poll(self, interval=5):
         """
