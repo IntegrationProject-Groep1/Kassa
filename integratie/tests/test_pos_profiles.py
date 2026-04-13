@@ -203,7 +203,7 @@ def test_inschrijvingskassa_creates_cash_inschrijving_when_absent(patched_proxy)
     assert len(pm_create_calls) == 1
     vals = pm_create_calls[0][0][5][0]
     assert vals["name"] == "Cash (Inschrijving)"
-    assert vals["is_cash_count"] is True
+    assert vals["is_cash_count"] is False
 
 
 def test_inschrijvingskassa_does_not_recreate_cash_inschrijving_when_present(patched_proxy):

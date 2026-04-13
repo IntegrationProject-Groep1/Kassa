@@ -5,9 +5,9 @@
 #   - "Bar Kassa"          → Cash, Bancontact, Badge Wallet
 #   - "Inschrijvingskassa" → Cash (Inschrijving), Bancontact
 #
-# Odoo does not allow the same cash payment method (is_cash_count=True) to be
-# shared across multiple POS configs.  Inschrijvingskassa therefore uses its
-# own dedicated cash method "Cash (Inschrijving)" which is created on demand.
+# Odoo does not allow a cash payment method (is_cash_count=True) to be used in
+# more than one POS config.  "Cash (Inschrijving)" is therefore created with
+# is_cash_count=False — cash counting is not required for a registration desk.
 
 import xmlrpc.client
 
@@ -29,7 +29,7 @@ _PROFILES = [
     {
         "name": "Inschrijvingskassa",
         "payment_methods": [
-            {"name": "Cash (Inschrijving)", "create_if_missing": {"is_cash_count": True}},
+            {"name": "Cash (Inschrijving)", "create_if_missing": {"is_cash_count": False}},
             {"name": "Bancontact"},
         ],
     },
