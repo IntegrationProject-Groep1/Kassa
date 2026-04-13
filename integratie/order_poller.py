@@ -37,6 +37,7 @@ import logging
 from pathlib import Path
 import collections
 import xml.etree.ElementTree as ET
+import uuid
 import sender  # Import the sender module
 
 # Logging setup
@@ -318,7 +319,6 @@ class OrderPoller:
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
         # 3. Always send refund_processed XML
-        import uuid
         original_msg_id = str(uuid.uuid4())
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order.get('lines', [])]
 
@@ -354,8 +354,6 @@ class OrderPoller:
                                 logger.warning(
                                     f"⚠️ Original order {orig_order_id} has no x_payment_message_id! Fallback to UUID."
                                 )
-                                import uuid
-                                original_msg_id = str(uuid.uuid4())
                             break
             except Exception as e:
                 logger.warning(f"⚠️ Could not fetch original order ID for refund: {e}")
@@ -373,7 +371,7 @@ class OrderPoller:
 
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
-            refund_type="POS_RETURN",
+            refund_type="consumption_item",
             refund_amount=abs(order['amount_total']),
             refund_method=refund_method,
             refund_reason=DEFAULT_REFUND_REASON,
