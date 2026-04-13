@@ -60,6 +60,7 @@ FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
     "pos.order": {
         "x_rabbitmq_sent": {"ttype": "boolean", "string": "Sent to RabbitMQ"},
         "x_wallet_updated": {"ttype": "boolean", "string": "Wallet Refund Processed"},
+        "x_payment_message_id": {"ttype": "char", "string": "Payment Registration Message ID"},
     },
 }
 
