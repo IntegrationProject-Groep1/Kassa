@@ -188,7 +188,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     if payment_due_el is None:
         raise ValueError("new_registration: <payment_due> missing in <body>")
 
-    amount = float(payment_due_el.findtext("amount", "0"))  # noqa: F841 – read for validation, not logged (PII)
+    # amount is validated by XSD and no longer logged (PII)
     status = payment_due_el.findtext("status", "unpaid").strip()
 
     if not user_id:
@@ -451,7 +451,7 @@ def process_message(ch, method, properties, body):
         try:
             validate_xml(xml_text, msg_type)
         except ValueError as e:
-            logger.error("[RECEIVER] ❌ XSD validation failed for '%s': %s", msg_type, e)
+            logger.error("[RECEIVER] ❌ XSD validation failed for '%s'", msg_type)
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return

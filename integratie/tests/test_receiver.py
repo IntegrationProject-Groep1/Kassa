@@ -290,7 +290,7 @@ class TestProcessBadgeScan:
              "x_wallet_balance": 12.50, "x_date_of_birth": "1996-01-01", "is_company": False}
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
-        
+
         assert "Badge recognised: Odoo ID=3" in caplog.text
         assert "Location=bar" in caplog.text
         assert "BADGE-001" not in caplog.text  # PII removed
