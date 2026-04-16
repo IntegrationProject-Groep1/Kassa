@@ -106,7 +106,7 @@ BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
 _buffer_lock = threading.Lock()
-_cached_buffer_ids = set()
+_cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
 
