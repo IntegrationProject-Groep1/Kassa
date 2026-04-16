@@ -1,14 +1,27 @@
-# receiver.py – v3.3
-# Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
-#
-# Listens on queue.incoming and processes:
-#   - new_registration     → create/update customer in Odoo
-#   - profile_update       → update customer profile in Odoo
-#   - badge_scanned        → look up customer via x_badge_id
-#   - cancel_registration  → deactivate customer profile in Odoo
-#
-# Imports from sender.py (conform Technische Gids v3.3)
-# Idempotency via OrderedDict LRU cache (max 10,000 items)
+"""
+receiver.py — RabbitMQ consumer for the Kassa integration service.
+
+Connects to the broker defined by RABBIT_HOST/PORT/VHOST and listens on the
+queue set by RABBIT_INCOMING_QUEUE (default: kassa.incoming).
+
+Handles four incoming message types sent by the CRM / IoT teams:
+  - new_registration     → creates or updates a res.partner in Odoo
+  - profile_update       → updates name, email, age, VAT on an existing partner
+  - badge_scanned        → looks up a customer by x_badge_id; sends a
+                           system_error to kassa.errors if the badge is unknown
+  - cancel_registration  → sets active=False on the partner (soft delete)
+
+Error handling:
+  - Unparseable XML          → basic_nack(requeue=False) + system_error sent
+  - XSD validation failure   → basic_nack(requeue=False) + system_error sent
+  - Unknown message type     → basic_nack(requeue=False) + system_error sent
+  - Odoo connection/API error → basic_nack(requeue=False) + system_error sent
+  - Duplicate message_id     → basic_ack, no Odoo write (silently ignored)
+
+Duplicate detection uses an in-memory LRU cache (max 10,000 entries).
+The cache is cleared on container restart, so restarts do not cause replay
+protection across sessions — that trade-off is intentional for simplicity.
+"""
 
 import os
 import logging
@@ -69,13 +82,18 @@ seen_message_ids: OrderedDict = OrderedDict()
 
 def is_duplicate(message_id: str) -> bool:
     """
-    Check whether this message_id was already processed.
-    Uses LRU eviction at MAX_CACHE_SIZE.
+    Return True if this message_id has already been processed in this session.
+
+    Uses an OrderedDict as a bounded LRU cache. When the cache hits
+    MAX_CACHE_SIZE the oldest entry is evicted (popitem(last=False)) to keep
+    memory usage constant. The timestamp stored as the value is only for
+    debugging — it is not used for expiry.
     """
     if message_id in seen_message_ids:
-        print(f"[IDEMPOTENCY] Duplicate detected: {message_id} – skipped")
+        logger.info("[IDEMPOTENCY] Duplicate detected: message_id=%s – skipped", message_id)
         return True
     seen_message_ids[message_id] = now_utc()
+    # Evict the oldest entry once the cache is full
     if len(seen_message_ids) > MAX_CACHE_SIZE:
         seen_message_ids.popitem(last=False)
     return False
@@ -84,8 +102,12 @@ def is_duplicate(message_id: str) -> bool:
 # ── Odoo connection ────────────────────────────────────────────────────────────
 def get_odoo_connection():
     """
-    Connect to Odoo via XML-RPC.
-    Returns (uid, models).
+    Open an XML-RPC session with Odoo and return (uid, models proxy).
+
+    Reads credentials from the environment via require_env so the error
+    message names every missing variable at once. Raises ConnectionError if
+    authentication succeeds but Odoo returns uid=0/False (wrong password or
+    database name).
     """
     required = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
     common = xmlrpc.client.ServerProxy(f"{required['ODOO_URL']}/xmlrpc/2/common")
@@ -103,12 +125,18 @@ def get_odoo_connection():
 # ── XSD validation ─────────────────────────────────────────────────────────────
 def validate_xml(xml_text: str, msg_type: str) -> None:
     """
-    Validate XML against the corresponding XSD schema.
-    Raises ValueError when validation fails or schema is not found.
+    Validate xml_text against the XSD schema for msg_type.
+
+    Schema files live in the schemas/ directory next to this file and are
+    named schema_<msg_type>.xsd. If no schema exists for a given type the
+    validation is skipped and a warning is printed — this lets us deploy new
+    message types before their schema is finalised.
+
+    Raises ValueError with the full lxml error log if validation fails.
     """
     schema_path = SCHEMA_MAP.get(msg_type)
     if not schema_path or not os.path.exists(schema_path):
-        print(f"[VALIDATION] No XSD schema found for type '{msg_type}' – skipping validation")
+        logger.warning("[VALIDATION] No XSD schema found for type '%s' – skipping validation", msg_type)
         return
 
     schema_doc = etree.parse(schema_path)
@@ -119,16 +147,22 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         errors = str(schema.error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
-    print(f"[VALIDATION] ✓ XSD validation passed for type '{msg_type}'")
+    logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)
 
 
 # ── Business logic per message type ───────────────────────────────────────────
 
 def process_new_registration(root: ET.Element, uid: int, models) -> None:
     """
-    Flow 1 – new_registration
-    Create customer in Odoo, or update if already exists via x_user_id.
-    Also stores outstanding registration amount as payment_due.
+    Handle a new_registration message (Flow 1).
+
+    Looks up the customer by x_user_id in res.partner. If found, updates the
+    existing record; if not, creates a new one. This makes the handler
+    idempotent at the Odoo level as well — reprocessing the same message after
+    a container restart does not create a duplicate partner.
+
+    The <payment_due> block is logged for audit purposes but not stored as a
+    separate Odoo record in this version.
     """
     body = root.find("body")
     if body is None:
@@ -157,7 +191,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     if payment_due_el is None:
         raise ValueError("new_registration: <payment_due> missing in <body>")
 
-    amount = float(payment_due_el.findtext("amount", "0"))
+    # amount is validated by XSD and no longer logged (PII)
     status = payment_due_el.findtext("status", "unpaid").strip()
 
     if not user_id:
@@ -188,23 +222,26 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], partner_vals],
         )
-        print(f"[NEW_REGISTRATION] ✓ Customer updated: {name} (Odoo ID={partner_id}, user_id={user_id})")
+        logger.info("[NEW_REGISTRATION] ✓ Customer updated: Odoo ID=%s", partner_id)
     else:
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "create",
             [partner_vals],
         )
-        print(f"[NEW_REGISTRATION] ✓ New customer created: {name} (Odoo ID={partner_id}, user_id={user_id})")
+        logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
-    print(f"[NEW_REGISTRATION]   Outstanding amount: EUR {amount:.2f} | Status: {status}")
+    logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
 
 
 def process_profile_update(root: ET.Element, uid: int, models) -> None:
     """
-    Flow 3 – profile_update
-    Update existing customer profile in Odoo based on x_user_id.
-    Defensive: creates customer if not found.
+    Handle a profile_update message (Flow 3).
+
+    Finds the partner by x_user_id and writes the new values. If the partner
+    does not exist yet (e.g. a profile update arrived before the registration
+    message), it creates a new partner as a fallback rather than dropping the
+    update silently.
     """
     body = root.find("body")
     if body is None:
@@ -255,7 +292,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], update_vals],
         )
-        print(f"[PROFILE_UPDATE] ✓ Profile updated: {name or user_id} (Odoo ID={partner_id})")
+        logger.info("[PROFILE_UPDATE] ✓ Profile updated: Odoo ID=%s", partner_id)
     else:
         update_vals["x_user_id"] = user_id
         partner_id = models.execute_kw(
@@ -263,15 +300,21 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
             "res.partner", "create",
             [update_vals],
         )
-        print(f"[PROFILE_UPDATE] ⚠ Customer not found – created new (Odoo ID={partner_id}, user_id={user_id})")
+        logger.warning("[PROFILE_UPDATE] ⚠ Customer not found – created new: Odoo ID=%s", partner_id)
 
 
 def process_badge_scan(root: ET.Element, uid: int, models) -> None:
     """
-    Flow 2 – badge_scanned
-    Look up customer via x_badge_id in Odoo local cache.
-    If not found: send system_error (badge_not_found).
-    Cashier then decides: anonymous sale (Flow 11) or redirect to registration desk.
+    Handle a badge_scanned message (Flow 2).
+
+    Searches res.partner by x_badge_id. On a hit, logs the customer name and
+    wallet balance so the cashier UI can display them. On a miss, sends a
+    system_error with code 'badge_not_found' to kassa.errors — the cashier
+    then either proceeds as an anonymous sale (Flow 11) or directs the visitor
+    to the registration desk.
+
+    Either way the message is ACKed: an unknown badge stays unknown and there
+    is nothing to retry.
     """
     body = root.find("body")
     if body is None:
@@ -287,20 +330,20 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_badge_id", "=", badge_id]]],
-        {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_age", "is_company"], "limit": 1},
+        {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_date_of_birth", "is_company"], "limit": 1},
     )
 
     message_id = root.findtext("header/message_id")
 
     if existing:
         partner = existing[0]
-        print(
-            f"[BADGE_SCANNED] ✓ Badge {badge_id} recognised: {partner['name']} | "
-            f"Balance: EUR {partner.get('x_wallet_balance', 0):.2f} | "
-            f"Location: {location}"
+        logger.info(
+            "[BADGE_SCANNED] ✓ Badge recognised: Odoo ID=%s | Location=%s",
+            partner['id'],
+            location,
         )
     else:
-        print(f"[BADGE_SCANNED] ⚠ Badge {badge_id} NOT found in local cache – sending system_error")
+        logger.warning("[BADGE_SCANNED] ⚠ Badge NOT found in local cache – sending system_error")
         send_error_to_queue(
             error_code="badge_not_found",
             related_message_id=message_id,
@@ -311,8 +354,12 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
 
 def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
     """
-    Flow 4 – cancel_registration
-    Deactivate customer profile in Odoo based on x_user_id.
+    Handle a cancel_registration message (Flow 4).
+
+    Sets active=False on the partner record (Odoo soft-delete). The record is
+    kept in the database so historical POS orders and audit trails are not
+    broken. If the user_id is not found the message is still ACKed — there is
+    nothing to cancel.
     """
     body = root.find("body")
     if body is None:
@@ -338,24 +385,36 @@ def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], {"active": False}],
         )
-        print(
-            f"[CANCEL_REGISTRATION] ✓ Profile deactivated: {existing[0]['name']} "
-            f"(Odoo ID={partner_id}, session_id={session_id})"
+        logger.info(
+            "[CANCEL_REGISTRATION] ✓ Profile deactivated: Odoo ID=%s | session_id=%s",
+            partner_id,
+            session_id,
         )
     else:
-        print(f"[CANCEL_REGISTRATION] ⚠ Customer not found for user_id={user_id} – no action")
+        logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
 
 
 # ── Central message processing ─────────────────────────────────────────────────
 
 def process_message(ch, method, properties, body):
     """
-    Callback for every incoming RabbitMQ message.
-    Step 1: Parse XML
-    Step 2: Idempotency check
-    Step 3: XSD validation
-    Step 4: Business logic per message type
-    Step 5: ACK on success, NACK on validation error
+    RabbitMQ delivery callback — called once per message by pika.
+
+    Processing pipeline:
+      1. Parse XML             — reject immediately if not valid XML
+      2. Read header           — extract message_id and type
+      3. Idempotency check     — skip if message_id seen before in this session
+      4. XSD validation        — reject if message does not match its schema
+      5. Odoo connection       — authenticate fresh per message (stateless)
+      6. Business logic        — dispatch to the correct process_* function
+      7. ACK                   — tell the broker the message was handled
+
+    On any validation or business-logic error:
+      - A system_error is forwarded to kassa.errors via send_error_to_queue.
+      - basic_nack(requeue=False) is sent instead of basic_ack. requeue=False
+        means the broker discards the message (or routes it to a dead-letter
+        exchange if one is configured) rather than putting it back in the queue.
+        Re-queuing a malformed message would just cause an infinite retry loop.
     """
     xml_text = body.decode("utf-8")
     related_message_id = None
@@ -365,7 +424,7 @@ def process_message(ch, method, properties, body):
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
-            print(f"[RECEIVER] ❌ XML parse error: {e}")
+            logger.error("[RECEIVER] ❌ XML parse error: %s", e)
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -389,13 +448,13 @@ def process_message(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        print(f"[RECEIVER] Received: type={msg_type} | message_id={related_message_id}")
+        logger.info("[RECEIVER] Received: type=%s | message_id=%s", msg_type, related_message_id)
 
         # ── Step 4: XSD validation ─────────────────────────────────────────
         try:
             validate_xml(xml_text, msg_type)
         except ValueError as e:
-            print(f"[RECEIVER] ❌ XSD validation failed for '{msg_type}': {e}")
+            logger.error("[RECEIVER] ❌ XSD validation failed for '%s'", msg_type)
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -424,17 +483,20 @@ def process_message(ch, method, properties, body):
 
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
-        print(f"[RECEIVER] ❌ {code} for message_id={related_message_id}: {e}")
+        logger.error("[RECEIVER] ❌ %s for message_id=%s: %s", code, related_message_id, e)
         send_error_to_queue(code, related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except ConnectionError as e:
-        print(f"[RECEIVER] ❌ Odoo connection error for message_id={related_message_id}: {e}")
+        logger.error("[RECEIVER] ❌ Odoo connection error for message_id=%s: %s", related_message_id, e)
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
     except Exception as e:
-        print(f"[RECEIVER] ❌ Unexpected error for message_id={related_message_id}: {type(e).__name__}: {e}")
+        logger.error(
+            "[RECEIVER] ❌ Unexpected error for message_id=%s: %s: %s",
+            related_message_id, type(e).__name__, e,
+        )
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
@@ -442,6 +504,13 @@ def process_message(ch, method, properties, body):
 # ── RabbitMQ connection and startup ───────────────────────────────────────────
 
 def connect_to_rabbitmq():
+    """
+    Open a new blocking connection to RabbitMQ using environment credentials.
+
+    Called once at startup inside start_listening(). If the connection drops,
+    the exception propagates up to _run_receiver() in main.py which logs the
+    error and retries after 5 seconds.
+    """
     credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
         host=RABBIT_HOST,
@@ -454,10 +523,19 @@ def connect_to_rabbitmq():
 
 def start_listening():
     """
-    Start the receiver.
-    Re-publishes buffered messages on connect (flush_buffer).
-    Listens on queue.incoming with prefetch_count=1 for fair dispatch.
-    Sets up Dead Letter Exchange and Queue for automated poison-message handling.
+    Connect to RabbitMQ, flush the outbound buffer, and start consuming.
+
+    prefetch_count=1 means the broker only delivers one unacknowledged message
+    at a time. This prevents the receiver from pulling a large batch and then
+    crashing mid-way, which would leave many messages unacknowledged.
+
+    flush_buffer() re-sends any consumption_order messages that were buffered
+    to outbox.json while the broker was unreachable. Doing it here (on connect)
+    rather than in a separate thread keeps the sequencing simple.
+
+    This function blocks inside channel.start_consuming() until the connection
+    is lost or an exception is raised. The caller (_run_receiver in main.py)
+    is responsible for restarting it.
     """
     conn = connect_to_rabbitmq()
     channel = conn.channel()
@@ -498,16 +576,31 @@ def start_listening():
 
     channel.basic_qos(prefetch_count=1)
 
-    flush_buffer()  # re-publish buffered outbox messages after successful connect
+    # Re-publish buffered outbox messages after successful (re)connect.
+    # flush_buffer() returns the Odoo order IDs of successfully flushed messages;
+    # mark those orders as sent so the poller does not re-process them.
+    flushed_ids = flush_buffer()
+    if flushed_ids:
+        try:
+            uid, models = get_odoo_connection()
+            unique_ids = list(set(flushed_ids))
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            logger.info("[RECEIVER] ✓ Marked %d buffered orders as sent after flush", len(unique_ids))
+        except Exception as e:
+            logger.warning("[RECEIVER] ⚠️  Could not mark flushed orders as sent: %s", e)
 
     channel.basic_consume(
         queue=QUEUE_NAME,
         on_message_callback=process_message,
     )
 
-    print(f"[RECEIVER] ✓ Listening on queue: {QUEUE_NAME}")
-    print(f"[RECEIVER]   Odoo: {ODOO_URL} | DB: {ODOO_DB}")
-    print("[RECEIVER]   Waiting for messages… (CTRL+C to stop)")
+    logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
+    logger.info("[RECEIVER]   Odoo: %s | DB: %s", ODOO_URL, ODOO_DB)
+    logger.info("[RECEIVER]   Waiting for messages…")
 
     channel.start_consuming()
 

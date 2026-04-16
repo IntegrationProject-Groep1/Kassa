@@ -1,12 +1,12 @@
 # XML_Structuren_Kassa.md
 
-# XML\_Structuren\_Kassa.docx
+## XML\_Structuren\_Kassa.docx
 
 **Technische Integratiedocumentatie — XML & XSD**
 Team Kassa (Odoo POS) — Versie 2.5 — Geïntegreerd document
 Conform XML\_naamgeving standaard (snake\_case) | Integratieproject Desideriushogeschool 2026
 
-# 1\. Overzicht van alle Flows
+## 1\. Overzicht van alle Flows
 
 Alle messageType-waarden zijn conform de snake\_case naamgevingsstandaard. Flows 11–16 zijn uitbreidingen op de basisflows.
 
@@ -29,7 +29,7 @@ Alle messageType-waarden zijn conform de snake\_case naamgevingsstandaard. Flows
 | 15 | Uitgaand | Odoo | CRM | kassa.exchange → kassa.payments.refund | refund\_processed | schema\_refund\_processed.xsd |
 | 16 | Intern sad path | Odoo | Elastic | kassa.exchange → kassa.errors | system\_error (badge\_not\_found) | schema\_error.xsd |
 
-# 2\. Inkomende Flows (Kassa ontvangt)
+## 2\. Inkomende Flows (Kassa ontvangt)
 
 | 📥 FLOW 1: Nieuwe Inschrijving<br>CRM (Salesforce) → Odoo (Kassa Team) via kassa.incoming |
 | --- |
@@ -940,7 +940,7 @@ Operationele paden na badge\\\_not\\\_found:
 Waarom ACK en geen NACK bij badge\_not\_found? Een NACK met requeue=True stuurt het bericht opnieuw aan de queue. Maar een badge die nu onbekend is, blijft dat tot Flow 12 uitgevoerd wordt. Onbeperkt retry-en verstopt de queue en produceert een stortvloed aan identieke errors in Elastic. De juiste strategie: ACK + system\_error + operationele afhandeling.
 _XSD Schema: hergebruikt schema\_error.xsd — zie Flow 7._
 
-# 8\. Enum Waarden — Volledige Referentie
+## 8\. Enum Waarden — Volledige Referentie
 
 Gebruik uitsluitend de onderstaande waarden. Conform XML\_naamgeving §4.
 
@@ -957,6 +957,6 @@ Gebruik uitsluitend de onderstaande waarden. Conform XML\_naamgeving §4.
 | <refund><reason> | duplicate\_payment, customer\_request, system\_error | Gestandaardiseerde reden |
 | <refund\_type> | consumption\_item, partial | Scope van de terugbetaling |
 | <error\_code> | invalid\_xml\_format, unknown\_message\_type, profile\_not\_found, odoo\_api\_error, offline\_queue\_full, badge\_not\_found | Altijd lowercase. unknown\_message\_type: onbekend berichttype ontvangen in [receiver.py](http://receiver.py). |
-| <vat\_rate> | 0, 6, 12, 21 | 0 uitsluitend voor Top-up producten. Opgehaald via [account.tax](http://account.tax) in [poller.py](http://poller.py). |
+| <vat\_rate> | 0, 6, 12, 21 | 0 voor Top-up producten. De poller identificeert deze via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — niet enkel op BTW-tarief. `vat_rate=0` wordt altijd geforceerd in de XML-export voor deze producten door `poller.py`. BTW-percentage voor overige producten opgehaald via `account.tax`. |
 
 Team Kassa | XML Structuren v2.4 | Conform XML\_naamgeving standaard | Integratieproject Desideriushogeschool | 2026

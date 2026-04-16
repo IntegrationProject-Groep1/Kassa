@@ -110,7 +110,7 @@ def test_process_order_routes_refund(mock_sender, poller):
     poller.models.execute_kw.return_value = True
 
     with patch.object(poller, '_process_refund') as mock_refund, \
-         patch.object(poller, '_process_consumption') as mock_consumption:
+            patch.object(poller, '_process_consumption') as mock_consumption:
         poller.process_order(order)
         mock_refund.assert_called_once()
         mock_consumption.assert_not_called()
@@ -126,7 +126,7 @@ def test_process_order_routes_consumption(mock_sender, poller):
     poller.models.execute_kw.return_value = True
 
     with patch.object(poller, '_process_refund') as mock_refund, \
-         patch.object(poller, '_process_consumption') as mock_consumption:
+            patch.object(poller, '_process_consumption') as mock_consumption:
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -137,7 +137,8 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     """After processing, x_rabbitmq_sent is written to Odoo."""
     order = {'id': 7, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
-    with patch.object(poller, '_process_consumption'):
+    with patch.object(poller, '_process_consumption') as mock_pc:
+        mock_pc.return_value = (True, "12345-msg-id")
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -149,6 +150,39 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     # The payload argument is the last positional arg: [[order_id], {fields}]
     payload = write_calls[-1][0][5]
     assert {'x_rabbitmq_sent': True} in payload
+
+
+@patch('order_poller.sender')
+def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, poller):
+    """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
+    order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
+
+    with patch.object(poller, '_process_consumption', return_value=False):
+        poller.models.execute_kw.return_value = True
+        poller.process_order(order)
+
+    # Verify x_rabbitmq_sent was NOT written
+    all_calls = poller.models.execute_kw.call_args_list
+    write_calls = [c for c in all_calls if len(c[0]) > 4
+                   and c[0][3] == 'pos.order' and c[0][4] == 'write']
+    assert len(write_calls) == 0
+
+
+def test_mark_orders_sent_writes_bulk_to_odoo(poller):
+    """_mark_orders_sent executes a bulk write using a list of unique IDs."""
+    order_ids = [11, 22, 11, 33]  # includes a duplicate
+
+    poller._mark_orders_sent(order_ids)
+
+    # Verify bulk write was called exactly once with unique IDs [11, 22, 33]
+    poller.models.execute_kw.assert_called_once()
+    call_args = poller.models.execute_kw.call_args[0]
+    assert call_args[3] == 'pos.order'
+    assert call_args[4] == 'write'
+
+    payload = call_args[5]
+    assert set(payload[0]) == {11, 22, 33}
+    assert payload[1] == {'x_rabbitmq_sent': True}
 
 
 # ---------------------------------------------------------------------------
@@ -164,14 +198,15 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
     }
     # Payment method is NOT Badge Wallet
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (2, 'Cash'), 'amount': -5.0}],  # pos.payment read
+        # pos.payment read
+        [{'payment_method_id': (2, 'Cash'), 'amount': -5.0}],
         [],  # pos.order.line read (no lines)
     ]
 
-    poller._process_refund(order, 10, None)
+    poller._process_refund(order, 10, None, is_anonymous=True)
 
     mock_sender.send_typed_message.assert_called_once_with(
-        'refund_processed', mock_sender.build_refund_processed_xml.return_value
+        'refund_processed', mock_sender.build_refund_processed_xml.return_value, order_id=10
     )
     # Wallet write should NOT have been called
     write_calls = [c for c in poller.models.execute_kw.call_args_list
@@ -188,13 +223,14 @@ def test_process_refund_badge_wallet_updates_balance(mock_sender, poller):
         'payment_ids': [2], 'x_wallet_updated': False,
     }
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': -4.0}],  # payments
+        [{'payment_method_id': (3, 'Badge Wallet'),
+          'amount': -4.0}],  # payments
         True,    # res.partner write (new balance)
         True,    # pos.order write (x_wallet_updated)
         [],      # pos.order.line read for traceability
     ]
 
-    poller._process_refund(order, 11, customer_info)
+    poller._process_refund(order, 11, customer_info, is_anonymous=False)
 
     # Wallet balance update message sent
     calls = [str(c) for c in mock_sender.send_typed_message.call_args_list]
@@ -212,11 +248,12 @@ def test_process_refund_already_updated_wallet_skips_write(mock_sender, poller):
         'payment_ids': [2], 'x_wallet_updated': True,  # already done
     }
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': -4.0}],  # payments
+        [{'payment_method_id': (3, 'Badge Wallet'),
+          'amount': -4.0}],  # payments
         [],  # pos.order.line read for traceability
     ]
 
-    poller._process_refund(order, 12, customer_info)
+    poller._process_refund(order, 12, customer_info, is_anonymous=False)
 
     # Only refund_processed should be sent, NOT wallet_balance_update
     calls = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
@@ -237,9 +274,11 @@ def test_process_refund_traces_original_order(mock_sender, poller):
         [{'id': 99, 'refunded_orderline_id': (55, 'Product')}],
         # pos.order.line read for line 55: belongs to order 7
         [{'id': 55, 'order_id': (7, 'POS/2024/00007')}],
+        # pos.order read for x_payment_message_id
+        [{'id': 7, 'x_payment_message_id': 'ORDER-7'}],
     ]
 
-    poller._process_refund(order, 13, None)
+    poller._process_refund(order, 13, None, is_anonymous=True)
 
     # Verify build was called with ORDER-7
     call_kwargs = mock_sender.build_refund_processed_xml.call_args[1]
@@ -257,66 +296,104 @@ def test_process_refund_tracing_fallback_on_error(mock_sender, poller):
     poller.models.execute_kw.side_effect = Exception('Odoo API error')
 
     # Should NOT raise — graceful fallback
-    poller._process_refund(order, 14, None)
+    with patch('uuid.uuid4') as mock_uuid:
+        mock_uuid.return_value = 'Unknown'
+        poller._process_refund(order, 14, None, is_anonymous=True)
+
+
+@patch('order_poller.sender')
+def test_process_refund_uses_customer_request_reason(mock_sender, poller):
+    """refund_processed is built with DEFAULT_REFUND_REASON='customer_request' (Story 8 DoD)."""
+    order = {
+        'id': 15, 'amount_total': -7.50, 'lines': [],
+        'payment_ids': [1], 'x_wallet_updated': False,
+    }
+    poller.models.execute_kw.side_effect = [
+        # pos.payment read
+        [{'payment_method_id': (2, 'Cash'), 'amount': -7.50}],
+    ]
+
+    poller._process_refund(order, 15, None, is_anonymous=True)
 
     call_kwargs = mock_sender.build_refund_processed_xml.call_args[1]
-    assert call_kwargs['original_payment_msg_id'] == 'Unknown'
-
+    assert call_kwargs['refund_reason'] == 'customer_request', (
+        "refund_reason must be 'customer_request' — Story 8 DoD requires a "
+        "semantically correct reason value that CRM operators can act on."
+    )
 
 # ---------------------------------------------------------------------------
 # _process_consumption
 # ---------------------------------------------------------------------------
 
+
 @patch('order_poller.sender')
 def test_process_consumption_sends_consumption_order(mock_sender, poller):
     """Regular order sends a consumption_order message."""
-    order = {'id': 20, 'lines': [(10,), (11,)]}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 20, 'lines': [(10,), (11,)], 'amount_total': 15.0}
     poller.models.execute_kw.side_effect = [
         # pos.order.line read
         [
-            {'id': 10, 'product_id': (1, 'Beer'), 'qty': 2, 'price_unit': 3.0, 'tax_ids': [5]},
-            {'id': 11, 'product_id': (2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
+            {'id': 10, 'product_id': (
+                1, 'Beer'), 'qty': 2, 'price_unit': 3.0, 'tax_ids': [5]},
+            {'id': 11, 'product_id': (
+                2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
         ],
         # account.tax bulk read
         [{'id': 5, 'amount': 6.0}],
     ]
 
-    poller._process_consumption(order, None, is_anonymous=True)
-
-    mock_sender.send_typed_message.assert_called_once_with(
-        'consumption_order', mock_sender.build_consumption_order_xml.return_value
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
     )
+    poller._process_consumption(order, None, is_anonymous=True)
 
 
 @patch('order_poller.sender')
 def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
     """Taxes are fetched in a single bulk call, not per line."""
-    order = {'id': 21, 'lines': [(10,), (11,)]}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 21, 'lines': [(10,), (11,)], 'amount_total': 15.0}
     poller.models.execute_kw.side_effect = [
         [
-            {'id': 10, 'product_id': (1, 'A'), 'qty': 1, 'price_unit': 5.0, 'tax_ids': [3]},
-            {'id': 11, 'product_id': (2, 'B'), 'qty': 1, 'price_unit': 2.0, 'tax_ids': [3]},
+            {'id': 10, 'product_id': (1, 'A'), 'qty': 1,
+             'price_unit': 5.0, 'tax_ids': [3]},
+            {'id': 11, 'product_id': (2, 'B'), 'qty': 1,
+             'price_unit': 2.0, 'tax_ids': [3]},
         ],
         [{'id': 3, 'amount': 21.0}],  # single bulk tax call
     ]
 
-    poller._process_consumption(order, None, is_anonymous=True)
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
 
-    tax_calls = [c for c in poller.models.execute_kw.call_args_list
+    poller._process_consumption(order, None, is_anonymous=True)
+    all_calls = poller.models.execute_kw.call_args_list
+    tax_calls = [c for c in all_calls
                  if len(c[0]) > 3 and c[0][3] == 'account.tax']
-    # Exactly ONE tax call for ALL lines combined
     assert len(tax_calls) == 1
 
 
 @patch('order_poller.sender')
 def test_process_consumption_company_customer_type(mock_sender, poller):
     """A customer linked to a parent company has customer_type 'company'."""
-    order = {'id': 22, 'lines': []}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 22, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 5, 'name': 'John', 'is_company': False,
                      'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': ''}
-    # Parent company lookup
+    # parent company lookup
     poller.models.execute_kw.return_value = [{'is_company': True}]
 
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
     poller._process_consumption(order, customer_info, is_anonymous=False)
 
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
@@ -326,10 +403,16 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
 @patch('order_poller.sender')
 def test_process_consumption_private_customer_type(mock_sender, poller):
     """A customer with no parent and is_company=False has customer_type 'private'."""
-    order = {'id': 23, 'lines': []}
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
+    order = {'id': 23, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 6, 'name': 'Jane', 'is_company': False,
                      'parent_id': False, 'x_user_id': None, 'email': ''}
 
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>12345</message_id></header></message>'
+    )
     poller._process_consumption(order, customer_info, is_anonymous=False)
 
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]

@@ -9,10 +9,10 @@ Integratieproject Desideriushogeschool 2026
 | **Veld** | **Waarde** |
 | Project | Integratieproject Desideriushogeschool 2026 |
 | Team | Kassa (Odoo POS) |
-| Versie | 3.4 — sender v3.5 (total_amount per item); poller v1.2 (total_amount berekening); XSD consumption_order → v2.2 |
+| Versie | 3.5 — sender v3.5 (total_amount per item); poller v1.3 (is_topup_product categorie-check); XSD consumption_order → v2.3 |
 | Tech stack | Odoo 17, PostgreSQL 15, Python 3.12, RabbitMQ, Docker, GitHub Actions |
 
-# **1\. Het grote plaatje — hoe hangt alles samen?**
+## **1\. Het grote plaatje — hoe hangt alles samen?**
 
 Dit project heeft 9 softwaresystemen die allemaal met elkaar communiceren via één centraal systeem: RabbitMQ. Elk systeem staat op zichzelf (loosely coupled) en communiceert enkel via de centrale berichtenwachtrij.
 
@@ -50,7 +50,7 @@ Stel: een zakelijke bezoeker rekent zijn consumpties af aan de bar. Dit is wat e
 
 Jullie doen enkel stap 1 t.e.m. 4. De rest doen andere teams.
 
-# **2\. RabbitMQ — de postbus tussen alle systemen**
+## **2\. RabbitMQ — de postbus tussen alle systemen**
 
 ## **2.1 Wat is RabbitMQ?**
 
@@ -77,13 +77,11 @@ Routing keys voor payment_registered zijn gesplitst per payment_context. Gebruik
 | frontend.payments | kassa.frontend.wallet | Odoo (Kassa) | Drupal | wallet_balance_update |
 | kassa.errors | kassa.errors | Odoo (Kassa) bij fout | Elastic Stack | Fouten melden |
 
-# **3\. Odoo POS — hoe werkt het en hoe schrijf je er code voor?**
+## **3\. Odoo POS — hoe werkt het en hoe schrijf je er code voor?**
 
 ## **3.1 Wat is Odoo?**
 
 Odoo is een groot open-source ERP-systeem. Jullie gebruiken enkel de POS-module (Point of Sale). Odoo draait als webapplicatie. Jullie code draait NAAST Odoo en communiceert via een API.
-
-Architectuurrestrictie: jullie schrijven GEEN code IN Odoo zelf. Alle integratiecode staat in aparte Python scripts in de kassa-integratie container die de Odoo XML-RPC API aanspreken.
 
 ## **3.2 De Odoo XML-RPC API**
 
@@ -168,10 +166,12 @@ Opmerking: XML-RPC deprecation warnings in Odoo 19 zijn informatief en niet de o
 | product.product | Producten | Producten opzoeken voor bestelling |
 | pos.payment | Betalingen per order | Betaalmethode detecteren (bv. Badge Wallet) |
 | account.tax | Belastingtarieven | BTW-percentage ophalen via tax_ids van orderregels |
+| pos.category | POS-productcategorieën | Top-up producten identificeren via de categorie 'Top-ups' in `is_topup_product()` |
+| product.product | Producten (uitgebreid) | Custom veld `x_is_topup` opvragen als alternatieve identificatie voor Top-up producten |
 
 ## **3.4 Custom velden in Odoo**
 
-De integratie vereist een aantal custom velden op res.partner en pos.order. Deze worden aangemaakt via Odoo > Instellingen > Technisch > Velden — geen module of code in Odoo nodig.
+De integratie vereist een aantal custom velden op res.partner en pos.order. Deze worden aangemaakt via Odoo > Instellingen > Technisch > Velden.
 
 | |     | |     |
 | --- | --- | --- | --- |
@@ -180,7 +180,10 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | res.partner | x_badge_id | Char | Badge ID — aangemaakt bij Flow 12 (badge_assigned) |
 | res.partner | x_wallet_balance | Float | Badge saldo in EUR — Single Source of Truth |
 | res.partner | x_date_of_birth | Date | Geboortedatum bezoeker — voor alcoholcontrole (leeftijd berekend in code) |
+| res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<payment_due><amount>` in `new_registration` / `profile_update`. Gereset naar 0 door `order_poller.py` na succesvolle betaling via Inschrijvingskassa (Story 21). |
+| res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<payment_due><status>` (`unpaid` of `paid`). Gezet op `paid` door `order_poller.py` na succesvolle betaling (Story 21). |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
+| product.product | x_is_topup | Boolean | Markeert een product als Top-up — primair identificatiekenmerk voor `poller.py`. Alternatief voor categorie-check. Aanmaken via Odoo > Instellingen > Technisch > Velden op model `product.product`. |
 
 **Betaalmethoden aanmaken in Odoo POS (geen custom veld nodig):**
 
@@ -193,7 +196,23 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 
 De betaalmethode 'Badge Wallet' is uitsluitend intern in Odoo. In de externe XML (payment_registered) wordt altijd 'on_site' verstuurd — dit is conform de PM-standaard.
 
-# **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
+## **3.5 Odoo Addon: kassa_pos_custom**
+
+De `kassa_pos_custom` addon breidt de standaard Odoo POS-interface uit via OWL-componenten (het JavaScript UI-framework van Odoo 17). Deze addon is vereist voor Stories 9, 17, 19 en 21.
+
+**Afhankelijkheid Story 21 — real-time cache update:**
+
+Na het verwerken van een `new_registration` of `profile_update` publiceert `receiver.py` een `bus.bus` event via Odoo XML-RPC. Een OWL-component in `kassa_pos_custom` luistert op dit event. Bij ontvangst haalt de component via één gerichte RPC-aanroep enkel die ene partner op en voegt hem toe aan (of update hem in) de lokale POS model store — **zonder volledige partnerlijst te herladen en zonder lopende transacties te onderbreken**.
+
+Dit mechanisme is dezelfde `bus.bus` infrastructuur als Story 9 (badge wallet saldo update in de POS UI).
+
+**Vereiste configuratie:**
+
+- `kassa_pos_custom` addon geïnstalleerd en geactiveerd in Odoo
+- `bus.bus` polling actief in de POS-sessie (standaard ingeschakeld in Odoo 17 POS)
+- Custom velden `x_outstanding_amount` en `x_payment_status` aangemaakt op `res.partner` (zie §3.4)
+
+## **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
 
 ## **4.1 De Sender — berichten versturen (v3.5)**
 
@@ -203,7 +222,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • total_amount toegevoegd aan build_consumption_order_xml per item (quantity × unit_price)
 
-• schema_consumption_order_v2.2.xsd → v2.2
+• schema_consumption_order_v2.3.xsd → v2.3
 
 **Wijzigingen t.o.v. v3.3 (eerder):**
 
@@ -217,7 +236,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • Alle 9 functies aanwezig: 7 builders + send_error_to_queue + send_typed_message (dispatcher)
 
-\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.2)
+\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.3)
 
 \# Alle berichten via kassa.exchange (topic). Bij verbindingsverlies
 
@@ -461,7 +480,7 @@ def build_consumption_order_xml(
 
 items, customer_id=None, user_id=None,
 
-is_company_linked=False, company_id=None,
+customer_type="private",
 
 email=None, address=None, is_anonymous=False
 
@@ -483,11 +502,7 @@ ET.SubElement(cust, "id").text = str(customer_id)
 
 ET.SubElement(cust, "user_id").text = user_id
 
-ET.SubElement(cust, "is_company_linked").text = str(is_company_linked).lower()
-
-if company_id:
-
-ET.SubElement(cust, "company_id").text = company_id
+ET.SubElement(cust, "type").text = customer_type  # "company" of "private"
 
 ET.SubElement(cust, "email").text = email
 
@@ -623,7 +638,9 @@ ET.SubElement(body, "user_id").text = user_id
 
 inv = ET.SubElement(body, "invoice_data")
 
-ET.SubElement(inv, "name").text = invoice_data\["name"\]
+ET.SubElement(inv, "first_name").text = invoice_data\["first_name"\]
+
+ET.SubElement(inv, "last_name").text = invoice_data\["last_name"\]
 
 ET.SubElement(inv, "email").text = invoice_data\["email"\]
 
@@ -927,7 +944,13 @@ heartbeat.py is gedocumenteerd in een apart document: Heartbeat_Kassa.docx. Same
 
 ## **4.4 De Poller — POS events triggeren (v1.2)**
 
-Omdat er geen code in Odoo geschreven mag worden, gebruikt de integratie een polling-mechanisme. poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden op nieuwe 'done' POS-orders via XML-RPC.
+poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden op nieuwe 'done' POS-orders via XML-RPC.
+
+**Wijzigingen t.o.v. v1.2:**
+
+• Top-up identificatie: `is_topup_product()` helperfunctie toegevoegd. Identificeert Top-up producten via POS-categorie 'Top-ups' of custom veld `x_is_topup` op `product.product`. De eerdere detectie puur via `vat_rate=0` is vervangen — `vat_rate=0` wordt nu geforceerd ín de XML-export als gevolg van de categorie-check, niet meer als trigger ervoor.
+
+• `pos.order.line` query uitgebreid met `categ_id` in de fields-lijst voor categorie-lookup.
 
 **Wijzigingen t.o.v. v1.1:**
 
@@ -958,7 +981,7 @@ Hoe het werkt:
 | **Stap** | **Actie** |
 | 1   | Kassamedewerker bevestigt betaling in Odoo POS → order krijgt state='done' |
 | 2   | poller.py detecteert de order via search_read op state='done' EN x_rabbitmq_sent=False |
-| 3   | poller.py haalt orderregels op met tax_ids; roept get_tax_rate() aan per regel |
+| 3   | poller.py haalt orderregels op met `tax_ids` en `categ_id`; roept `get_tax_rate()` aan per regel voor het BTW-percentage; roept `is_topup_product()` aan per regel voor Top-up identificatie |
 | 4   | poller.py detecteert betaalmethode via pos.payment → payment_method_id.name |
 | 5   | poller.py bouwt consumption_order XML via sender.py |
 | 6   | poller.py bouwt payment_registered XML (context: consumption) via sender.py |
@@ -968,11 +991,9 @@ Hoe het werkt:
 
 payment_status naar Drupal wordt ENKEL verstuurd bij payment_context=registration (inschrijvingsgeld betaald aan kassa — Flow 14). De poller verwerkt uitsluitend consumption orders. Registratiebetalingen aan de kassa zijn een apart manueel getriggerd flow.
 
-\# poller.py — v1.2 — total_amount berekening per orderregel toegevoegd
+\# poller.py — v1.3 — Top-up identificatie via categorie-check (is_topup_product)
 
 \# wallet balance update, company via parent_id
-
-\# Geen code in Odoo zelf (architectuurrestrictie).
 
 \# Dit script draait in de kassa-integratie container en bevraagt Odoo
 
@@ -1007,6 +1028,14 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "3"))
 \# Pas deze constante aan als de naam in Odoo afwijkt.
 
 BADGE_PAYMENT_METHOD_NAME = "Badge Wallet"
+
+\# Naam van de POS-categorie die Top-up producten groepeert.
+
+\# Aanmaken via: Odoo > Point of Sale > Configuratie > Productcategorieën.
+
+\# Alternatief: gebruik het custom veld x_is_topup op product.product.
+
+TOPUP_CATEGORY_NAME = "Top-ups"
 
 \# ─────────────────────────────────────────────────────────────────────────
 
@@ -1062,9 +1091,15 @@ def get_tax_rate(models, uid, tax_ids: list) -> int:
 
 Haalt het BTW-percentage op via account.tax voor de gegeven tax_ids.
 
-Geeft 0 terug als er geen belasting is (bv. Top-up producten).
+Geeft 0 terug als er geen belasting is.
 
 Geeft het eerste percentage terug als er meerdere zijn.
+
+Opmerking: dit is NIET de primaire methode om Top-up producten te detecteren.
+
+Gebruik is_topup_product() daarvoor. get_tax_rate() levert het werkelijke
+
+BTW-tarief op voor alle andere producten.
 
 """
 
@@ -1085,6 +1120,62 @@ ODOO_DB, uid, ODOO_PASS,
 )
 
 return int(taxes\[0\]\["amount"\]) if taxes else 0
+
+def is_topup_product(models, uid, product_id: int) -> bool:
+
+"""
+
+Identificeert of een product een Top-up is via de POS-categorie of x_is_topup vlag.
+
+Primaire check: POS-categorie naam == TOPUP_CATEGORY_NAME ('Top-ups').
+
+Fallback check: custom veld x_is_topup == True op product.product.
+
+Dit is de robuuste vervanger voor de eerdere detectie via vat_rate=0.
+
+De koppeling 'BTW=0 => Top-up' is losgelaten: de categorie bepaalt
+
+wat een Top-up is; vat_rate=0 wordt daarna geforceerd in de XML-export.
+
+"""
+
+if not product_id:
+
+return False
+
+product = models.execute_kw(
+
+ODOO_DB, uid, ODOO_PASS,
+
+"product.product", "search_read",
+
+\[\[\["id", "=", product_id\]\]\],
+
+{"fields": \["pos_category_id", "x_is_topup"\], "limit": 1}
+
+)
+
+if not product:
+
+return False
+
+p = product\[0\]
+
+\# Primaire check: POS-categorie
+
+categ = p.get("pos_category_id")
+
+if categ and categ\[1\] == TOPUP_CATEGORY_NAME:
+
+return True
+
+\# Fallback: custom vlag
+
+if p.get("x_is_topup"):
+
+return True
+
+return False
 
 def get_badge_payment_info(models, uid, payment_ids: list) -> bool:
 
@@ -1180,7 +1271,7 @@ is_anon = not bool(partner)
 
 due_date = order\["date_order"\]\[:10\]
 
-\# ── Orderregels ophalen inclusief tax_ids voor correcte BTW ──────────
+\# ── Orderregels ophalen inclusief tax_ids en product_id voor correcte BTW en Top-up detectie ──
 
 lines = models.execute_kw(
 
@@ -1200,6 +1291,10 @@ for l in lines:
 
 vat_rate = get_tax_rate(models, uid, l.get("tax_ids", \[\]))
 
+product_id = l\["product_id"\]\[0\] if l.get("product_id") else None
+
+topup = is_topup_product(models, uid, product_id)
+
 item = {
 
 "id": str(l\["product_id"\]\[0\]),
@@ -1212,15 +1307,15 @@ item = {
 
 "total_amount": round(l\["qty"\] * l\["price_unit"\], 2),  \# quantity × unit_price
 
-"vat_rate": vat_rate,
+"vat_rate": 0 if topup else vat_rate,  \# forceer 0 voor Top-up ongeacht BTW-instelling
 
 "currency": "eur",
 
 }
 
-\# Top-up producten hebben BTW=0 en krijgen item_type=wallet_topup
+\# Top-up producten worden herkend via categorie/x_is_topup — niet via BTW
 
-if vat_rate == 0:
+if topup:
 
 item\["item_type"\] = "wallet_topup"
 
@@ -1256,33 +1351,7 @@ ODOO_DB, uid, ODOO_PASS,
 
 )\[0\]
 
-\# company_id ophalen via standaard Odoo parent_id relatie.
-
-\# parent_id\[0\] = Odoo ID, parent_id\[1\] = naam.
-
-\# We gebruiken de x_user_id van de parent als company_id in de XML.
-
-company_id = None
-
-if pd.get("parent_id"):
-
-parent_rec = models.execute_kw(
-
-ODOO_DB, uid, ODOO_PASS,
-
-"res.partner", "search_read",
-
-\[\[\["id", "=", pd\["parent_id"\]\[0\]\]\]\],
-
-{"fields": \["x_user_id"\], "limit": 1}
-
-)
-
-if parent_rec:
-
-company_id = parent_rec\[0\].get("x_user_id")
-
-is_company_linked = bool(pd.get("parent_id") or pd.get("is_company"))
+customer_type = "company" if (pd.get("parent_id") or pd.get("is_company")) else "private"
 
 xml_co = build_consumption_order_xml(
 
@@ -1292,9 +1361,7 @@ customer_id=pd\["id"\],
 
 user_id=pd.get("x_user_id", ""),
 
-is_company_linked=is_company_linked,
-
-company_id=company_id,
+customer_type=customer_type,
 
 email=pd.get("email", ""),
 
@@ -1514,9 +1581,9 @@ Voor de demo kiest het team 5 fictieve standaardproducten. De klant beheert de c
 | Top-up 10 EUR | EUR 10.00 | 0%  | Service product (item_type=wallet_topup) |
 | Top-up 20 EUR | EUR 20.00 | 0%  | Service product (item_type=wallet_topup) |
 
-Top-up producten hebben BTW=0%. De poller detecteert dit via get_tax_rate() en zet automatisch item_type='wallet_topup'. Geen handmatige configuratie nodig in poller.py.
+Top-up producten hebben BTW=0% in Odoo. De poller identificeert ze via `is_topup_product()`: primaire check op POS-categorie 'Top-ups', fallback op `x_is_topup=True`. Voor geïdentificeerde Top-up producten forceert `poller.py` `vat_rate=0` in de XML-export en zet automatisch `item_type='wallet_topup'`. De categorie 'Top-ups' moet éénmalig aangemaakt worden in Odoo via Point of Sale > Configuratie > Productcategorieën en gekoppeld worden aan de Top-up producten.
 
-# **5\. Docker — hoe draait jullie systeem?**
+## **5\. Docker — hoe draait jullie systeem?**
 
 ## **5.1 Docker Compose voor Team Kassa**
 
@@ -1637,7 +1704,7 @@ outbox-data: # Named volume voor outbox.json (buffer Vraag 11 & 17)
 | docker-compose logs -f odoo | Bekijk live logs van Odoo |
 | docker-compose exec kassa-integratie bash | Open een shell in de integratie-container |
 
-# **6\. Git structuur & CI/CD pipeline**
+## **6\. Git structuur & CI/CD pipeline**
 
 ## **6.1 Git branches — verplicht in de opdracht**
 
@@ -1716,7 +1783,7 @@ run: |
 
 ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'cd /app/kassa && git pull && docker-compose up -d --build'
 
-# **7\. Buffering & resilience samenvatting**
+## **7\. Buffering & resilience samenvatting**
 
 De kassa moet blijven werken ook als externe systemen tijdelijk uitvallen. Onderstaande tabel vat de strategie per situatie samen.
 

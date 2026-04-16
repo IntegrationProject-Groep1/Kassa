@@ -4,7 +4,7 @@ Beslissingslogboek | Integratieproject Desideriushogeschool 2026
 
 Berichten gemarkeerd met ✔ DONE zijn vaststaande feiten. Vragen gemarkeerd met ? zijn nog open.
 
-# **BEANTWOORD**
+## **BEANTWOORD**
 
 ## Architectuur & flows
 
@@ -149,7 +149,7 @@ Berichten gemarkeerd met ✔ DONE zijn vaststaande feiten. Vragen gemarkeerd met
 | |
 | --- |
 | **✔ DONE — Vraag 26 — Kan een bezoeker zijn badge-saldo opwaarderen aan de kassa?** |
-| Ja, via een Top-up product in Odoo/Kassa (bv. 'Top-up EUR 10' of 'Top-up EUR 20'). Bij verkoop stuurt de poller een consumption_order met item_type=wallet_topup en vervolgens een wallet_balance_update naar Drupal. Het saldo wordt bijgehouden in x_wallet_balance op res.partner in Odoo (Single Source of Truth). |
+| Ja, via een Top-up product in Odoo/Kassa (bv. 'Top-up EUR 10' of 'Top-up EUR 20'). Bij verkoop stuurt de poller een consumption_order met item_type=wallet_topup en vervolgens een wallet_balance_update naar Drupal. Het saldo wordt bijgehouden in x_wallet_balance op res.partner in Odoo (Single Source of Truth).<br><br>**Identificatie:** De poller herkent Top-up producten via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — zie Vraag 39 voor de volledige beslissing hierover. In de XML-output krijgen deze producten altijd `vat_rate=0` en `item_type=wallet_topup`, ongeacht de BTW-instelling in Odoo. |
 | **Betrokken teams: Kassa-team, Frontend-team** |
 
 | |
@@ -171,7 +171,7 @@ Berichten gemarkeerd met ✔ DONE zijn vaststaande feiten. Vragen gemarkeerd met
 | |
 | --- |
 | **✔ DONE — Vraag 31 — Wie configureert de productcatalogus in Odoo en hoe?** |
-| Demo: wij kiezen 5 fictieve producten (Koffie, Cola, Pintje, Broodje, Top-up EUR 10/20). De klant beheert de catalogus achteraf zelf uitsluitend in Odoo (Point of Sale > Producten). Geen synchronisatie met Frontend nodig.<br><br>Onze insteek: Voor demomomenten vullen wij de kassa met zelfgekozen fictieve producten. Prioriteit: Odoo zo opzetten dat de klant achteraf zelf eenvoudig de productcatalogus kan beheren. |
+| Demo: wij kiezen 5 fictieve producten (Koffie, Cola, Pintje, Broodje, Top-up EUR 10/20). De klant beheert de catalogus achteraf zelf uitsluitend in Odoo (Point of Sale > Producten). Geen synchronisatie met Frontend nodig.<br><br>**Vereiste configuratie voor Top-up producten:** In Odoo moet de POS-categorie 'Top-ups' aangemaakt worden via Point of Sale > Configuratie > Productcategorieën. Top-up producten worden aan deze categorie gekoppeld. Dit is de primaire trigger waarmee `poller.py` Top-up producten herkent (zie Vraag 39). Alternatief: custom veld `x_is_topup=True` op `product.product`.<br><br>Onze insteek: Voor demomomenten vullen wij de kassa met zelfgekozen fictieve producten. Prioriteit: Odoo zo opzetten dat de klant achteraf zelf eenvoudig de productcatalogus kan beheren. |
 | **Betrokken teams: Kassa-team** |
 
 | |
@@ -209,5 +209,9 @@ Berichten gemarkeerd met ✔ DONE zijn vaststaande feiten. Vragen gemarkeerd met
 | **✔ DONE — Vraag 30 — RabbitMQ exchange/routing strategie — welke aanpak gebruikt Infra?** |
 | Drie deelvragen zijn beantwoord op basis van de Tech Stack documentatie en de huidige sender.py implementatie:<br><br>**(1) Bevestiging van kassa.exchange als topic exchange:** Onze sender.py (v3.5) declareert kassa.exchange zelf als topic exchange bij het opstarten via channel.exchange_declare(). We zijn hiervoor niet afhankelijk van Infra — de exchange wordt automatisch aangemaakt als die nog niet bestaat. Dit is conform de Tech Stack (RABBIT_EXCHANGE environment variable, default: kassa.exchange).<br><br>**(2) Binding keys voor andere teams:** Teams die passief willen meeluisteren (bv. Controlroom) binden hun eigen queue aan kassa.exchange met de wildcard routing key kassa.# — dit geeft hen alle berichten van het kassa-systeem. Specifiekere bindings zijn ook mogelijk, bv. kassa.payments.# voor enkel betalingsberichten. Elk team regelt zijn eigen bindings — wij hoeven daar niets voor aan te passen.<br><br>**(3) Dead-letter queue (DLQ):** Een DLQ is een opvangwachtrij voor berichten die herhaaldelijk falen (bv. door een crash of verwerkingsfout). Onze receiver.py stuurt ongeldige berichten actief naar kassa.errors en geeft een basic_ack — er komen dus geen berichten in een DLQ terecht door onze code. Of Infra een DLQ configureert op de RabbitMQ-queues zelf is hun verantwoordelijkheid en heeft geen impact op onze implementatie. |
 | **Betrokken teams: Kassa-team, Infra-team** |
+
+| **✔ DONE — Vraag 39 — Top-up identificatie: BTW-check of categorie-check?** |
+| **Beslissing:** De poller identificeert Top-up producten voortaan via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — niet langer uitsluitend via `vat_rate=0`.<br><br>**Aanleiding:** De oorspronkelijke implementatie gebruikte `if vat_rate == 0` als trigger om `item_type=wallet_topup` te zetten. Dit is fragiel: elk product zonder BTW-configuratie in Odoo (bv. een intern dienstproduct, een korting of een foutief geconfigureerd product) zou automatisch als Top-up behandeld worden en een onterechte saldo-verhoging veroorzaken.<br><br>**Nieuwe logica in `poller.py` (v1.3):**<br>1. `is_topup_product(models, uid, product_id)` wordt per orderregel aangeroepen.<br>2. Primaire check: POS-categorie naam == `TOPUP_CATEGORY_NAME` ('Top-ups').<br>3. Fallback check: custom veld `x_is_topup == True` op `product.product`.<br>4. Als een product als Top-up herkend wordt: `item_type='wallet_topup'` én `vat_rate=0` worden geforceerd in de XML-export — ongeacht de werkelijke BTW-instelling in Odoo.<br><br>**Impact op externe interfaces:** Geen. De XML-output (`vat_rate=0` + `item_type=wallet_topup`) is identiek aan de vorige implementatie. XSD-schema's en afspraken met CRM- en Drupal-team zijn ongewijzigd.<br><br>**Vereiste Odoo-configuratie:**<br>- POS-categorie 'Top-ups' aanmaken via Point of Sale > Configuratie > Productcategorieën.<br>- Top-up producten koppelen aan deze categorie.<br>- Alternatief: `x_is_topup=True` zetten op `product.product` via Odoo > Instellingen > Technisch > Velden.<br><br>**Constante in code:** `TOPUP_CATEGORY_NAME = "Top-ups"` in `poller.py` — aanpassen als de categorienaam in Odoo afwijkt. |
+| **Betrokken teams: Kassa-team** |
 
 Team Kassa | Vragen & Beslissingslogboek | Integratieproject Desideriushogeschool | 2026

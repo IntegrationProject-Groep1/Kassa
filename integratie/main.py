@@ -6,6 +6,7 @@
 #   - poller     → polls Odoo for new POS orders  (when available)
 #   - heartbeat  → sends periodic heartbeat        (when available)
 
+import logging
 import os
 import sys
 import threading
@@ -16,6 +17,8 @@ import requests
 import receiver
 import sender
 from order_poller import OrderPoller
+
+logging.getLogger("pika").setLevel(logging.WARNING)
 
 
 def _run_receiver() -> None:
@@ -46,26 +49,20 @@ def wait_for_odoo(odoo_url, timeout=120):
 
 
 def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
-    """Auto-create the Odoo database if it doesn't exist yet"""
-    print(f"🔍 Checking if database '{odoo_db}' exists...", flush=True)
+    """Auto-create the Odoo database if it doesn't exist yet, then wait until accessible."""
+    common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
 
-    # First check if we can already authenticate (DB exists)
+    # Fast path: DB already exists and is accessible
     try:
-        common = xmlrpc.client.ServerProxy(
-            f'{odoo_url}/xmlrpc/2/common', allow_none=True)
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if uid:
-            print(
-                f"✅ Database '{odoo_db}' already exists and is accessible",
-                flush=True)
+            print(f"✅ Database '{odoo_db}' already exists and is accessible", flush=True)
             return True
     except Exception:
-        pass  # DB doesn't exist yet — proceed to create it
+        pass
 
-    print(
-        f"📦 Database '{odoo_db}' not found — creating it automatically...",
-        flush=True)
-
+    # Attempt to create the database (ignore errors — it may already exist but not yet ready)
+    print(f"📦 Creating database '{odoo_db}'...", flush=True)
     try:
         resp = requests.post(
             f'{odoo_url}/web/database/create',
@@ -81,37 +78,29 @@ def setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
             timeout=120,
             allow_redirects=True
         )
-
         if resp.status_code in (200, 302):
-            print(
-                f"✅ Database '{odoo_db}' initialized. Waiting for readiness...", flush=True)
-            # Give Odoo a moment to finish initialization by polling for successful auth
-            for _ in range(10):  # Poll for 50 seconds
-                time.sleep(5)
-                try:
-                    common = xmlrpc.client.ServerProxy(
-                        f'{odoo_url}/xmlrpc/2/common', allow_none=True)
-                    uid = common.authenticate(
-                        odoo_db, odoo_user, odoo_pass, {})
-                    if uid:
-                        print(
-                            f"✅ Database '{odoo_db}' is now accessible.", flush=True)
-                        return True
-                except Exception:
-                    pass  # Ignore connection errors during polling
-
-            print(
-                f"⚠️  Database '{odoo_db}' was created, but could not confirm accessibility.", flush=True)
-            return False
+            print("✅ Database creation request accepted", flush=True)
         else:
-            print(
-                f"⚠️  Database creation returned status {resp.status_code}",
-                flush=True)
-            return False
-
+            print(f"ℹ️  Database creation returned {resp.status_code} — may already exist, continuing", flush=True)
     except Exception as e:
-        print(f"❌ Could not auto-create database: {e}", flush=True)
-        return False
+        print(f"⚠️  Database creation request failed: {e} — will keep waiting", flush=True)
+
+    # Wait up to 10 minutes for the DB to become accessible (fresh Odoo init takes time)
+    print(f"⏳ Waiting for database '{odoo_db}' to become accessible (up to 10 min)...", flush=True)
+    for attempt in range(120):
+        time.sleep(5)
+        try:
+            uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+            if uid:
+                print(f"✅ Database '{odoo_db}' is now accessible (after ~{(attempt + 1) * 5}s)", flush=True)
+                return True
+        except Exception:
+            pass
+        if (attempt + 1) % 6 == 0:
+            print(f"   ⏳ Still waiting for DB... ({(attempt + 1) * 5}s elapsed)", flush=True)
+
+    print("❌ Database not accessible after 10 minutes", flush=True)
+    return False
 
 
 def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
@@ -119,15 +108,22 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
     Create custom fields on res.partner and pos.order if they don't exist yet.
     Safe to call on every startup — skips fields that are already present.
     """
+    # Each entry: (ttype, label, extra_vals)
+    # x_user_id and x_badge_id are btree-indexed — looked up on every incoming message
     FIELDS = {
         "res.partner": {
-            "x_user_id":        ("char",    "External User ID"),
-            "x_badge_id":       ("char",    "Badge ID"),
-            "x_wallet_balance": ("float",   "Wallet Balance (EUR)"),
-            "x_age":            ("integer", "Age"),
+            "x_user_id":        ("char",  "External User ID",    {"index": True}),
+            "x_badge_id":       ("char",  "Badge ID",            {"index": True}),
+            "x_wallet_balance": ("float", "Wallet Balance (EUR)", {}),
+            "x_date_of_birth":  ("date",  "Date of Birth",        {}),
         },
         "pos.order": {
-            "x_rabbitmq_sent": ("boolean", "Sent to RabbitMQ"),
+            "x_rabbitmq_sent": ("boolean", "Sent to RabbitMQ", {}),
+            "x_payment_message_id": ("char", "Payment Message ID", {}),
+        },
+        "product.template": {
+            "x_is_topup":       ("boolean", "Is Top-up Product",              {}),
+            "x_age_restricted": ("boolean", "Is Age Restricted (Alcohol)",    {}),
         },
     }
 
@@ -163,14 +159,14 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
                 )
             }
 
-            for fname, (ttype, label) in fields.items():
+            for fname, (ttype, label, extra) in fields.items():
                 if fname in existing:
                     continue
                 models.execute_kw(
                     odoo_db, uid, odoo_pass,
                     "ir.model.fields", "create",
-                    [{"model_id": model_id, "name": fname,
-                      "field_description": label, "ttype": ttype, "store": True}],
+                    [{**{"model_id": model_id, "name": fname,
+                         "field_description": label, "ttype": ttype, "store": True}, **extra}],
                 )
                 print(f"   ✅ Created field {model_name}.{fname} ({ttype})", flush=True)
                 created += 1
@@ -264,43 +260,59 @@ def ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
         return False
 
 
-VALID_VAT_RATES = {0, 6, 12, 21}
-TARGET_VAT_RATE = 6
+VALID_VAT_RATES = {0.0, 6.0, 12.0, 21.0}
+TARGET_VAT_RATE = 6.0
 
 
-def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
+def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
     """
-    Ensure all POS products have a valid VAT rate (0, 6, 12 or 21%).
-    Products with non-standard rates are updated to TARGET_VAT_RATE.
-    Safe to call on every startup — skips products already correctly configured.
+    Ensure price-inclusive VAT taxes exist for standard Belgian rates (0%, 6%, 12%, 21%).
+    Uses amount_type='division' + price_include_override='tax_included' so list_price IS
+    the final customer price. Also fixes POS products with invalid tax rates to 6%.
+    Returns a dict mapping {rate: tax_id} for use in ensure_demo_products.
     """
-    print("🔍 Checking POS product tax rates...", flush=True)
+    print("🔍 Checking tax settings and POS product rates...", flush=True)
     try:
         common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if not uid:
-            print("⚠️  Cannot check product taxes — Odoo auth failed", flush=True)
-            return
+            print("⚠️  Cannot check tax settings — Odoo auth failed", flush=True)
+            return {}
 
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
-        # Find or create target tax
-        existing_tax = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            "account.tax", "search_read",
-            [[["amount", "=", TARGET_VAT_RATE], ["type_tax_use", "in", ["sale", "all"]]]],
-            {"fields": ["id", "name"], "limit": 1}
-        )
-        if existing_tax:
-            target_tax_id = existing_tax[0]["id"]
-        else:
-            target_tax_id = models.execute_kw(
+        tax_map_by_rate = {}
+        for rate in VALID_VAT_RATES:
+            # Always use a 'percent' tax with price_include=True so list_price IS the final price
+            inclusive = models.execute_kw(
                 odoo_db, uid, odoo_pass,
-                "account.tax", "create",
-                [{"name": f"BTW {TARGET_VAT_RATE}%", "amount": TARGET_VAT_RATE,
-                  "type_tax_use": "sale", "amount_type": "percent"}]
+                "account.tax", "search_read",
+                [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                  ["amount_type", "=", "percent"], ["price_include", "=", True]]],
+                {"fields": ["id", "name"], "limit": 1}
             )
-            print(f"   ✅ Created {TARGET_VAT_RATE}% tax", flush=True)
+            if inclusive:
+                tax_id = inclusive[0]["id"]
+            else:
+                tax_id = models.execute_kw(
+                    odoo_db, uid, odoo_pass,
+                    "account.tax", "create",
+                    [{"name": f"BTW {int(rate)}% incl.", "amount": rate,
+                      "type_tax_use": "sale", "amount_type": "percent",
+                      "price_include": True}]
+                )
+                print(f"   ✅ Created {rate}% inclusive tax (percent + price_include)", flush=True)
+
+            tax_map_by_rate[rate] = tax_id
+
+        target_tax_id = tax_map_by_rate[TARGET_VAT_RATE]
+
+        # Set BTW 6% incl. as the default sales tax on the company
+        company_ids = models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "search", [[]])
+        if company_ids:
+            models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "write",
+                              [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
+            print(f"   ✅ Set default sales tax to BTW {TARGET_VAT_RATE}% incl.", flush=True)
 
         # Check all POS products
         product_ids = models.execute_kw(
@@ -309,8 +321,7 @@ def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
             [[["available_in_pos", "=", True]]]
         )
         if not product_ids:
-            print("✅ No POS products found — skipping", flush=True)
-            return
+            return tax_map_by_rate
 
         products = models.execute_kw(
             odoo_db, uid, odoo_pass,
@@ -318,7 +329,6 @@ def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
             [product_ids, ["id", "name", "taxes_id"]]
         )
 
-        # Batch fetch all unique tax IDs in one call
         all_tax_ids = list({tid for p in products for tid in p.get("taxes_id", [])})
         tax_map = {}
         if all_tax_ids:
@@ -329,32 +339,217 @@ def ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass):
             )
             tax_map = {t["id"]: t["amount"] for t in taxes_data}
 
-        # Identify products that need fixing
         to_fix_ids = []
         for product in products:
             tax_ids = product.get("taxes_id", [])
             if not tax_ids:
-                to_fix_ids.append(product["id"])
-                continue
-            rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
+                continue  # Tax-free products are intentional — leave them alone
+            rates = {float(tax_map.get(tid, -1)) for tid in tax_ids}
             if not rates.issubset(VALID_VAT_RATES):
                 print(f"   Fixing '{product['name']}': {rates} → {TARGET_VAT_RATE}%", flush=True)
                 to_fix_ids.append(product["id"])
 
-        # Batch update all products in a single call
         if to_fix_ids:
             models.execute_kw(
                 odoo_db, uid, odoo_pass,
                 "product.template", "write",
                 [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
             )
-            print(f"✅ Product taxes ready — {len(to_fix_ids)} product(s) updated to {TARGET_VAT_RATE}%",
-                  flush=True)
+            print(f"✅ Product taxes ready — {len(to_fix_ids)} product(s) updated to {TARGET_VAT_RATE}%", flush=True)
         else:
             print("✅ Product taxes ready — all products already have valid rates", flush=True)
 
+        return tax_map_by_rate
+
     except Exception as e:
-        print(f"⚠️  Could not verify/fix product taxes: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        print(f"⚠️  Could not verify/fix tax settings: {type(e).__name__}: {str(e)[:200]}", flush=True)
+    return {}
+
+
+def ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass):
+    print("🔍 Checking POS categories...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
+
+        def get_or_create_category(name, color=1):
+            existing = models.execute_kw(
+                odoo_db, uid, odoo_pass, "pos.category", "search_read",
+                [[["name", "=", name]]], {"fields": ["id"]}
+            )
+            if not existing:
+                cat_id = models.execute_kw(
+                    odoo_db, uid, odoo_pass, "pos.category", "create",
+                    [{"name": name, "color": color}]
+                )
+                print(f"   ✅ Created POS category '{name}'", flush=True)
+                return cat_id
+            else:
+                models.execute_kw(
+                    odoo_db, uid, odoo_pass, "pos.category", "write",
+                    [[existing[0]["id"]], {"color": color}]
+                )
+            return existing[0]["id"]
+
+        topup_cat_id = get_or_create_category("Top-ups", 2)  # Light blue
+        drinks_cat_id = get_or_create_category("Drinks", 3)  # Yellow
+        return topup_cat_id, drinks_cat_id
+    except Exception as e:
+        print(f"⚠️  Could not verify POS categories: {e}", flush=True)
+        return None, None
+
+
+def ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass):
+    print("🔍 Checking POS payment methods...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
+
+        needed = [
+            {"name": "Cash", "is_cash_count": True},
+            {"name": "Bancontact", "is_cash_count": False},
+            {"name": "Badge Wallet", "is_cash_count": False}
+        ]
+
+        method_ids = []
+        for method in needed:
+            existing = models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "pos.payment.method", "search_read",
+                [[["name", "=", method["name"]]]],
+                {"fields": ["id"]}
+            )
+            if existing:
+                method_ids.append(existing[0]["id"])
+            else:
+                pm_id = models.execute_kw(
+                    odoo_db, uid, odoo_pass,
+                    "pos.payment.method", "create",
+                    [{"name": method["name"], "is_cash_count": method["is_cash_count"]}]
+                )
+                print(f"   ✅ Created payment method: {method['name']}", flush=True)
+                method_ids.append(pm_id)
+
+        return method_ids
+    except Exception as e:
+        print(f"⚠️  Could not verify payment methods: {e}", flush=True)
+        return []
+
+
+def ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map=None):
+    print("🔍 Checking demo products...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
+
+        def get_tax_id(rate):
+            t = models.execute_kw(
+                odoo_db, uid, odoo_pass, "account.tax", "search_read",
+                [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                  ["amount_type", "=", "division"], ["price_include_override", "=", "tax_included"]]],
+                {"fields": ["id"], "limit": 1}
+            )
+            return t[0]["id"] if t else None
+
+        tax_0 = tax_map.get(0.0) if tax_map else get_tax_id(0.0)
+        tax_6 = tax_map.get(6.0) if tax_map else get_tax_id(6.0)
+        tax_21 = tax_map.get(21.0) if tax_map else get_tax_id(21.0)
+
+        # list_price IS the final customer price (tax included) because we use amount_type='division'
+        demo_products = [
+            {
+                "name": "Cola", "list_price": 2.50,
+                "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
+                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Koffie", "list_price": 2.80,
+                "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
+                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Pintje", "list_price": 3.00,
+                "taxes_id": [(6, 0, [tax_21])] if tax_21 else [],
+                "available_in_pos": True, "type": "consu", "x_age_restricted": True,
+                "color": 3, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else []
+            },
+            {
+                "name": "Top-up €10", "list_price": 10.00,
+                "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
+                "available_in_pos": True, "type": "service", "x_is_topup": True,
+                "color": 2, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []
+            },
+            {
+                "name": "Top-up €20", "list_price": 20.00,
+                "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
+                "available_in_pos": True, "type": "service", "x_is_topup": True,
+                "color": 2, "image_1920": False,
+                "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else []
+            },
+        ]
+
+        for product in demo_products:
+            existing = models.execute_kw(
+                odoo_db, uid, odoo_pass,
+                "product.template", "search_read",
+                [[["name", "=", product["name"]]]],
+                {"fields": ["id"]}
+            )
+            if not existing:
+                models.execute_kw(
+                    odoo_db, uid, odoo_pass,
+                    "product.template", "create",
+                    [product]
+                )
+                print(f"   ✅ Created demo product: {product['name']}", flush=True)
+            else:
+                models.execute_kw(
+                    odoo_db, uid, odoo_pass, "product.template", "write",
+                    [[existing[0]["id"]], {"color": product["color"], "image_1920": False}]
+                )
+
+    except Exception as e:
+        print(f"⚠️  Could not create demo products: {e}", flush=True)
+
+
+def ensure_pos_config(odoo_url, odoo_db, odoo_user, odoo_pass, pm_ids):
+    print("🔍 Checking standard POS configuration...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
+
+        desired_vals = {
+            "limit_categories": False,
+            "iface_tax_included": "total",
+            "payment_method_ids": [(6, 0, pm_ids)],
+        }
+
+        configs = models.execute_kw(
+            odoo_db, uid, odoo_pass,
+            "pos.config", "search_read",
+            [[["name", "=", "Bar Kassa"]]],
+            {"fields": ["id"], "limit": 1}
+        )
+
+        if configs:
+            config_id = configs[0]["id"]
+            models.execute_kw(odoo_db, uid, odoo_pass, "pos.config", "write", [[config_id], desired_vals])
+            print(f"   ✅ Updated 'Bar Kassa' POS config (id={config_id})", flush=True)
+        else:
+            desired_vals["name"] = "Bar Kassa"
+            config_id = models.execute_kw(odoo_db, uid, odoo_pass, "pos.config", "create", [desired_vals])
+            print(f"   ✅ Created POS configuration 'Bar Kassa' (id={config_id})", flush=True)
+
+    except Exception as e:
+        print(f"⚠️  Could not update POS config: {e}", flush=True)
 
 
 def main():
@@ -385,8 +580,14 @@ def main():
     # Step 4: Ensure custom Odoo fields exist (x_user_id, x_badge_id, etc.)
     ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass)
 
-    # Step 5: Fix non-standard product tax rates
-    ensure_product_taxes(odoo_url, odoo_db, odoo_user, odoo_pass)
+    # Step 5: Configure tax settings globally
+    tax_map = ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass)
+
+    # Step 6: Setup POS base data (categories, payment methods, demo products, pos.config)
+    topup_cat_id, drinks_cat_id = ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass)
+    pm_ids = ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
+    ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map)
+    ensure_pos_config(odoo_url, odoo_db, odoo_user, odoo_pass, pm_ids)
 
     # ── Receiver thread ────────────────────────────────────────────────────────
     receiver_thread = threading.Thread(
@@ -397,7 +598,7 @@ def main():
     receiver_thread.start()
     print("✅ Receiver thread started", flush=True)
 
-    # Step 4: Initialize and start Order Poller
+    # Step 7: Initialize and start Order Poller
     print("📦 Starting Order Poller...", flush=True)
     poller = OrderPoller()
 

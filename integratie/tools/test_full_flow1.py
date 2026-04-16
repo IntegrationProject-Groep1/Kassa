@@ -63,7 +63,7 @@ NEW_REGISTRATION_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
       <type>company</type>
       <vat_number>{TEST_VAT}</vat_number>
       <user_id>{TEST_USER_ID}</user_id>
-      <age>30</age>
+            <date_of_birth>1996-01-01</date_of_birth>
     </customer>
     <payment_due>
       <amount>50.00</amount>

@@ -1,6 +1,33 @@
 """
-Order Poller — Retrieves completed orders from Odoo POS
-and sends them to RabbitMQ via sender.py
+order_poller.py — Polls Odoo POS for completed orders and publishes them to RabbitMQ.
+
+Runs in a background thread started by main.py. Every `interval` seconds
+(default: 5) it fetches all POS orders in state 'paid' or 'done' and sends
+each one as a consumption_order XML message via sender.send_typed_message().
+
+Duplicate prevention:
+    A module-level OrderedDict (processed_orders) tracks every order ID that
+    has been sent in this session. Orders already in the dict are skipped.
+    The dict is capped at 10,000 entries (LRU eviction) to prevent unbounded
+    memory growth in long-running deployments.
+
+Anonymous vs named customers:
+    If the POS order has no linked partner (partner_id is False/None) the order
+    is treated as anonymous. If a partner is linked but get_customer_info()
+    fails to fetch it, the order also falls back to anonymous rather than
+    failing entirely.
+
+Company detection:
+    A customer is considered company-linked if:
+      1. Their own res.partner record has is_company=True, OR
+      2. They have a parent_id whose res.partner record has is_company=True
+         (i.e. they are a contact under a company account).
+    The second check requires an extra Odoo read — see process_order().
+
+Offline resilience:
+    Sending goes through sender.send_message(), which writes to outbox.json
+    if the broker is unreachable. flush_buffer() is called every 30 seconds
+    inside the polling loop to replay any buffered messages.
 """
 
 import xmlrpc.client
@@ -9,6 +36,8 @@ import time
 import logging
 from pathlib import Path
 import collections
+import xml.etree.ElementTree as ET
+import uuid
 import sender  # Import the sender module
 
 # Logging setup
@@ -29,12 +58,22 @@ XML_REFUND_METHOD_CASH = "cash"
 
 # Default fallback values for refund XML fields
 DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
-DEFAULT_REFUND_REASON = "Processed via POS"
+# <refund><reason> is a free-text xs:string in the XSD — no enum restriction.
+# "customer_request" is the canonical value for a cashier-initiated refund
+# on behalf of a customer, consistent with CRM naming conventions.
+DEFAULT_REFUND_REASON = "customer_request"
 
 
 class OrderPoller:
     def __init__(self):
-        """Initialize Odoo connection"""
+        """
+        Read Odoo credentials from the environment and prepare internal state.
+
+        processed_orders is an OrderedDict used as a bounded set: values are
+        always True, the key is the Odoo order ID. OrderedDict preserves
+        insertion order which makes the LRU eviction in process_order()
+        deterministic (oldest entry removed first).
+        """
         self.odoo_url = os.environ.get("ODOO_URL")
         self.odoo_db = os.environ.get("ODOO_DB")
         self.odoo_user = os.environ.get("ODOO_USER")
@@ -49,7 +88,12 @@ class OrderPoller:
         self.outbox_dir.mkdir(parents=True, exist_ok=True)
 
     def connect_odoo(self):
-        """Authenticate with Odoo"""
+        """
+        Authenticate against the Odoo XML-RPC endpoint and store the uid.
+
+        Returns True on success, False if authentication fails or the server
+        is unreachable. The caller (main.py) exits if this returns False.
+        """
         try:
             common = xmlrpc.client.ServerProxy(
                 f'{self.odoo_url}/xmlrpc/2/common', allow_none=True)
@@ -69,8 +113,18 @@ class OrderPoller:
             return False
 
     def get_pending_orders(self):
-        """Fetch completed orders from Odoo POS that haven't been sent yet"""
+        """
+        Return all POS orders in state 'paid' or 'done' from Odoo.
+
+        'Pending' here means not yet processed by this poller session, not a
+        separate Odoo field. Filtering against processed_orders happens in
+        process_order(), not here, so this query always returns the full set.
+        """
         try:
+            # Exclude orders already sitting in the outbox buffer — they are awaiting
+            # flush and must not be re-processed (which would generate new message_ids
+            # and produce duplicates once the buffer is flushed).
+            buffered_ids = sender.get_buffered_order_ids()
 
             # Search for completed orders not yet sent to RabbitMQ
             order_ids = self.models.execute_kw(
@@ -78,6 +132,10 @@ class OrderPoller:
                 'pos.order', 'search',
                 [[['state', 'in', ['paid', 'done']], ['x_rabbitmq_sent', '=', False]]]
             )
+
+            if buffered_ids:
+                order_ids = [
+                    oid for oid in order_ids if oid not in buffered_ids]
 
             if not order_ids:
                 return []
@@ -87,13 +145,13 @@ class OrderPoller:
                 'amount_tax', 'payment_ids', 'create_date', 'session_id'
             ]
             try:
-                # Try reading with x_wallet_updated
+                # Try reading with x_wallet_updated and x_payment_message_id
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
-                    [order_ids, fields + ['x_wallet_updated']])
+                    [order_ids, fields + ['x_wallet_updated', 'x_payment_message_id']])
             except xmlrpc.client.Fault:
-                # Fallback if x_wallet_updated does not exist
+                # Fallback if fields do not exist
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
@@ -105,24 +163,32 @@ class OrderPoller:
             return []
 
     def get_customer_info(self, partner_id):
-        """Fetch customer details from Odoo"""
+        """
+        Fetch a res.partner record from Odoo and return it as a dict.
+
+        partner_id can be either a plain integer or the (id, display_name)
+        tuple that Odoo XML-RPC returns for many2one fields — both forms are
+        handled. Returns None if the partner cannot be fetched.
+        """
         if not partner_id:
             return None
 
         try:
 
-            # partner_id is usually a tuple like (ID, name)
+            # Odoo XML-RPC returns many2one fields as [id, "Display Name"]
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
 
-            base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_wallet_balance']
+            base_fields = ['id', 'name', 'email', 'phone',
+                           'is_company', 'parent_id', 'x_wallet_balance']
             try:
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields + ['x_user_id']])
             except Exception:
                 # x_user_id is a custom field that may not exist yet in this Odoo instance
-                logger.warning("⚠️  x_user_id field not found on res.partner — fetching without it")
+                logger.warning(
+                    "⚠️  x_user_id field not found on res.partner — fetching without it")
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields])
@@ -133,7 +199,20 @@ class OrderPoller:
             return None
 
     def process_order(self, order):
-        """Process a single order: fetch details, build XML, send via sender"""
+        """
+        Build and send the consumption_order message for one POS order.
+
+        Returns True if the order was sent (or skipped as a duplicate),
+        False if an exception prevented processing.
+
+        Steps:
+          1. Check processed_orders — skip if already sent this session.
+          2. Resolve the linked partner (anonymous if none or lookup fails).
+          3. Read each order line to get product name, quantity, and VAT rate.
+          4. Determine company linkage (see company detection note below).
+          5. Build the XML and send via sender.send_typed_message().
+          6. Record order_id in processed_orders.
+        """
         order_id = order['id']
 
         # Skip if already processed
@@ -153,39 +232,61 @@ class OrderPoller:
                 is_anonymous = True
 
             if order.get('amount_total', 0) < 0:
-                self._process_refund(order, order_id, customer_info)
+                all_sent = self._process_refund(
+                    order, order_id, customer_info, is_anonymous)
+                payment_msg_id = None
             else:
-                self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, payment_msg_id = self._process_consumption(
+                    order, customer_info, is_anonymous)
 
-            # Update in-memory cache immediately after send to suppress duplicates
-            # within the same session even if the Odoo write below fails.
+            # Update in-memory cache immediately to suppress duplicates within
+            # the current session, regardless of whether messages were sent or buffered.
             self.processed_orders[order_id] = True
             if len(self.processed_orders) > MAX_CACHE_SIZE:
                 self.processed_orders.popitem(last=False)
 
-            # Persist sent status in Odoo — survives container restarts.
-            # at-least-once: if this write fails the in-memory cache still
-            # prevents a duplicate storm within the current session.
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.order', 'write',
-                [[order_id], {'x_rabbitmq_sent': True}]
-            )
+            # Mark payment msg id in odoo if generated
+            if payment_msg_id:
+                try:
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'write',
+                        [[order_id], {'x_payment_message_id': payment_msg_id}]
+                    )
+                except xmlrpc.client.Fault as e:
+                    logger.warning(
+                        f"⚠️ Could not set x_payment_message_id on order: {e}")
 
-            status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
-            logger.info(f"📦 Order {order_id}: {status_text}")
+            if all_sent:
+                # All messages reached RabbitMQ — safe to mark as sent in Odoo.
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'write',
+                    [[order_id], {'x_rabbitmq_sent': True}]
+                )
+                status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
+                logger.info(f"📦 Order {order_id}: {status_text}")
+            else:
+                # Messages are in outbox.json — x_rabbitmq_sent stays False.
+                # get_pending_orders() will exclude this order (it's in the buffer)
+                # and _mark_orders_sent() will set True once flush_buffer() succeeds.
+                logger.info(
+                    f"📁 Order {order_id} buffered — x_rabbitmq_sent stays False until flush")
+
             return True
 
         except Exception as e:
             logger.error(f"❌ Error processing order {order_id}: {e}")
             return False
 
-    def _process_refund(self, order, order_id, customer_info):
-        """Handle refund logic and wallet updates"""
+    def _process_refund(self, order, order_id, customer_info, is_anonymous) -> bool:
+        """Handle refund logic and wallet updates. Returns True if all messages were sent
+        (not buffered), False if any message ended up in the outbox buffer."""
         # 1. Determine the payment method in Odoo via payment_ids
         payment_ids = order.get('payment_ids', [])
         is_badge_wallet = False
         refund_method = DEFAULT_REFUND_METHOD
+        ok_wallet = True  # True by default — only overwritten when wallet send is attempted
 
         if payment_ids:
             payments = self.models.execute_kw(
@@ -220,16 +321,19 @@ class OrderPoller:
                     [[order_id], {'x_wallet_updated': True}]
                 )
             except xmlrpc.client.Fault as e:
-                logger.warning(f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
+                logger.warning(
+                    f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
 
             wallet_xml = sender.build_wallet_balance_update_xml(
                 user_id=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
-            sender.send_typed_message('wallet_balance_update', wallet_xml)
+            ok_wallet = sender.send_typed_message(
+                'wallet_balance_update', wallet_xml, order_id=order_id)
         # 3. Always send refund_processed XML
-        original_msg_id = "Unknown"
-        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order.get('lines', [])]
+        original_msg_id = str(uuid.uuid4())
+        line_ids = [item[0] if isinstance(
+            item, (list, tuple)) else item for item in order.get('lines', [])]
 
         if line_ids:
             try:
@@ -241,7 +345,8 @@ class OrderPoller:
                 for r_line in refund_lines:
                     orig_line = r_line.get('refunded_orderline_id')
                     if orig_line:
-                        orig_line_id = orig_line[0] if isinstance(orig_line, (list, tuple)) else orig_line
+                        orig_line_id = orig_line[0] if isinstance(
+                            orig_line, (list, tuple)) else orig_line
                         orig_line_data = self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'pos.order.line', 'read',
@@ -249,32 +354,63 @@ class OrderPoller:
                         )
                         if orig_line_data and orig_line_data[0].get('order_id'):
                             orig_order = orig_line_data[0]['order_id']
-                            orig_order_id = orig_order[0] if isinstance(orig_order, (list, tuple)) else orig_order
-                            # TODO: Replace ORDER-{id} with Master UUID once available project-wide.
-                            # The correlation_id spec (Datamapping_Kassa.md §246) expects a UUID v4.
-                            # For now we use the Odoo order ID as a stable, human-readable reference.
-                            original_msg_id = f"ORDER-{orig_order_id}"
+                            orig_order_id = orig_order[0] if isinstance(
+                                orig_order, (list, tuple)) else orig_order
+
+                            # Fetch x_payment_message_id from the original order
+                            orig_order_full = self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'read',
+                                [[orig_order_id], ['x_payment_message_id']]
+                            )
+                            if orig_order_full and orig_order_full[0].get('x_payment_message_id'):
+                                original_msg_id = orig_order_full[0]['x_payment_message_id']
+                            else:
+                                logger.warning(
+                                    f"⚠️ Original order {orig_order_id} has no x_payment_message_id — "
+                                    f"falling back to a generated UUID for refund order {order['id']}. "
+                                    "The CRM will NOT be able to link this refund to the original payment. "
+                                    "Check whether the original order was processed before "
+                                    "x_payment_message_id was introduced."
+                                )
                             break
             except Exception as e:
-                logger.warning(f"⚠️ Could not fetch original order ID for refund: {e}")
+                logger.warning(
+                    f"⚠️ Could not fetch original order ID for refund: {e}")
 
-        logger.info(f"🔍 Refund order {order['id']} traced to: {original_msg_id}")
+        logger.info(
+            f"🔍 Refund order {order['id']} traced to: {original_msg_id}")
+
+        if is_anonymous:
+            # Enforce non-badge_wallet constraints for anonymous users
+            user_id_val = None
+            if is_badge_wallet or refund_method == XML_REFUND_METHOD_WALLET:
+                refund_method = "cash"
+                is_badge_wallet = False
+        else:
+            user_id_val = customer_info.get('x_user_id')
+
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
-            refund_type="POS_RETURN",
+            refund_type="consumption_item",
             refund_amount=abs(order['amount_total']),
             refund_method=refund_method,
             refund_reason=DEFAULT_REFUND_REASON,
             original_transaction_id=str(order['id']),
-            user_id=customer_info.get('x_user_id') if customer_info else None
+            user_id=user_id_val,
+            is_anonymous=is_anonymous
         )
-        sender.send_typed_message('refund_processed', refund_xml)
+        ok_refund = sender.send_typed_message(
+            'refund_processed', refund_xml, order_id=order_id)
+        return ok_wallet and ok_refund
 
-    def _process_consumption(self, order, customer_info, is_anonymous):
-        """Handle regular sales orders and dispatch consumption_order"""
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
+        """Handle regular sales orders and dispatch consumption_order.
+        Returns a tuple: (all_sent_boolean, payment_message_id_string)."""
         items = []
         # Extract all line IDs
-        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order['lines']]
+        line_ids = [item[0] if isinstance(
+            item, (list, tuple)) else item for item in order['lines']]
 
         if line_ids:
             line_details = self.models.execute_kw(
@@ -283,7 +419,8 @@ class OrderPoller:
                 [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
             )
             # Pre-fetch all associated taxes in one bulk call
-            all_tax_ids = list(set([tid for line in line_details for tid in line.get('tax_ids', [])]))
+            all_tax_ids = list(
+                set([tid for line in line_details for tid in line.get('tax_ids', [])]))
             tax_map = {}
             if all_tax_ids:
                 tax_details = self.models.execute_kw(
@@ -301,7 +438,8 @@ class OrderPoller:
                 tax_ids_for_line = line.get('tax_ids', [])
                 if tax_ids_for_line:
                     # Use tax_map to find max amount
-                    amounts = [tax_map.get(t_id, 0) for t_id in tax_ids_for_line]
+                    amounts = [tax_map.get(t_id, 0)
+                               for t_id in tax_ids_for_line]
                     if amounts:
                         vat_rate = int(max(amounts))
 
@@ -334,26 +472,63 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            user_id=str(customer_info.get('x_user_id')) if customer_info else None,
+            user_id=str(customer_info.get('x_user_id')) if customer_info and customer_info.get('x_user_id') else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
             is_anonymous=is_anonymous)
 
         # Send via sender module
-        sender.send_typed_message('consumption_order', xml_message)
+        order_id = order['id']
+        ok_consumption = sender.send_typed_message(
+            'consumption_order', xml_message, order_id=order_id)
+
+        # Extract message_id to link payment
+        correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
+
+        # Determine payment method (on_site covers cash, card, and wallet per Datamapping_Kassa.md)
+        payment_method = "on_site"
+
+        # Format date for XML (requires YYYY-MM-DD for xs:date)
+        create_date = order.get('create_date', '')
+        due_date = create_date.split(" ")[0] if create_date else "1970-01-01"
+
+        user_id_val = customer_info.get('x_user_id') if customer_info else None
+
+        payment_xml = sender.build_payment_registered_xml(
+            payment_context="consumption",
+            invoice_status="paid",
+            amount_paid=float(order.get('amount_total', 0.0)),
+            due_date=due_date,
+            trx_id=str(order['id']),
+            payment_method=payment_method,
+            user_id=str(user_id_val) if user_id_val else None,
+            correlation_id=correlation_id
+        )
+        ok_payment = sender.send_typed_message(
+            'payment_registered_consumption', payment_xml, order_id=order_id)
+        payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
+        return (ok_consumption and ok_payment), payment_msg_id
 
     def poll(self, interval=5):
-        """Main polling loop"""
+        """
+        Run the polling loop indefinitely, sleeping `interval` seconds between cycles.
+
+        flush_buffer() is called every 30 seconds (reconnect_interval) rather
+        than every cycle to avoid hammering the broker with reconnect attempts
+        when it is down. The counter resets after each flush.
+        """
         logger.info(f"Order Poller started (interval: {interval}s)")
         reconnect_counter = 0
         reconnect_interval = 30
 
         while True:
             try:
-                # Every 30 seconds try to flush outbox
+                # Flush the outbox buffer roughly every 30 seconds
                 reconnect_counter += 1
                 if reconnect_counter >= reconnect_interval / interval:
-                    sender.flush_buffer()
+                    flushed_ids = sender.flush_buffer()
+                    if flushed_ids:
+                        self._mark_orders_sent(flushed_ids)
                     reconnect_counter = 0
 
                 # Get and process pending orders
@@ -370,6 +545,24 @@ class OrderPoller:
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
                 time.sleep(interval)
+
+    def _mark_orders_sent(self, order_ids: list) -> None:
+        """Write x_rabbitmq_sent=True in Odoo for orders that were just successfully
+        flushed from the outbox buffer."""
+        unique_ids = list(set(order_ids))
+        if not unique_ids:
+            return
+        try:
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            logger.info(
+                f"✅ Marked {len(unique_ids)} orders as sent after buffer flush")
+        except Exception as e:
+            logger.warning(
+                f"⚠️  Could not mark orders as sent after flush: {e}")
 
 
 def main():
