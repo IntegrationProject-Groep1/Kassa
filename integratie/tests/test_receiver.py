@@ -281,16 +281,20 @@ class TestProcessBadgeScan:
             "</message>"
         )
 
-    def test_known_badge_prints_info(self, odoo, capsys):
+    def test_known_badge_prints_info(self, odoo, caplog):
+        import logging
+        caplog.set_level(logging.INFO)
         uid, models = odoo
         models.execute_kw.return_value = [
             {"id": 3, "name": "Alice", "x_user_id": "uid-001",
              "x_wallet_balance": 12.50, "x_date_of_birth": "1996-01-01", "is_company": False}
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
-        output = capsys.readouterr().out
-        assert "BADGE-001" in output
-        assert "Alice" in output
+
+        assert "Badge recognised: Odoo ID=3" in caplog.text
+        assert "Location=bar" in caplog.text
+        assert "BADGE-001" not in caplog.text  # PII removed
+        assert "Alice" not in caplog.text      # PII removed
 
     @patch("receiver.send_error_to_queue")
     def test_unknown_badge_sends_error(self, mock_send_error, odoo):
@@ -335,14 +339,14 @@ class TestProcessCancelRegistration:
         assert write_call[0][4] == "write"
         assert write_call[0][5][1] == {"active": False}
 
-    def test_no_action_when_not_found(self, odoo, capsys):
+    def test_no_action_when_not_found(self, odoo, caplog):
         uid, models = odoo
         models.execute_kw.return_value = []
         receiver.process_cancel_registration(self._root(), uid, models)
         # write should NOT have been called
         for c in models.execute_kw.call_args_list:
             assert c[0][4] != "write"
-        assert "no action" in capsys.readouterr().out
+        assert "no action" in caplog.text
 
     def test_raises_when_user_id_missing(self, odoo):
         uid, models = odoo
