@@ -110,7 +110,7 @@ def test_process_order_routes_refund(mock_sender, poller):
     poller.models.execute_kw.return_value = True
 
     with patch.object(poller, '_process_refund') as mock_refund, \
-         patch.object(poller, '_process_consumption') as mock_consumption:
+            patch.object(poller, '_process_consumption') as mock_consumption:
         poller.process_order(order)
         mock_refund.assert_called_once()
         mock_consumption.assert_not_called()
@@ -126,7 +126,7 @@ def test_process_order_routes_consumption(mock_sender, poller):
     poller.models.execute_kw.return_value = True
 
     with patch.object(poller, '_process_refund') as mock_refund, \
-         patch.object(poller, '_process_consumption') as mock_consumption:
+            patch.object(poller, '_process_consumption') as mock_consumption:
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -198,7 +198,8 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
     }
     # Payment method is NOT Badge Wallet
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (2, 'Cash'), 'amount': -5.0}],  # pos.payment read
+        # pos.payment read
+        [{'payment_method_id': (2, 'Cash'), 'amount': -5.0}],
         [],  # pos.order.line read (no lines)
     ]
 
@@ -222,7 +223,8 @@ def test_process_refund_badge_wallet_updates_balance(mock_sender, poller):
         'payment_ids': [2], 'x_wallet_updated': False,
     }
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': -4.0}],  # payments
+        [{'payment_method_id': (3, 'Badge Wallet'),
+          'amount': -4.0}],  # payments
         True,    # res.partner write (new balance)
         True,    # pos.order write (x_wallet_updated)
         [],      # pos.order.line read for traceability
@@ -246,7 +248,8 @@ def test_process_refund_already_updated_wallet_skips_write(mock_sender, poller):
         'payment_ids': [2], 'x_wallet_updated': True,  # already done
     }
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': -4.0}],  # payments
+        [{'payment_method_id': (3, 'Badge Wallet'),
+          'amount': -4.0}],  # payments
         [],  # pos.order.line read for traceability
     ]
 
@@ -306,7 +309,8 @@ def test_process_refund_uses_customer_request_reason(mock_sender, poller):
         'payment_ids': [1], 'x_wallet_updated': False,
     }
     poller.models.execute_kw.side_effect = [
-        [{'payment_method_id': (2, 'Cash'), 'amount': -7.50}],  # pos.payment read
+        # pos.payment read
+        [{'payment_method_id': (2, 'Cash'), 'amount': -7.50}],
     ]
 
     poller._process_refund(order, 15, None, is_anonymous=True)
@@ -332,8 +336,10 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
     poller.models.execute_kw.side_effect = [
         # pos.order.line read
         [
-            {'id': 10, 'product_id': (1, 'Beer'), 'qty': 2, 'price_unit': 3.0, 'tax_ids': [5]},
-            {'id': 11, 'product_id': (2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
+            {'id': 10, 'product_id': (
+                1, 'Beer'), 'qty': 2, 'price_unit': 3.0, 'tax_ids': [5]},
+            {'id': 11, 'product_id': (
+                2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
         ],
         # account.tax bulk read
         [{'id': 5, 'amount': 6.0}],
@@ -354,8 +360,10 @@ def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
     order = {'id': 21, 'lines': [(10,), (11,)], 'amount_total': 15.0}
     poller.models.execute_kw.side_effect = [
         [
-            {'id': 10, 'product_id': (1, 'A'), 'qty': 1, 'price_unit': 5.0, 'tax_ids': [3]},
-            {'id': 11, 'product_id': (2, 'B'), 'qty': 1, 'price_unit': 2.0, 'tax_ids': [3]},
+            {'id': 10, 'product_id': (1, 'A'), 'qty': 1,
+             'price_unit': 5.0, 'tax_ids': [3]},
+            {'id': 11, 'product_id': (2, 'B'), 'qty': 1,
+             'price_unit': 2.0, 'tax_ids': [3]},
         ],
         [{'id': 3, 'amount': 21.0}],  # single bulk tax call
     ]

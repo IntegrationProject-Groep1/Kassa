@@ -134,7 +134,8 @@ class OrderPoller:
             )
 
             if buffered_ids:
-                order_ids = [oid for oid in order_ids if oid not in buffered_ids]
+                order_ids = [
+                    oid for oid in order_ids if oid not in buffered_ids]
 
             if not order_ids:
                 return []
@@ -178,14 +179,16 @@ class OrderPoller:
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
 
-            base_fields = ['id', 'name', 'email', 'phone', 'is_company', 'parent_id', 'x_wallet_balance']
+            base_fields = ['id', 'name', 'email', 'phone',
+                           'is_company', 'parent_id', 'x_wallet_balance']
             try:
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields + ['x_user_id']])
             except Exception:
                 # x_user_id is a custom field that may not exist yet in this Odoo instance
-                logger.warning("⚠️  x_user_id field not found on res.partner — fetching without it")
+                logger.warning(
+                    "⚠️  x_user_id field not found on res.partner — fetching without it")
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields])
@@ -229,10 +232,12 @@ class OrderPoller:
                 is_anonymous = True
 
             if order.get('amount_total', 0) < 0:
-                all_sent = self._process_refund(order, order_id, customer_info, is_anonymous)
+                all_sent = self._process_refund(
+                    order, order_id, customer_info, is_anonymous)
                 payment_msg_id = None
             else:
-                all_sent, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, payment_msg_id = self._process_consumption(
+                    order, customer_info, is_anonymous)
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
@@ -249,7 +254,8 @@ class OrderPoller:
                         [[order_id], {'x_payment_message_id': payment_msg_id}]
                     )
                 except xmlrpc.client.Fault as e:
-                    logger.warning(f"⚠️ Could not set x_payment_message_id on order: {e}")
+                    logger.warning(
+                        f"⚠️ Could not set x_payment_message_id on order: {e}")
 
             if all_sent:
                 # All messages reached RabbitMQ — safe to mark as sent in Odoo.
@@ -264,7 +270,8 @@ class OrderPoller:
                 # Messages are in outbox.json — x_rabbitmq_sent stays False.
                 # get_pending_orders() will exclude this order (it's in the buffer)
                 # and _mark_orders_sent() will set True once flush_buffer() succeeds.
-                logger.info(f"📁 Order {order_id} buffered — x_rabbitmq_sent stays False until flush")
+                logger.info(
+                    f"📁 Order {order_id} buffered — x_rabbitmq_sent stays False until flush")
 
             return True
 
@@ -314,16 +321,19 @@ class OrderPoller:
                     [[order_id], {'x_wallet_updated': True}]
                 )
             except xmlrpc.client.Fault as e:
-                logger.warning(f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
+                logger.warning(
+                    f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
 
             wallet_xml = sender.build_wallet_balance_update_xml(
                 user_id=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
-            ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
+            ok_wallet = sender.send_typed_message(
+                'wallet_balance_update', wallet_xml, order_id=order_id)
         # 3. Always send refund_processed XML
         original_msg_id = str(uuid.uuid4())
-        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order.get('lines', [])]
+        line_ids = [item[0] if isinstance(
+            item, (list, tuple)) else item for item in order.get('lines', [])]
 
         if line_ids:
             try:
@@ -335,7 +345,8 @@ class OrderPoller:
                 for r_line in refund_lines:
                     orig_line = r_line.get('refunded_orderline_id')
                     if orig_line:
-                        orig_line_id = orig_line[0] if isinstance(orig_line, (list, tuple)) else orig_line
+                        orig_line_id = orig_line[0] if isinstance(
+                            orig_line, (list, tuple)) else orig_line
                         orig_line_data = self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'pos.order.line', 'read',
@@ -343,7 +354,8 @@ class OrderPoller:
                         )
                         if orig_line_data and orig_line_data[0].get('order_id'):
                             orig_order = orig_line_data[0]['order_id']
-                            orig_order_id = orig_order[0] if isinstance(orig_order, (list, tuple)) else orig_order
+                            orig_order_id = orig_order[0] if isinstance(
+                                orig_order, (list, tuple)) else orig_order
 
                             # Fetch x_payment_message_id from the original order
                             orig_order_full = self.models.execute_kw(
@@ -358,13 +370,16 @@ class OrderPoller:
                                     f"⚠️ Original order {orig_order_id} has no x_payment_message_id — "
                                     f"falling back to a generated UUID for refund order {order['id']}. "
                                     "The CRM will NOT be able to link this refund to the original payment. "
-                                    "Check whether the original order was processed before x_payment_message_id was introduced."
+                                    "Check whether the original order was processed before "
+                                    "x_payment_message_id was introduced."
                                 )
                             break
             except Exception as e:
-                logger.warning(f"⚠️ Could not fetch original order ID for refund: {e}")
+                logger.warning(
+                    f"⚠️ Could not fetch original order ID for refund: {e}")
 
-        logger.info(f"🔍 Refund order {order['id']} traced to: {original_msg_id}")
+        logger.info(
+            f"🔍 Refund order {order['id']} traced to: {original_msg_id}")
 
         if is_anonymous:
             # Enforce non-badge_wallet constraints for anonymous users
@@ -385,7 +400,8 @@ class OrderPoller:
             user_id=user_id_val,
             is_anonymous=is_anonymous
         )
-        ok_refund = sender.send_typed_message('refund_processed', refund_xml, order_id=order_id)
+        ok_refund = sender.send_typed_message(
+            'refund_processed', refund_xml, order_id=order_id)
         return ok_wallet and ok_refund
 
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
@@ -393,7 +409,8 @@ class OrderPoller:
         Returns a tuple: (all_sent_boolean, payment_message_id_string)."""
         items = []
         # Extract all line IDs
-        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order['lines']]
+        line_ids = [item[0] if isinstance(
+            item, (list, tuple)) else item for item in order['lines']]
 
         if line_ids:
             line_details = self.models.execute_kw(
@@ -402,7 +419,8 @@ class OrderPoller:
                 [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids']]
             )
             # Pre-fetch all associated taxes in one bulk call
-            all_tax_ids = list(set([tid for line in line_details for tid in line.get('tax_ids', [])]))
+            all_tax_ids = list(
+                set([tid for line in line_details for tid in line.get('tax_ids', [])]))
             tax_map = {}
             if all_tax_ids:
                 tax_details = self.models.execute_kw(
@@ -420,7 +438,8 @@ class OrderPoller:
                 tax_ids_for_line = line.get('tax_ids', [])
                 if tax_ids_for_line:
                     # Use tax_map to find max amount
-                    amounts = [tax_map.get(t_id, 0) for t_id in tax_ids_for_line]
+                    amounts = [tax_map.get(t_id, 0)
+                               for t_id in tax_ids_for_line]
                     if amounts:
                         vat_rate = int(max(amounts))
 
@@ -453,14 +472,16 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            user_id=str(customer_info.get('x_user_id')) if customer_info else None,
+            user_id=str(customer_info.get('x_user_id')
+                        ) if customer_info else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
             is_anonymous=is_anonymous)
 
         # Send via sender module
         order_id = order['id']
-        ok_consumption = sender.send_typed_message('consumption_order', xml_message, order_id=order_id)
+        ok_consumption = sender.send_typed_message(
+            'consumption_order', xml_message, order_id=order_id)
 
         # Extract message_id to link payment
         correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
@@ -484,7 +505,8 @@ class OrderPoller:
             user_id=str(user_id_val) if user_id_val else None,
             correlation_id=correlation_id
         )
-        ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, order_id=order_id)
+        ok_payment = sender.send_typed_message(
+            'payment_registered_consumption', payment_xml, order_id=order_id)
         payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
         return (ok_consumption and ok_payment), payment_msg_id
 
@@ -537,9 +559,11 @@ class OrderPoller:
                 'pos.order', 'write',
                 [unique_ids, {'x_rabbitmq_sent': True}]
             )
-            logger.info(f"✅ Marked {len(unique_ids)} orders as sent after buffer flush")
+            logger.info(
+                f"✅ Marked {len(unique_ids)} orders as sent after buffer flush")
         except Exception as e:
-            logger.warning(f"⚠️  Could not mark orders as sent after flush: {e}")
+            logger.warning(
+                f"⚠️  Could not mark orders as sent after flush: {e}")
 
 
 def main():

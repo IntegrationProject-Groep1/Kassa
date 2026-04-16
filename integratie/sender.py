@@ -119,7 +119,8 @@ def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = N
     return the Odoo order IDs of successfully flushed messages and the poller
     can then write x_rabbitmq_sent=True for those orders.
     """
-    entry: dict[str, str | int] = {"routing_key": routing_key, "xml": message_xml}
+    entry: dict[str, str | int] = {
+        "routing_key": routing_key, "xml": message_xml}
     if order_id is not None:
         entry["order_id"] = order_id
     entries = _read_buffer()
@@ -243,7 +244,8 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+        # type: ignore[attr-defined]
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):
             global _connection, _channel
             _connection = None
             _channel = None
@@ -337,12 +339,14 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+        _schema_cache[msg_type] = etree.XMLSchema(
+            etree.parse(str(schema_path)))
 
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        raise ValueError(
+            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
 def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
@@ -350,7 +354,8 @@ def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = N
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        logger.warning(
+            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     return send_message(routing_key, message_xml, order_id=order_id)
