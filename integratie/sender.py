@@ -35,6 +35,7 @@ import pika
 import json
 import os
 import time
+import threading
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -104,6 +105,10 @@ OUTBOUND_QUEUE_BINDINGS = {
 BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
+_buffer_lock = threading.Lock()
+_cached_buffer_ids = set()
+_last_buffer_mtime = 0.0
+
 
 def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
     """
@@ -119,26 +124,27 @@ def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = N
     return the Odoo order IDs of successfully flushed messages and the poller
     can then write x_rabbitmq_sent=True for those orders.
     """
-    entry: dict[str, str | int] = {
-        "routing_key": routing_key, "xml": message_xml}
-    if order_id is not None:
-        entry["order_id"] = order_id
-    entries = _read_buffer()
+    with _buffer_lock:
+        entry: dict[str, str | int] = {
+            "routing_key": routing_key, "xml": message_xml}
+        if order_id is not None:
+            entry["order_id"] = order_id
+        entries = _read_buffer()
 
-    if len(entries) >= BUFFER_MAX_MESSAGES:
-        send_error_to_queue(
-            "offline_queue_full",
-            None,
-            f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
-        raise BufferFullError(
-            f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
-        )
+        if len(entries) >= BUFFER_MAX_MESSAGES:
+            send_error_to_queue(
+                "offline_queue_full",
+                None,
+                f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+            raise BufferFullError(
+                f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+            )
 
-    entries.append(entry)
-    BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
-    logger.info(
-        f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
+        entries.append(entry)
+        BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        logger.info(
+            f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
 
 def _read_buffer() -> list:
@@ -165,9 +171,10 @@ def flush_buffer() -> list:
     Returns a list of Odoo order IDs for entries that were successfully flushed,
     so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
     """
-    entries = _read_buffer()
-    if not entries:
-        return []
+    with _buffer_lock:
+        entries = _read_buffer()
+        if not entries:
+            return []
 
     logger.info(f"🔄 Flushing {len(entries)} buffered messages...")
     succeeded = []
@@ -181,16 +188,24 @@ def flush_buffer() -> list:
                 f"⚠️  Buffer resend failed for {entry.get('routing_key', '?')}: {e}")
             break  # Stop on first error, retry later
 
-    remaining = [e for e in entries if e not in succeeded]
+    with _buffer_lock:
+        # Re-read entries in case something was buffered while we were sending
+        current_entries = _read_buffer()
+        # Remove succeeded from current_entries (careful, dicts can't be hashed, so compare id/xml)
+        # For simplicity, we just rebuild: order_ids we succeeded on.
+        # But wait, original code was: 'remaining = [e for e in entries if e not in succeeded]'
+        # To handle thread-safety properly:
+        succeeded_xmls = {e["xml"] for e in succeeded}
+        remaining = [e for e in current_entries if e["xml"] not in succeeded_xmls]
 
-    if remaining:
-        BUFFER_FILE.write_text(
-            json.dumps(
-                remaining,
-                ensure_ascii=False,
-                indent=2))
-    else:
-        BUFFER_FILE.unlink(missing_ok=True)
+        if remaining:
+            BUFFER_FILE.write_text(
+                json.dumps(
+                    remaining,
+                    ensure_ascii=False,
+                    indent=2))
+        else:
+            BUFFER_FILE.unlink(missing_ok=True)
 
     if succeeded:
         logger.info(
@@ -362,8 +377,19 @@ def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = N
 
 
 def get_buffered_order_ids() -> set:
-    """Return the set of Odoo order IDs currently waiting in the outbox buffer."""
-    return {e["order_id"] for e in _read_buffer() if "order_id" in e}
+    """Return the set of Odoo order IDs currently waiting in the outbox buffer (cached)."""
+    global _last_buffer_mtime, _cached_buffer_ids
+    with _buffer_lock:
+        if not BUFFER_FILE.exists():
+            _cached_buffer_ids = set()
+            _last_buffer_mtime = 0.0
+            return _cached_buffer_ids
+        mtime = os.path.getmtime(BUFFER_FILE)
+        if mtime > _last_buffer_mtime:
+            _cached_buffer_ids = {e["order_id"] for e in _read_buffer() if "order_id" in e}
+            _last_buffer_mtime = mtime
+
+        return _cached_buffer_ids.copy()
 
 
 def now_utc() -> str:

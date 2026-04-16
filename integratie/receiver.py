@@ -487,7 +487,7 @@ def process_message(ch, method, properties, body):
     except ConnectionError as e:
         logger.error("[RECEIVER] ❌ Odoo connection error for message_id=%s: %s", related_message_id, e)
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
     except Exception as e:
         logger.error(

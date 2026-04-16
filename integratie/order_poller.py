@@ -472,8 +472,7 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            user_id=str(customer_info.get('x_user_id')
-                        ) if customer_info else None,
+            user_id=str(customer_info.get('x_user_id')) if customer_info and customer_info.get('x_user_id') else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
             is_anonymous=is_anonymous)

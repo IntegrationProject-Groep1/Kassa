@@ -112,13 +112,14 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
     # x_user_id and x_badge_id are btree-indexed — looked up on every incoming message
     FIELDS = {
         "res.partner": {
-            "x_user_id":        ("char",  "External User ID",    {"index": "btree"}),
-            "x_badge_id":       ("char",  "Badge ID",            {"index": "btree"}),
+            "x_user_id":        ("char",  "External User ID",    {"index": True}),
+            "x_badge_id":       ("char",  "Badge ID",            {"index": True}),
             "x_wallet_balance": ("float", "Wallet Balance (EUR)", {}),
             "x_date_of_birth":  ("date",  "Date of Birth",        {}),
         },
         "pos.order": {
             "x_rabbitmq_sent": ("boolean", "Sent to RabbitMQ", {}),
+            "x_payment_message_id": ("char", "Payment Message ID", {}),
         },
         "product.template": {
             "x_is_topup":       ("boolean", "Is Top-up Product",              {}),
@@ -282,12 +283,12 @@ def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
 
         tax_map_by_rate = {}
         for rate in VALID_VAT_RATES:
-            # Always use a 'division' (Percentage Tax Included) tax so list_price IS the final price
+            # Always use a 'percent' tax with price_include=True so list_price IS the final price
             inclusive = models.execute_kw(
                 odoo_db, uid, odoo_pass,
                 "account.tax", "search_read",
                 [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
-                  ["amount_type", "=", "division"], ["price_include_override", "=", "tax_included"]]],
+                  ["amount_type", "=", "percent"], ["price_include", "=", True]]],
                 {"fields": ["id", "name"], "limit": 1}
             )
             if inclusive:
@@ -297,10 +298,10 @@ def ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass):
                     odoo_db, uid, odoo_pass,
                     "account.tax", "create",
                     [{"name": f"BTW {int(rate)}% incl.", "amount": rate,
-                      "type_tax_use": "sale", "amount_type": "division",
-                      "price_include_override": "tax_included"}]
+                      "type_tax_use": "sale", "amount_type": "percent",
+                      "price_include": True}]
                 )
-                print(f"   ✅ Created {rate}% inclusive tax (division + price_include_override)", flush=True)
+                print(f"   ✅ Created {rate}% inclusive tax (percent + price_include)", flush=True)
 
             tax_map_by_rate[rate] = tax_id
 

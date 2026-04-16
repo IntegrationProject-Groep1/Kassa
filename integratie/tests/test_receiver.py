@@ -412,7 +412,7 @@ class TestProcessMessage:
         mock_odoo.side_effect = ConnectionError("Odoo down")
         body = _xml_bytes("badge_scanned", "<badge_id>B1</badge_id><location>bar</location>")
         receiver.process_message(ch, method, None, body)
-        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=False)
+        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
         mock_send_error.assert_called_once()
         assert mock_send_error.call_args[0][0] == "odoo_api_error"
 
