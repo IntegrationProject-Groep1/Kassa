@@ -119,7 +119,8 @@ def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = N
     return the Odoo order IDs of successfully flushed messages and the poller
     can then write x_rabbitmq_sent=True for those orders.
     """
-    entry: dict[str, str | int] = {"routing_key": routing_key, "xml": message_xml}
+    entry: dict[str, str | int] = {
+        "routing_key": routing_key, "xml": message_xml}
     if order_id is not None:
         entry["order_id"] = order_id
     entries = _read_buffer()
@@ -243,7 +244,8 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+        # type: ignore[attr-defined]
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):
             global _connection, _channel
             _connection = None
             _channel = None
@@ -320,6 +322,7 @@ _OUTGOING_SCHEMA_MAP = {
     "consumption_order": _SCHEMA_DIR / "schema_consumption_order_v2.3.xsd",
     "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
+    "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -336,12 +339,14 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+        _schema_cache[msg_type] = etree.XMLSchema(
+            etree.parse(str(schema_path)))
 
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        raise ValueError(
+            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
 def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
@@ -349,7 +354,8 @@ def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = N
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        logger.warning(
+            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     return send_message(routing_key, message_xml, order_id=order_id)
@@ -573,7 +579,8 @@ def build_refund_processed_xml(
     refund_type: str, refund_amount: float,
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
-    user_id=None, description=None, new_wallet_balance=None
+    user_id=None, description=None, new_wallet_balance=None,
+    is_anonymous=False
 ) -> str:
     """
     Build a refund_processed message confirming a refund was issued.
@@ -597,10 +604,12 @@ def build_refund_processed_xml(
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "refund_type").text = refund_type
+    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
-    if user_id:
+    if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
+
+    ET.SubElement(body, "refund_type").text = refund_type
 
     refund = ET.SubElement(body, "refund")
     amt = ET.SubElement(refund, "amount")
