@@ -67,7 +67,15 @@
                         </xs:restriction>
                       </xs:simpleType>
                     </xs:element>
-                    <xs:element name="reason" type="xs:string" minOccurs="0"/>
+                    <xs:element name="reason">
+                      <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                          <xs:enumeration value="duplicate_payment"/>
+                          <xs:enumeration value="customer_request"/>
+                          <xs:enumeration value="system_error"/>
+                        </xs:restriction>
+                      </xs:simpleType>
+                    </xs:element>
                     <xs:element name="description" type="xs:string" minOccurs="0"/>
                   </xs:sequence>
                 </xs:complexType>

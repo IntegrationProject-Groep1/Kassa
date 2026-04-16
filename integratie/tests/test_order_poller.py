@@ -297,6 +297,26 @@ def test_process_refund_tracing_fallback_on_error(mock_sender, poller):
         mock_uuid.return_value = 'Unknown'
         poller._process_refund(order, 14, None, is_anonymous=True)
 
+
+@patch('order_poller.sender')
+def test_process_refund_uses_customer_request_reason(mock_sender, poller):
+    """refund_processed is built with DEFAULT_REFUND_REASON='customer_request' (Story 8 DoD)."""
+    order = {
+        'id': 15, 'amount_total': -7.50, 'lines': [],
+        'payment_ids': [1], 'x_wallet_updated': False,
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'payment_method_id': (2, 'Cash'), 'amount': -7.50}],  # pos.payment read
+    ]
+
+    poller._process_refund(order, 15, None, is_anonymous=True)
+
+    call_kwargs = mock_sender.build_refund_processed_xml.call_args[1]
+    assert call_kwargs['refund_reason'] == 'customer_request', (
+        "refund_reason must be 'customer_request' — Story 8 DoD requires a "
+        "semantically correct reason value that CRM operators can act on."
+    )
+
 # ---------------------------------------------------------------------------
 # _process_consumption
 # ---------------------------------------------------------------------------

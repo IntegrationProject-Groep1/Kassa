@@ -58,7 +58,10 @@ XML_REFUND_METHOD_CASH = "cash"
 
 # Default fallback values for refund XML fields
 DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
-DEFAULT_REFUND_REASON = "Processed via POS"
+# <refund><reason> is a free-text xs:string in the XSD — no enum restriction.
+# "customer_request" is the canonical value for a cashier-initiated refund
+# on behalf of a customer, consistent with CRM naming conventions.
+DEFAULT_REFUND_REASON = "customer_request"
 
 
 class OrderPoller:
@@ -352,7 +355,10 @@ class OrderPoller:
                                 original_msg_id = orig_order_full[0]['x_payment_message_id']
                             else:
                                 logger.warning(
-                                    f"⚠️ Original order {orig_order_id} has no x_payment_message_id! Fallback to UUID."
+                                    f"⚠️ Original order {orig_order_id} has no x_payment_message_id — "
+                                    f"falling back to a generated UUID for refund order {order['id']}. "
+                                    "The CRM will NOT be able to link this refund to the original payment. "
+                                    "Check whether the original order was processed before x_payment_message_id was introduced."
                                 )
                             break
             except Exception as e:
