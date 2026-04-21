@@ -552,8 +552,7 @@ def main():
 
     # Step 6: Setup POS base data (categories, payment methods, demo products, pos.config)
     topup_cat_id, drinks_cat_id = ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass)
-    pm_ids = ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
-    common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+    ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map)
     ensure_pos_profiles(odoo_url, odoo_db, uid, odoo_pass)
