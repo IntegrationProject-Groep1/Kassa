@@ -551,11 +551,18 @@ def main():
     tax_map = ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass)
 
     # Step 6: Setup POS base data (categories, payment methods, demo products, pos.config)
-    topup_cat_id, drinks_cat_id = ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass)
-    ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
-    uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
-    ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map)
-    ensure_pos_profiles(odoo_url, odoo_db, uid, odoo_pass)
+   topup_cat_id, drinks_cat_id = ensure_pos_categories(odoo_url, odoo_db, odoo_user, odoo_pass)
+ensure_payment_methods(odoo_url, odoo_db, odoo_user, odoo_pass)
+
+common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
+uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+
+if not uid:
+    print("❌ Odoo authentication failed before POS profile setup. Exiting.", flush=True)
+    sys.exit(1)
+
+ensure_demo_products(odoo_url, odoo_db, odoo_user, odoo_pass, topup_cat_id, drinks_cat_id, tax_map)
+ensure_pos_profiles(odoo_url, odoo_db, uid, odoo_pass)
 
     # ── Receiver thread ────────────────────────────────────────────────────────
     receiver_thread = threading.Thread(
