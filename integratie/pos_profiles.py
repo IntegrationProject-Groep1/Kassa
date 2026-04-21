@@ -63,27 +63,29 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     password : Odoo user password (used as the credentials token in execute_kw)
     """
     print("🔍 Checking POS profiles...", flush=True)
-    try:
-        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
+    models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
 
-        # ── Phase 1: resolve / create all payment methods ─────────────────────
-        all_pm_ids: dict[str, list] = {}
-        for profile in _PROFILES:
-            pm_ids = _resolve_payment_method_ids(models, db, uid, password, profile)
-            all_pm_ids[profile["name"]] = pm_ids
-            print(f"   🔑 '{profile['name']}' payment method IDs: {pm_ids}", flush=True)
-
-        # ── Phase 2: create / update pos.config records ───────────────────────
-        for profile in _PROFILES:
-            _upsert_pos_config(
-                models, db, uid, password,
-                profile["name"], all_pm_ids[profile["name"]],
+    # ── Phase 1: resolve / create all payment methods ─────────────────────
+    all_pm_ids: dict[str, list] = {}
+    for profile in _PROFILES:
+        pm_ids = _resolve_payment_method_ids(models, db, uid, password, profile)
+        required_names = {pm["name"] for pm in profile["payment_methods"] if "create_if_missing" not in pm}
+        if not pm_ids and ({"Cash", "Bancontact"} & required_names):
+            raise RuntimeError(
+                f"No payment method IDs resolved for '{profile['name']}': "
+                f"Cash or Bancontact is required but none were found."
             )
+        all_pm_ids[profile["name"]] = pm_ids
+        print(f"   🔑 '{profile['name']}' payment method IDs: {pm_ids}", flush=True)
 
-        print("✅ POS profiles ready", flush=True)
+    # ── Phase 2: create / update pos.config records ───────────────────────
+    for profile in _PROFILES:
+        _upsert_pos_config(
+            models, db, uid, password,
+            profile["name"], all_pm_ids[profile["name"]],
+        )
 
-    except Exception as e:
-        print(f"⚠️  Could not verify/create POS profiles: {type(e).__name__}: {str(e)[:200]}", flush=True)
+    print("✅ POS profiles ready", flush=True)
 
 
 # ---------------------------------------------------------------------------

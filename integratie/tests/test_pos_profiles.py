@@ -12,7 +12,8 @@ Covers:
   - Two-phase execution: ALL pm lookups before ANY pos.config upsert
   - write skips payment_method_ids when current and desired sets are equal
   - write includes payment_method_ids only when the sets differ
-  - Top-level exception is caught and never re-raised
+  - RuntimeError raised when pm_ids is empty for a profile with required Cash/Bancontact
+  - Exceptions propagate out of ensure_pos_profiles (no swallowing)
 """
 import pytest
 from unittest.mock import MagicMock, patch
@@ -444,12 +445,18 @@ def test_missing_badge_wallet_excluded_from_bar_kassa(patched_proxy):
 # Exception handling
 # ---------------------------------------------------------------------------
 
-def test_exception_does_not_propagate(patched_proxy):
+def test_raises_when_pm_ids_empty(patched_proxy):
+    """RuntimeError raised when pm_ids is empty for a profile with required Cash/Bancontact."""
+    patched_proxy.execute_kw.side_effect = [
+        # Phase 1 — Bar Kassa: all methods missing (Cash, Bancontact, Badge Wallet all return [])
+        [], [], [],
+    ]
+    with pytest.raises(RuntimeError):
+        pos_profiles.ensure_pos_profiles(URL, DB, UID, PASS)
+
+
+def test_exception_propagates(patched_proxy):
+    """Exceptions from execute_kw propagate out of ensure_pos_profiles (no swallowing)."""
     patched_proxy.execute_kw.side_effect = Exception("Odoo is down")
-    pos_profiles.ensure_pos_profiles(URL, DB, UID, PASS)
-
-
-def test_exception_prints_warning(patched_proxy, capsys):
-    patched_proxy.execute_kw.side_effect = Exception("connection refused")
-    pos_profiles.ensure_pos_profiles(URL, DB, UID, PASS)
-    assert "⚠️" in capsys.readouterr().out
+    with pytest.raises(Exception, match="Odoo is down"):
+        pos_profiles.ensure_pos_profiles(URL, DB, UID, PASS)
