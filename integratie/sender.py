@@ -35,6 +35,7 @@ import pika
 import json
 import os
 import time
+import threading
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
@@ -104,8 +105,12 @@ OUTBOUND_QUEUE_BINDINGS = {
 BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
+_buffer_lock = threading.Lock()
+_cached_buffer_ids: set[int] = set()
+_last_buffer_mtime = 0.0
 
-def _buffer_message(routing_key: str, message_xml: str) -> None:
+
+def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
@@ -114,24 +119,32 @@ def _buffer_message(routing_key: str, message_xml: str) -> None:
     memory usage at the cost of losing the oldest un-sendable message once the
     buffer is full — acceptable because a full buffer means the broker has been
     down for an extended period.
+
+    order_id, when provided, is stored in the entry so that flush_buffer() can
+    return the Odoo order IDs of successfully flushed messages and the poller
+    can then write x_rabbitmq_sent=True for those orders.
     """
-    entry = {"routing_key": routing_key, "xml": message_xml}
-    entries = _read_buffer()
+    with _buffer_lock:
+        entry: dict[str, str | int] = {
+            "routing_key": routing_key, "xml": message_xml}
+        if order_id is not None:
+            entry["order_id"] = order_id
+        entries = _read_buffer()
 
-    if len(entries) >= BUFFER_MAX_MESSAGES:
-        send_error_to_queue(
-            "offline_queue_full",
-            None,
-            f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
-        raise BufferFullError(
-            f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
-        )
+        if len(entries) >= BUFFER_MAX_MESSAGES:
+            send_error_to_queue(
+                "offline_queue_full",
+                None,
+                f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+            raise BufferFullError(
+                f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+            )
 
-    entries.append(entry)
-    BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
-    logger.info(
-        f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
+        entries.append(entry)
+        BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        logger.info(
+            f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
 
 def _read_buffer() -> list:
@@ -145,7 +158,7 @@ def _read_buffer() -> list:
         return []
 
 
-def flush_buffer() -> None:
+def flush_buffer() -> list:
     """
     Replay buffered messages in order, stopping at the first send failure.
 
@@ -154,10 +167,14 @@ def flush_buffer() -> None:
     so the next call can try again. Stopping on the first error preserves
     message order — partial replays could deliver later messages before earlier
     ones if we skipped failures and continued.
+
+    Returns a list of Odoo order IDs for entries that were successfully flushed,
+    so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
     """
-    entries = _read_buffer()
-    if not entries:
-        return
+    with _buffer_lock:
+        entries = _read_buffer()
+        if not entries:
+            return []
 
     logger.info(f"🔄 Flushing {len(entries)} buffered messages...")
     succeeded = []
@@ -171,20 +188,30 @@ def flush_buffer() -> None:
                 f"⚠️  Buffer resend failed for {entry.get('routing_key', '?')}: {e}")
             break  # Stop on first error, retry later
 
-    remaining = [e for e in entries if e not in succeeded]
+    with _buffer_lock:
+        # Re-read entries in case something was buffered while we were sending
+        current_entries = _read_buffer()
+        # Remove succeeded from current_entries (careful, dicts can't be hashed, so compare id/xml)
+        # For simplicity, we just rebuild: order_ids we succeeded on.
+        # But wait, original code was: 'remaining = [e for e in entries if e not in succeeded]'
+        # To handle thread-safety properly:
+        succeeded_xmls = {e["xml"] for e in succeeded}
+        remaining = [e for e in current_entries if e["xml"] not in succeeded_xmls]
 
-    if remaining:
-        BUFFER_FILE.write_text(
-            json.dumps(
-                remaining,
-                ensure_ascii=False,
-                indent=2))
-    else:
-        BUFFER_FILE.unlink(missing_ok=True)
+        if remaining:
+            BUFFER_FILE.write_text(
+                json.dumps(
+                    remaining,
+                    ensure_ascii=False,
+                    indent=2))
+        else:
+            BUFFER_FILE.unlink(missing_ok=True)
 
     if succeeded:
         logger.info(
             f"✅ Successfully flushed {len(succeeded)} buffered messages")
+
+    return [e["order_id"] for e in succeeded if "order_id" in e]
 
 
 _connection = None
@@ -232,7 +259,8 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+        # type: ignore[attr-defined]
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):
             global _connection, _channel
             _connection = None
             _channel = None
@@ -277,7 +305,7 @@ def setup_exchange(channel):
             )
 
 
-def send_message(routing_key: str, message_xml: str) -> bool:
+def send_message(routing_key: str, message_xml: str, order_id: int | None = None) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
@@ -286,6 +314,9 @@ def send_message(routing_key: str, message_xml: str) -> bool:
     globals are reset to None so the next call opens a fresh connection rather
     than retrying a broken one.
     Returns True if successfully sent, False if buffered.
+
+    order_id is stored in the buffer entry when provided, so that
+    flush_buffer() can report which Odoo orders were successfully flushed.
     """
     try:
         _publish_or_raise(routing_key, message_xml)
@@ -295,7 +326,7 @@ def send_message(routing_key: str, message_xml: str) -> bool:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml)
+        _buffer_message(routing_key, message_xml, order_id=order_id)
         return False
 
 
@@ -306,6 +337,7 @@ _OUTGOING_SCHEMA_MAP = {
     "consumption_order": _SCHEMA_DIR / "schema_consumption_order_v2.3.xsd",
     "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
+    "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -322,23 +354,42 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+        _schema_cache[msg_type] = etree.XMLSchema(
+            etree.parse(str(schema_path)))
 
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        raise ValueError(
+            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str) -> bool:
+def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        logger.warning(
+            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml)
+    return send_message(routing_key, message_xml, order_id=order_id)
+
+
+def get_buffered_order_ids() -> set:
+    """Return the set of Odoo order IDs currently waiting in the outbox buffer (cached)."""
+    global _last_buffer_mtime, _cached_buffer_ids
+    with _buffer_lock:
+        if not BUFFER_FILE.exists():
+            _cached_buffer_ids = set()
+            _last_buffer_mtime = 0.0
+            return _cached_buffer_ids
+        mtime = os.path.getmtime(BUFFER_FILE)
+        if mtime > _last_buffer_mtime:
+            _cached_buffer_ids = {e["order_id"] for e in _read_buffer() if "order_id" in e}
+            _last_buffer_mtime = mtime
+
+        return _cached_buffer_ids.copy()
 
 
 def now_utc() -> str:
@@ -554,7 +605,8 @@ def build_refund_processed_xml(
     refund_type: str, refund_amount: float,
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
-    user_id=None, description=None, new_wallet_balance=None
+    user_id=None, description=None, new_wallet_balance=None,
+    is_anonymous=False
 ) -> str:
     """
     Build a refund_processed message confirming a refund was issued.
@@ -578,10 +630,12 @@ def build_refund_processed_xml(
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "refund_type").text = refund_type
+    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
-    if user_id:
+    if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
+
+    ET.SubElement(body, "refund_type").text = refund_type
 
     refund = ET.SubElement(body, "refund")
     amt = ET.SubElement(refund, "amount")

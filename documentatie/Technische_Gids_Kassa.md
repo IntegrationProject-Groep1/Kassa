@@ -9,7 +9,7 @@ Integratieproject Desideriushogeschool 2026
 | **Veld** | **Waarde** |
 | Project | Integratieproject Desideriushogeschool 2026 |
 | Team | Kassa (Odoo POS) |
-| Versie | 3.5 — sender v3.5 (total_amount per item); poller v1.3 (is_topup_product categorie-check); XSD consumption_order → v2.2 |
+| Versie | 3.5 — sender v3.5 (total_amount per item); poller v1.3 (is_topup_product categorie-check); XSD consumption_order → v2.3 |
 | Tech stack | Odoo 17, PostgreSQL 15, Python 3.12, RabbitMQ, Docker, GitHub Actions |
 
 ## **1\. Het grote plaatje — hoe hangt alles samen?**
@@ -180,6 +180,8 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | res.partner | x_badge_id | Char | Badge ID — aangemaakt bij Flow 12 (badge_assigned) |
 | res.partner | x_wallet_balance | Float | Badge saldo in EUR — Single Source of Truth |
 | res.partner | x_date_of_birth | Date | Geboortedatum bezoeker — voor alcoholcontrole (leeftijd berekend in code) |
+| res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<payment_due><amount>` in `new_registration` / `profile_update`. Gereset naar 0 door `order_poller.py` na succesvolle betaling via Inschrijvingskassa (Story 21). |
+| res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<payment_due><status>` (`unpaid` of `paid`). Gezet op `paid` door `order_poller.py` na succesvolle betaling (Story 21). |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
 | product.product | x_is_topup | Boolean | Markeert een product als Top-up — primair identificatiekenmerk voor `poller.py`. Alternatief voor categorie-check. Aanmaken via Odoo > Instellingen > Technisch > Velden op model `product.product`. |
 
@@ -194,6 +196,22 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 
 De betaalmethode 'Badge Wallet' is uitsluitend intern in Odoo. In de externe XML (payment_registered) wordt altijd 'on_site' verstuurd — dit is conform de PM-standaard.
 
+## **3.5 Odoo Addon: kassa_pos_custom**
+
+De `kassa_pos_custom` addon breidt de standaard Odoo POS-interface uit via OWL-componenten (het JavaScript UI-framework van Odoo 17). Deze addon is vereist voor Stories 9, 17, 19 en 21.
+
+**Afhankelijkheid Story 21 — real-time cache update:**
+
+Na het verwerken van een `new_registration` of `profile_update` publiceert `receiver.py` een `bus.bus` event via Odoo XML-RPC. Een OWL-component in `kassa_pos_custom` luistert op dit event. Bij ontvangst haalt de component via één gerichte RPC-aanroep enkel die ene partner op en voegt hem toe aan (of update hem in) de lokale POS model store — **zonder volledige partnerlijst te herladen en zonder lopende transacties te onderbreken**.
+
+Dit mechanisme is dezelfde `bus.bus` infrastructuur als Story 9 (badge wallet saldo update in de POS UI).
+
+**Vereiste configuratie:**
+
+- `kassa_pos_custom` addon geïnstalleerd en geactiveerd in Odoo
+- `bus.bus` polling actief in de POS-sessie (standaard ingeschakeld in Odoo 17 POS)
+- Custom velden `x_outstanding_amount` en `x_payment_status` aangemaakt op `res.partner` (zie §3.4)
+
 ## **4\. Sender, Receiver & Poller — de brug tussen Odoo en RabbitMQ**
 
 ## **4.1 De Sender — berichten versturen (v3.5)**
@@ -204,7 +222,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • total_amount toegevoegd aan build_consumption_order_xml per item (quantity × unit_price)
 
-• schema_consumption_order_v2.2.xsd → v2.2
+• schema_consumption_order_v2.3.xsd → v2.3
 
 **Wijzigingen t.o.v. v3.3 (eerder):**
 
@@ -218,7 +236,7 @@ sender.py verzorgt alle uitgaande berichten. Bevat de buffer-logica (incl. buffe
 
 • Alle 9 functies aanwezig: 7 builders + send_error_to_queue + send_typed_message (dispatcher)
 
-\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.2)
+\# sender.py — v3.5 — total_amount per item toegevoegd (XSD v2.3)
 
 \# Alle berichten via kassa.exchange (topic). Bij verbindingsverlies
 
@@ -462,7 +480,7 @@ def build_consumption_order_xml(
 
 items, customer_id=None, user_id=None,
 
-is_company_linked=False, company_id=None,
+customer_type="private",
 
 email=None, address=None, is_anonymous=False
 
@@ -484,11 +502,7 @@ ET.SubElement(cust, "id").text = str(customer_id)
 
 ET.SubElement(cust, "user_id").text = user_id
 
-ET.SubElement(cust, "is_company_linked").text = str(is_company_linked).lower()
-
-if company_id:
-
-ET.SubElement(cust, "company_id").text = company_id
+ET.SubElement(cust, "type").text = customer_type  # "company" of "private"
 
 ET.SubElement(cust, "email").text = email
 
@@ -624,7 +638,9 @@ ET.SubElement(body, "user_id").text = user_id
 
 inv = ET.SubElement(body, "invoice_data")
 
-ET.SubElement(inv, "name").text = invoice_data\["name"\]
+ET.SubElement(inv, "first_name").text = invoice_data\["first_name"\]
+
+ET.SubElement(inv, "last_name").text = invoice_data\["last_name"\]
 
 ET.SubElement(inv, "email").text = invoice_data\["email"\]
 
@@ -1335,33 +1351,7 @@ ODOO_DB, uid, ODOO_PASS,
 
 )\[0\]
 
-\# company_id ophalen via standaard Odoo parent_id relatie.
-
-\# parent_id\[0\] = Odoo ID, parent_id\[1\] = naam.
-
-\# We gebruiken de x_user_id van de parent als company_id in de XML.
-
-company_id = None
-
-if pd.get("parent_id"):
-
-parent_rec = models.execute_kw(
-
-ODOO_DB, uid, ODOO_PASS,
-
-"res.partner", "search_read",
-
-\[\[\["id", "=", pd\["parent_id"\]\[0\]\]\]\],
-
-{"fields": \["x_user_id"\], "limit": 1}
-
-)
-
-if parent_rec:
-
-company_id = parent_rec\[0\].get("x_user_id")
-
-is_company_linked = bool(pd.get("parent_id") or pd.get("is_company"))
+customer_type = "company" if (pd.get("parent_id") or pd.get("is_company")) else "private"
 
 xml_co = build_consumption_order_xml(
 
@@ -1371,9 +1361,7 @@ customer_id=pd\["id"\],
 
 user_id=pd.get("x_user_id", ""),
 
-is_company_linked=is_company_linked,
-
-company_id=company_id,
+customer_type=customer_type,
 
 email=pd.get("email", ""),
 

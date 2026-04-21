@@ -87,7 +87,7 @@ def is_duplicate(message_id: str) -> bool:
     debugging — it is not used for expiry.
     """
     if message_id in seen_message_ids:
-        print(f"[IDEMPOTENCY] Duplicate detected: {message_id} – skipped")
+        logger.info("[IDEMPOTENCY] Duplicate detected: message_id=%s – skipped", message_id)
         return True
     seen_message_ids[message_id] = now_utc()
     # Evict the oldest entry once the cache is full
@@ -133,7 +133,7 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
     """
     schema_path = SCHEMA_MAP.get(msg_type)
     if not schema_path or not os.path.exists(schema_path):
-        print(f"[VALIDATION] No XSD schema found for type '{msg_type}' – skipping validation")
+        logger.warning("[VALIDATION] No XSD schema found for type '%s' – skipping validation", msg_type)
         return
 
     schema_doc = etree.parse(schema_path)
@@ -144,7 +144,7 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         errors = str(schema.error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
-    print(f"[VALIDATION] ✓ XSD validation passed for type '{msg_type}'")
+    logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)
 
 
 # ── Business logic per message type ───────────────────────────────────────────
@@ -188,7 +188,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     if payment_due_el is None:
         raise ValueError("new_registration: <payment_due> missing in <body>")
 
-    amount = float(payment_due_el.findtext("amount", "0"))
+    # amount is validated by XSD and no longer logged (PII)
     status = payment_due_el.findtext("status", "unpaid").strip()
 
     if not user_id:
@@ -219,16 +219,16 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], partner_vals],
         )
-        print(f"[NEW_REGISTRATION] ✓ Customer updated: {name} (Odoo ID={partner_id}, user_id={user_id})")
+        logger.info("[NEW_REGISTRATION] ✓ Customer updated: Odoo ID=%s", partner_id)
     else:
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "create",
             [partner_vals],
         )
-        print(f"[NEW_REGISTRATION] ✓ New customer created: {name} (Odoo ID={partner_id}, user_id={user_id})")
+        logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
-    print(f"[NEW_REGISTRATION]   Outstanding amount: EUR {amount:.2f} | Status: {status}")
+    logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
 
 
 def process_profile_update(root: ET.Element, uid: int, models) -> None:
@@ -289,7 +289,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], update_vals],
         )
-        print(f"[PROFILE_UPDATE] ✓ Profile updated: {name or user_id} (Odoo ID={partner_id})")
+        logger.info("[PROFILE_UPDATE] ✓ Profile updated: Odoo ID=%s", partner_id)
     else:
         update_vals["x_user_id"] = user_id
         partner_id = models.execute_kw(
@@ -297,7 +297,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
             "res.partner", "create",
             [update_vals],
         )
-        print(f"[PROFILE_UPDATE] ⚠ Customer not found – created new (Odoo ID={partner_id}, user_id={user_id})")
+        logger.warning("[PROFILE_UPDATE] ⚠ Customer not found – created new: Odoo ID=%s", partner_id)
 
 
 def process_badge_scan(root: ET.Element, uid: int, models) -> None:
@@ -334,13 +334,13 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
 
     if existing:
         partner = existing[0]
-        print(
-            f"[BADGE_SCANNED] ✓ Badge {badge_id} recognised: {partner['name']} | "
-            f"Balance: EUR {partner.get('x_wallet_balance', 0):.2f} | "
-            f"Location: {location}"
+        logger.info(
+            "[BADGE_SCANNED] ✓ Badge recognised: Odoo ID=%s | Location=%s",
+            partner['id'],
+            location,
         )
     else:
-        print(f"[BADGE_SCANNED] ⚠ Badge {badge_id} NOT found in local cache – sending system_error")
+        logger.warning("[BADGE_SCANNED] ⚠ Badge NOT found in local cache – sending system_error")
         send_error_to_queue(
             error_code="badge_not_found",
             related_message_id=message_id,
@@ -382,12 +382,13 @@ def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
             "res.partner", "write",
             [[partner_id], {"active": False}],
         )
-        print(
-            f"[CANCEL_REGISTRATION] ✓ Profile deactivated: {existing[0]['name']} "
-            f"(Odoo ID={partner_id}, session_id={session_id})"
+        logger.info(
+            "[CANCEL_REGISTRATION] ✓ Profile deactivated: Odoo ID=%s | session_id=%s",
+            partner_id,
+            session_id,
         )
     else:
-        print(f"[CANCEL_REGISTRATION] ⚠ Customer not found for user_id={user_id} – no action")
+        logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
 
 
 # ── Central message processing ─────────────────────────────────────────────────
@@ -420,7 +421,7 @@ def process_message(ch, method, properties, body):
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
-            print(f"[RECEIVER] ❌ XML parse error: {e}")
+            logger.error("[RECEIVER] ❌ XML parse error: %s", e)
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -444,13 +445,13 @@ def process_message(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        print(f"[RECEIVER] Received: type={msg_type} | message_id={related_message_id}")
+        logger.info("[RECEIVER] Received: type=%s | message_id=%s", msg_type, related_message_id)
 
         # ── Step 4: XSD validation ─────────────────────────────────────────
         try:
             validate_xml(xml_text, msg_type)
         except ValueError as e:
-            print(f"[RECEIVER] ❌ XSD validation failed for '{msg_type}': {e}")
+            logger.error("[RECEIVER] ❌ XSD validation failed for '%s'", msg_type)
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -479,17 +480,20 @@ def process_message(ch, method, properties, body):
 
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
-        print(f"[RECEIVER] ❌ {code} for message_id={related_message_id}: {e}")
+        logger.error("[RECEIVER] ❌ %s for message_id=%s: %s", code, related_message_id, e)
         send_error_to_queue(code, related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except ConnectionError as e:
-        print(f"[RECEIVER] ❌ Odoo connection error for message_id={related_message_id}: {e}")
+        logger.error("[RECEIVER] ❌ Odoo connection error for message_id=%s: %s", related_message_id, e)
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
     except Exception as e:
-        print(f"[RECEIVER] ❌ Unexpected error for message_id={related_message_id}: {type(e).__name__}: {e}")
+        logger.error(
+            "[RECEIVER] ❌ Unexpected error for message_id=%s: %s: %s",
+            related_message_id, type(e).__name__, e,
+        )
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
@@ -569,16 +573,31 @@ def start_listening():
 
     channel.basic_qos(prefetch_count=1)
 
-    flush_buffer()  # re-publish buffered outbox messages after successful connect
+    # Re-publish buffered outbox messages after successful (re)connect.
+    # flush_buffer() returns the Odoo order IDs of successfully flushed messages;
+    # mark those orders as sent so the poller does not re-process them.
+    flushed_ids = flush_buffer()
+    if flushed_ids:
+        try:
+            uid, models = get_odoo_connection()
+            unique_ids = list(set(flushed_ids))
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'pos.order', 'write',
+                [unique_ids, {'x_rabbitmq_sent': True}]
+            )
+            logger.info("[RECEIVER] ✓ Marked %d buffered orders as sent after flush", len(unique_ids))
+        except Exception as e:
+            logger.warning("[RECEIVER] ⚠️  Could not mark flushed orders as sent: %s", e)
 
     channel.basic_consume(
         queue=QUEUE_NAME,
         on_message_callback=process_message,
     )
 
-    print(f"[RECEIVER] ✓ Listening on queue: {QUEUE_NAME}")
-    print(f"[RECEIVER]   Odoo: {ODOO_URL} | DB: {ODOO_DB}")
-    print("[RECEIVER]   Waiting for messages… (CTRL+C to stop)")
+    logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
+    logger.info("[RECEIVER]   Odoo: %s | DB: %s", ODOO_URL, ODOO_DB)
+    logger.info("[RECEIVER]   Waiting for messages…")
 
     channel.start_consuming()
 
