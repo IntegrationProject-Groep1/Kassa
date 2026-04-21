@@ -10,6 +10,7 @@
 # is_cash_count=False — cash counting is not required for a registration desk.
 
 import xmlrpc.client
+from typing import Any, cast
 
 # Each payment method entry is a dict with:
 #   "name"              – exact Odoo name to look up
@@ -17,7 +18,7 @@ import xmlrpc.client
 #                         when the method does not yet exist in Odoo.
 #                         Omit this key for methods that must already exist
 #                         (created by ensure_payment_methods in main.py).
-_PROFILES = [
+_PROFILES: list[dict[str, Any]] = [
     {
         "name": "Bar Kassa",
         "payment_methods": [
@@ -97,8 +98,8 @@ def _resolve_payment_method_ids(
     db: str,
     uid: int,
     password: str,
-    profile: dict,
-) -> list:
+    profile: dict[str, Any],
+) -> list[int]:
     """Return a list of pos.payment.method IDs for the entries listed in *profile*.
 
     For entries with a 'create_if_missing' key the method is created in Odoo
@@ -108,22 +109,22 @@ def _resolve_payment_method_ids(
     pm_ids = []
     for pm_spec in profile["payment_methods"]:
         name = pm_spec["name"]
-        result = models.execute_kw(
+        result = cast(list[dict[str, Any]], models.execute_kw(
             db, uid, password,
             "pos.payment.method", "search_read",
             [[["name", "=", name]]],
             {"fields": ["id"], "limit": 1},
-        )
+        ))
         if result:
-            found_id = result[0]["id"]
+            found_id = cast(int, result[0]["id"])
             print(f"   🔍 Found payment method '{name}' → id={found_id}", flush=True)
             pm_ids.append(found_id)
         elif "create_if_missing" in pm_spec:
-            new_id = models.execute_kw(
+            new_id = cast(int, models.execute_kw(
                 db, uid, password,
                 "pos.payment.method", "create",
                 [{"name": name, **pm_spec["create_if_missing"]}],
-            )
+            ))
             print(f"   ✅ Created payment method '{name}' → id={new_id}", flush=True)
             pm_ids.append(new_id)
         else:
@@ -141,7 +142,7 @@ def _upsert_pos_config(
     uid: int,
     password: str,
     name: str,
-    pm_ids: list,
+    pm_ids: list[int],
 ) -> int:
     """Create or update a pos.config record. Returns the record id.
 
@@ -149,16 +150,16 @@ def _upsert_pos_config(
     the write payload when the current set differs from the desired set.
     This avoids Odoo's 'cash method already in use' error on a no-op update.
     """
-    existing = models.execute_kw(
+    existing = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password,
         "pos.config", "search_read",
         [[["name", "=", name]]],
         {"fields": ["id", "payment_method_ids"], "limit": 1},
-    )
+    ))
 
     if existing:
-        config_id = existing[0]["id"]
-        current_pm_ids = set(existing[0].get("payment_method_ids", []))
+        config_id = cast(int, existing[0]["id"])
+        current_pm_ids = set(cast(list[int], existing[0].get("payment_method_ids", [])))
         desired_pm_ids = set(pm_ids)
 
         write_vals = {**_SHARED_VALS}
@@ -184,6 +185,6 @@ def _upsert_pos_config(
         "payment_method_ids": [(6, 0, pm_ids)],
         "name": name,
     }
-    config_id = models.execute_kw(db, uid, password, "pos.config", "create", [vals])
+    config_id = cast(int, models.execute_kw(db, uid, password, "pos.config", "create", [vals]))
     print(f"   ✅ Created POS profile '{name}' (id={config_id})", flush=True)
     return config_id
