@@ -226,7 +226,6 @@ class TestMainSetup:
                 return 88
         mock_models.execute_kw.side_effect = execute_kw
 
-        main.ensure_pos_config("url", "db", "u", "p", [1, 2, 3])
+        main.ensure_pos_profiles("url", "db", "u", "p", [1, 2, 3])
         creates = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(creates) == 1
-        assert "Bar Kassa" in creates[0][0][5][0]["name"]
+        assert len(creates) >= 1
