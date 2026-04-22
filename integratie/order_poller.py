@@ -279,34 +279,40 @@ class OrderPoller:
             logger.error(f"❌ Error processing order {order_id}: {e}")
             return False
 
+    def _get_wallet_payment_amount(self, payment_ids) -> tuple[bool, float]:
+        """Helper to determine if a wallet payment was used and calculate the total amount."""
+        if not payment_ids:
+            return False, 0.0
+
+        payments = self.models.execute_kw(
+            self.odoo_db, self.odoo_uid, self.odoo_pass,
+            'pos.payment', 'read',
+            [payment_ids, ['payment_method_id', 'amount']]
+        )
+        is_badge_wallet = False
+        wallet_amount = 0.0
+        for pm in payments:
+            method_tuple = pm.get('payment_method_id')
+            if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
+                is_badge_wallet = True
+                wallet_amount += abs(pm.get('amount', 0.0))
+
+        return is_badge_wallet, wallet_amount
+
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> bool:
         """Handle refund logic and wallet updates. Returns True if all messages were sent
         (not buffered), False if any message ended up in the outbox buffer."""
         # 1. Determine the payment method in Odoo via payment_ids
         payment_ids = order.get('payment_ids', [])
-        is_badge_wallet = False
-        refund_method = DEFAULT_REFUND_METHOD
+        is_badge_wallet, wallet_refund_amount = self._get_wallet_payment_amount(payment_ids)
+        refund_method = XML_REFUND_METHOD_WALLET if is_badge_wallet else DEFAULT_REFUND_METHOD
         ok_wallet = True  # True by default — only overwritten when wallet send is attempted
 
-        if payment_ids:
-            payments = self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.payment', 'read',
-                [payment_ids, ['payment_method_id', 'amount']]
-            )
-            wallet_refund_amount = 0.0
-            for pm in payments:
-                method_tuple = pm.get('payment_method_id')
-                if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
-                    is_badge_wallet = True
-                    refund_method = XML_REFUND_METHOD_WALLET
-                    wallet_refund_amount += abs(pm.get('amount', 0.0))
-
         # 2. Update wallet balance if necessary
-        if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
+        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
             refund_amount_positive = wallet_refund_amount
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = float(current_balance) + refund_amount_positive
+            new_balance = round(float(current_balance) + refund_amount_positive, 2)
 
             self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -487,24 +493,12 @@ class OrderPoller:
 
         # Check for Badge Wallet payment and update balance
         payment_ids = order.get('payment_ids', [])
-        is_badge_wallet = False
+        is_badge_wallet, wallet_paid_amount = self._get_wallet_payment_amount(payment_ids)
         ok_wallet = True
-        if payment_ids:
-            payments = self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.payment', 'read',
-                [payment_ids, ['payment_method_id', 'amount']]
-            )
-            wallet_paid_amount = 0.0
-            for pm in payments:
-                method_tuple = pm.get('payment_method_id')
-                if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
-                    is_badge_wallet = True
-                    wallet_paid_amount += pm.get('amount', 0.0)
 
-        if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
+        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = float(current_balance) - wallet_paid_amount
+            new_balance = round(float(current_balance) - wallet_paid_amount, 2)
 
             self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,

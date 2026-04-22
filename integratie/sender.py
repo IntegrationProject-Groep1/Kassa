@@ -593,7 +593,7 @@ def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
 
-    bal = ET.SubElement(body, "new_balance")
+    bal = ET.SubElement(body, "wallet_balance")
     bal.text = f"{new_balance:.2f}"
     bal.set("currency", "eur")
 
