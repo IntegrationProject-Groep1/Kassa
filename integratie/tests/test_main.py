@@ -101,11 +101,17 @@ class TestMainSetup:
                 return [{"id": 10}]
             if obj == "ir.model.fields" and method == "search_read":
                 # pretend all fields exist
-                return [{"name": "x_user_id"}, {"name": "x_badge_id"},
-                        {"name": "x_wallet_balance"}, {"name": "x_date_of_birth"},
-                    {"name": "x_rabbitmq_sent"}, {"name": "x_wallet_updated"},
-                    {"name": "x_is_topup"}, {"name": "x_age_restricted"},
-                    {"name": "x_payment_message_id"}]
+                return [
+                    {"name": "x_user_id"},
+                    {"name": "x_badge_id"},
+                    {"name": "x_wallet_balance"},
+                    {"name": "x_date_of_birth"},
+                    {"name": "x_rabbitmq_sent"},
+                    {"name": "x_wallet_updated"},
+                    {"name": "x_is_topup"},
+                    {"name": "x_age_restricted"},
+                    {"name": "x_payment_message_id"},
+                ]
             return []
 
         mock_models.execute_kw.side_effect = my_execute_kw
