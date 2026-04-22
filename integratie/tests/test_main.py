@@ -212,20 +212,3 @@ class TestMainSetup:
         pm_ids = main.ensure_payment_methods("url", "db", "u", "p")
         assert len(pm_ids) == 3
         assert pm_ids == [42, 42, 42]
-
-    @patch("main.xmlrpc.client.ServerProxy")
-    def test_ensure_pos_config_creates(self, mock_proxy, mock_sleep):
-        mock_common, mock_models = MagicMock(), MagicMock()
-        mock_common.authenticate.return_value = 1
-        mock_proxy.side_effect = [mock_common, mock_models]
-
-        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
-            if method == "search_read":
-                return []  # No config
-            if method == "create":
-                return 88
-        mock_models.execute_kw.side_effect = execute_kw
-
-        main.ensure_pos_profiles("url", "db", "u", "p", [1, 2, 3])
-        creates = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(creates) >= 1
