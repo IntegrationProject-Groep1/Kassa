@@ -245,12 +245,6 @@ def connect_to_rabbitmq():
     _channel = _connection.channel()
     setup_exchange(_channel)
 
-    try:
-        # Reconnect path: auto-flush pending outbox messages
-        flush_buffer()
-    except Exception as e:
-        logger.error(f"Error auto-flushing buffer during reconnect: {e}")
-
     return _connection, _channel
 
 
