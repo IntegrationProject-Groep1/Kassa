@@ -85,10 +85,10 @@ class TestMainSetup:
 
         assert main.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 4 fields, pos.order has 2, product.template has 2
-        # So create should be called 8 times.
+        # res.partner has 4 fields, pos.order has 3, product.template has 2
+        # So create should be called 9 times.
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 8
+        assert len(create_calls) == 9
 
     @patch("main.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
@@ -101,10 +101,17 @@ class TestMainSetup:
                 return [{"id": 10}]
             if obj == "ir.model.fields" and method == "search_read":
                 # pretend all fields exist
-                return [{"name": "x_user_id"}, {"name": "x_badge_id"},
-                        {"name": "x_wallet_balance"}, {"name": "x_date_of_birth"},
-                        {"name": "x_rabbitmq_sent"}, {"name": "x_is_topup"},
-                        {"name": "x_age_restricted"}, {"name": "x_payment_message_id"}]
+                return [
+                    {"name": "x_user_id"},
+                    {"name": "x_badge_id"},
+                    {"name": "x_wallet_balance"},
+                    {"name": "x_date_of_birth"},
+                    {"name": "x_rabbitmq_sent"},
+                    {"name": "x_wallet_updated"},
+                    {"name": "x_is_topup"},
+                    {"name": "x_age_restricted"},
+                    {"name": "x_payment_message_id"},
+                ]
             return []
 
         mock_models.execute_kw.side_effect = my_execute_kw

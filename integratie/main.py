@@ -120,6 +120,7 @@ def ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass):
         },
         "pos.order": {
             "x_rabbitmq_sent": ("boolean", "Sent to RabbitMQ", {}),
+            "x_wallet_updated": ("boolean", "Wallet Update Processed", {}),
             "x_payment_message_id": ("char", "Payment Message ID", {}),
         },
         "product.template": {

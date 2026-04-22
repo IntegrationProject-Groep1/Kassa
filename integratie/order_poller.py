@@ -279,34 +279,40 @@ class OrderPoller:
             logger.error(f"❌ Error processing order {order_id}: {e}")
             return False
 
+    def _get_wallet_payment_amount(self, payment_ids) -> tuple[bool, float]:
+        """Helper to determine if a wallet payment was used and calculate the total amount."""
+        if not payment_ids:
+            return False, 0.0
+
+        payments = self.models.execute_kw(
+            self.odoo_db, self.odoo_uid, self.odoo_pass,
+            'pos.payment', 'read',
+            [payment_ids, ['payment_method_id', 'amount']]
+        )
+        is_badge_wallet = False
+        wallet_amount = 0.0
+        for pm in payments:
+            method_tuple = pm.get('payment_method_id')
+            if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
+                is_badge_wallet = True
+                wallet_amount += abs(pm.get('amount', 0.0))
+
+        return is_badge_wallet, wallet_amount
+
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> bool:
         """Handle refund logic and wallet updates. Returns True if all messages were sent
         (not buffered), False if any message ended up in the outbox buffer."""
         # 1. Determine the payment method in Odoo via payment_ids
         payment_ids = order.get('payment_ids', [])
-        is_badge_wallet = False
-        refund_method = DEFAULT_REFUND_METHOD
+        is_badge_wallet, wallet_refund_amount = self._get_wallet_payment_amount(payment_ids)
+        refund_method = XML_REFUND_METHOD_WALLET if is_badge_wallet else DEFAULT_REFUND_METHOD
         ok_wallet = True  # True by default — only overwritten when wallet send is attempted
 
-        if payment_ids:
-            payments = self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.payment', 'read',
-                [payment_ids, ['payment_method_id', 'amount']]
-            )
-            wallet_refund_amount = 0.0
-            for pm in payments:
-                method_tuple = pm.get('payment_method_id')
-                if method_tuple and PAYMENT_METHOD_WALLET in method_tuple[1]:
-                    is_badge_wallet = True
-                    refund_method = XML_REFUND_METHOD_WALLET
-                    wallet_refund_amount += abs(pm.get('amount', 0.0))
-
         # 2. Update wallet balance if necessary
-        if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
+        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
             refund_amount_positive = wallet_refund_amount
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = float(current_balance) + refund_amount_positive
+            new_balance = round(float(current_balance) + refund_amount_positive, 2)
 
             self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -485,6 +491,38 @@ class OrderPoller:
         # Extract message_id to link payment
         correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
 
+        # Check for Badge Wallet payment and update balance
+        payment_ids = order.get('payment_ids', [])
+        is_badge_wallet, wallet_paid_amount = self._get_wallet_payment_amount(payment_ids)
+        ok_wallet = True
+
+        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
+            current_balance = customer_info.get('x_wallet_balance') or 0.0
+            new_balance = round(float(current_balance) - wallet_paid_amount, 2)
+
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'res.partner', 'write',
+                [[customer_info['id']], {'x_wallet_balance': new_balance}]
+            )
+
+            try:
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'write',
+                    [[order_id], {'x_wallet_updated': True}]
+                )
+            except xmlrpc.client.Fault as e:
+                logger.warning(
+                    f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
+
+            wallet_xml = sender.build_wallet_balance_update_xml(
+                user_id=customer_info.get('x_user_id'),
+                new_balance=new_balance
+            )
+            ok_wallet = sender.send_typed_message(
+                'wallet_balance_update', wallet_xml, order_id=order_id)
+
         # Determine payment method (on_site covers cash, card, and wallet per Datamapping_Kassa.md)
         payment_method = "on_site"
 
@@ -507,7 +545,7 @@ class OrderPoller:
         ok_payment = sender.send_typed_message(
             'payment_registered_consumption', payment_xml, order_id=order_id)
         payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
-        return (ok_consumption and ok_payment), payment_msg_id
+        return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
 
     def poll(self, interval=5):
         """
