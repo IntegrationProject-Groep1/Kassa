@@ -183,6 +183,8 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<payment_due><amount>` in `new_registration` / `profile_update`. Gereset naar 0 door `order_poller.py` na succesvolle betaling via Inschrijvingskassa (Story 21). |
 | res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<payment_due><status>` (`unpaid` of `paid`). Gezet op `paid` door `order_poller.py` na succesvolle betaling (Story 21). |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
+| pos.order | x_wallet_updated | Boolean | Idempotentie-vlag voor wallet-mutaties: voorkomt dubbele saldo-update bij retries/herstart |
+| pos.order | x_payment_message_id | Char | Bewaart de message_id van `payment_registered` op de order, gebruikt als correlatie bij refunds |
 | product.product | x_is_topup | Boolean | Markeert een product als Top-up — primair identificatiekenmerk voor `poller.py`. Alternatief voor categorie-check. Aanmaken via Odoo > Instellingen > Technisch > Velden op model `product.product`. |
 
 **Betaalmethoden aanmaken in Odoo POS (geen custom veld nodig):**

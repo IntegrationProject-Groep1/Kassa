@@ -19,6 +19,8 @@
 #     x_age            Integer  visitor age
 #   pos.order
 #     x_rabbitmq_sent  Boolean  True once the order has been published to RabbitMQ
+#     x_wallet_updated Boolean  True once wallet balance update was applied
+#     x_payment_message_id Char payment_registered message_id for refund traceability
 
 import os
 import sys
