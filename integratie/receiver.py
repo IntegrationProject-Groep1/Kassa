@@ -272,7 +272,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     update_vals = {
         "email": email,
         "is_company": ctype == "company",
-        "name": company_name if (ctype == "company" and company_name) else name,
+        "name": (company_name if (ctype == "company" and company_name) else name) or "Unknown",
         "vat": vat_number if vat_number else False,
         "x_date_of_birth": dob_str if dob_str else False,
     }
