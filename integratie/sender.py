@@ -181,7 +181,7 @@ def flush_buffer() -> list:
 
     for entry in entries:
         try:
-            send_message(entry["routing_key"], entry["xml"])
+            _publish_or_raise(entry["routing_key"], entry["xml"])
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
@@ -244,6 +244,7 @@ def connect_to_rabbitmq():
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
     setup_exchange(_channel)
+
     return _connection, _channel
 
 
