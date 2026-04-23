@@ -99,7 +99,7 @@ def setup_database(
         elif resp.status_code == 403:
             print("[SETUP] DB creation returned 403 (Forbidden). Two possible causes:", flush=True)
             print("  1. Database already exists (normal on restart) -- this is fine.", flush=True)
-            print("  2. ODOO_MASTER_PASS is wrong (current: '" + str(odoo_master_pass) + "').", flush=True)
+            print("  2. ODOO_MASTER_PASS is wrong.", flush=True)
             print("  Continuing -- will poll for existing DB to become accessible.", flush=True)
         else:
             print("[SETUP] DB creation returned HTTP " + str(resp.status_code) + " -- continuing.", flush=True)
@@ -511,8 +511,8 @@ def ensure_demo_products(
             t = _rpc(models,
                      odoo_db, uid, odoo_pass, "account.tax", "search_read",
                      [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
-                       ["amount_type", "=", "division"],
-                         ["price_include_override", "=", "tax_included"]]],
+                       ["amount_type", "=", "percent"],
+                         ["price_include", "=", True]]],
                      {"fields": ["id"], "limit": 1}
                      )
             return t[0]["id"] if t else None
