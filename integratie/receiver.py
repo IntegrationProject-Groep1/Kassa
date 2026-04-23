@@ -15,10 +15,11 @@ Error handling:
     - Unparseable XML          → basic_nack(requeue=False) + system_error sent
     - XSD validation failure   → basic_nack(requeue=False) + system_error sent
     - Unknown message type     → basic_nack(requeue=False) + system_error sent
-    - Odoo connection/API error → basic_nack(requeue=False) + system_error sent
+    - Odoo connection/API error → basic_nack(requeue=True) + system_error sent
     - Duplicate message_id     → basic_ack, no Odoo write (silently ignored)
 
-Duplicate detection uses an in-memory LRU cache (max 10,000 entries).
+Duplicate detection uses an in-memory bounded cache (max 10,000 entries)
+with FIFO eviction.
 The cache is cleared on container restart, so restarts do not cause replay
 protection across sessions — that trade-off is intentional for simplicity.
 """
@@ -87,7 +88,7 @@ def is_duplicate(message_id: str, track_if_new: bool = True) -> bool:
     """
     Return True if this message_id has already been processed in this session.
 
-    Uses an OrderedDict as a bounded LRU cache. When the cache hits
+    Uses an OrderedDict as a bounded FIFO cache. When the cache hits
     MAX_CACHE_SIZE the oldest entry is evicted (popitem(last=False)) to keep
     memory usage constant. The timestamp stored as the value is only for
     debugging — it is not used for expiry.
