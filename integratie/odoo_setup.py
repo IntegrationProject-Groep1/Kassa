@@ -14,8 +14,22 @@
 
 import time
 import xmlrpc.client
+from typing import Any
 
 import requests
+
+
+def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:
+    """
+    Thin wrapper around ServerProxy.execute_kw() that returns Any.
+
+    xmlrpc.client has no typed stubs: every call returns _Marshallable
+    (int | float | str | bytes | list | dict | None | ...).  Mypy cannot
+    narrow that union when callers index or iterate the result, producing
+    hundreds of false-positive errors.  Centralising the cast here means a
+    single ignore comment instead of one per call site.
+    """
+    return models.execute_kw(*args, **kwargs)  # type: ignore[no-any-return]
 
 
 # ── Step 1: Wait for Odoo web server ─────────────────────────────────────────
@@ -125,21 +139,21 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
 
         models = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/object', allow_none=True)
 
-        module_ids = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            'ir.module.module', 'search',
-            [[['name', '=', 'point_of_sale']]]
-        )
+        module_ids = _rpc(models,
+                          odoo_db, uid, odoo_pass,
+                          'ir.module.module', 'search',
+                          [[['name', '=', 'point_of_sale']]]
+                          )
 
         if not module_ids:
             print("⚠️  point_of_sale module not found in registry", flush=True)
             return False
 
-        module_info = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            'ir.module.module', 'read',
-            [module_ids, ['name', 'state']]
-        )
+        module_info = _rpc(models,
+                           odoo_db, uid, odoo_pass,
+                           'ir.module.module', 'read',
+                           [module_ids, ['name', 'state']]
+                           )
 
         state = module_info[0]['state'] if module_info else 'unknown'
 
@@ -149,20 +163,20 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
 
         print(f"📦 Point of Sale module state: {state} — installing now...", flush=True)
 
-        models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            'ir.module.module', 'button_immediate_install',
-            [module_ids]
-        )
+        _rpc(models,
+             odoo_db, uid, odoo_pass,
+             'ir.module.module', 'button_immediate_install',
+             [module_ids]
+             )
 
         # Wait for installation to complete (up to 120 seconds)
         for attempt in range(24):
             time.sleep(5)
-            module_info = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                'ir.module.module', 'read',
-                [module_ids, ['state']]
-            )
+            module_info = _rpc(models,
+                               odoo_db, uid, odoo_pass,
+                               'ir.module.module', 'read',
+                               [module_ids, ['state']]
+                               )
             new_state = module_info[0]['state']
             print(f"   ⏳ Installing... ({(attempt + 1) * 5}s) state={new_state}", flush=True)
             if new_state == 'installed':
@@ -220,35 +234,35 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         created = 0
 
         for model_name, fields in _CUSTOM_FIELDS.items():
-            model_rows = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "ir.model", "search_read",
-                [[["model", "=", model_name]]],
-                {"fields": ["id"], "limit": 1},
-            )
+            model_rows = _rpc(models,
+                              odoo_db, uid, odoo_pass,
+                              "ir.model", "search_read",
+                              [[["model", "=", model_name]]],
+                              {"fields": ["id"], "limit": 1},
+                              )
             if not model_rows:
                 print(f"⚠️  Model '{model_name}' not found — skipping", flush=True)
                 continue
 
             model_id = model_rows[0]["id"]
             existing = {
-                r["name"] for r in models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "ir.model.fields", "search_read",
-                    [[["model", "=", model_name], ["name", "in", list(fields)]]],
-                    {"fields": ["name"]},
-                )
+                r["name"] for r in _rpc(models,
+                                        odoo_db, uid, odoo_pass,
+                                        "ir.model.fields", "search_read",
+                                        [[["model", "=", model_name], ["name", "in", list(fields)]]],
+                                        {"fields": ["name"]},
+                                        )
             }
 
             for fname, (ttype, label, extra) in fields.items():
                 if fname in existing:
                     continue
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "ir.model.fields", "create",
-                    [{**{"model_id": model_id, "name": fname,
-                         "field_description": label, "ttype": ttype, "store": True}, **extra}],
-                )
+                _rpc(models,
+                     odoo_db, uid, odoo_pass,
+                     "ir.model.fields", "create",
+                     [{**{"model_id": model_id, "name": fname,
+                          "field_description": label, "ttype": ttype, "store": True}, **extra}],
+                     )
                 print(f"   ✅ Created field {model_name}.{fname} ({ttype})", flush=True)
                 created += 1
 
@@ -288,23 +302,23 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
         tax_map_by_rate = {}
         for rate in VALID_VAT_RATES:
-            inclusive = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "account.tax", "search_read",
-                [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
-                  ["amount_type", "=", "percent"], ["price_include", "=", True]]],
-                {"fields": ["id", "name"], "limit": 1}
-            )
+            inclusive = _rpc(models,
+                             odoo_db, uid, odoo_pass,
+                             "account.tax", "search_read",
+                             [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                               ["amount_type", "=", "percent"], ["price_include", "=", True]]],
+                             {"fields": ["id", "name"], "limit": 1}
+                             )
             if inclusive:
                 tax_id = inclusive[0]["id"]
             else:
-                tax_id = models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "account.tax", "create",
-                    [{"name": f"BTW {int(rate)}% incl.", "amount": rate,
-                      "type_tax_use": "sale", "amount_type": "percent",
-                      "price_include": True}]
-                )
+                tax_id = _rpc(models,
+                              odoo_db, uid, odoo_pass,
+                              "account.tax", "create",
+                              [{"name": f"BTW {int(rate)}% incl.", "amount": rate,
+                                "type_tax_use": "sale", "amount_type": "percent",
+                                "price_include": True}]
+                              )
                 print(f"   ✅ Created {rate}% inclusive tax (percent + price_include)", flush=True)
 
             tax_map_by_rate[rate] = tax_id
@@ -312,35 +326,35 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
         target_tax_id = tax_map_by_rate[TARGET_VAT_RATE]
 
         # Set BTW 6% incl. as the default sales tax on the company
-        company_ids = models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "search", [[]])
+        company_ids = _rpc(models, odoo_db, uid, odoo_pass, "res.company", "search", [[]])
         if company_ids:
-            models.execute_kw(odoo_db, uid, odoo_pass, "res.company", "write",
-                              [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
+            _rpc(models, odoo_db, uid, odoo_pass, "res.company", "write",
+                 [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
             print(f"   ✅ Set default sales tax to BTW {TARGET_VAT_RATE}% incl.", flush=True)
 
         # Check all POS products for invalid tax rates
-        product_ids = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            "product.template", "search",
-            [[["available_in_pos", "=", True]]]
-        )
+        product_ids = _rpc(models,
+                           odoo_db, uid, odoo_pass,
+                           "product.template", "search",
+                           [[["available_in_pos", "=", True]]]
+                           )
         if not product_ids:
             return tax_map_by_rate
 
-        products = models.execute_kw(
-            odoo_db, uid, odoo_pass,
-            "product.template", "read",
-            [product_ids, ["id", "name", "taxes_id"]]
-        )
+        products = _rpc(models,
+                        odoo_db, uid, odoo_pass,
+                        "product.template", "read",
+                        [product_ids, ["id", "name", "taxes_id"]]
+                        )
 
         all_tax_ids = list({tid for p in products for tid in p.get("taxes_id", [])})
         tax_map = {}
         if all_tax_ids:
-            taxes_data = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "account.tax", "read",
-                [all_tax_ids, ["amount"]]
-            )
+            taxes_data = _rpc(models,
+                              odoo_db, uid, odoo_pass,
+                              "account.tax", "read",
+                              [all_tax_ids, ["amount"]]
+                              )
             tax_map = {t["id"]: t["amount"] for t in taxes_data}
 
         to_fix_ids = []
@@ -354,11 +368,11 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                 to_fix_ids.append(product["id"])
 
         if to_fix_ids:
-            models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "product.template", "write",
-                [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
-            )
+            _rpc(models,
+                 odoo_db, uid, odoo_pass,
+                 "product.template", "write",
+                 [to_fix_ids, {"taxes_id": [(6, 0, [target_tax_id])]}]
+                 )
             print(
                 f"✅ Product taxes ready — {len(to_fix_ids)} product(s) updated to {TARGET_VAT_RATE}%",
                 flush=True,
@@ -386,22 +400,22 @@ def ensure_pos_categories(
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
         def get_or_create_category(name: str, color: int = 1) -> int:
-            existing = models.execute_kw(
-                odoo_db, uid, odoo_pass, "pos.category", "search_read",
-                [[["name", "=", name]]], {"fields": ["id"]}
-            )
+            existing = _rpc(models,
+                            odoo_db, uid, odoo_pass, "pos.category", "search_read",
+                            [[["name", "=", name]]], {"fields": ["id"]}
+                            )
             if not existing:
-                cat_id = models.execute_kw(
-                    odoo_db, uid, odoo_pass, "pos.category", "create",
-                    [{"name": name, "color": color}]
-                )
+                cat_id = _rpc(models,
+                              odoo_db, uid, odoo_pass, "pos.category", "create",
+                              [{"name": name, "color": color}]
+                              )
                 print(f"   ✅ Created POS category '{name}'", flush=True)
                 return cat_id
             else:
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass, "pos.category", "write",
-                    [[existing[0]["id"]], {"color": color}]
-                )
+                _rpc(models,
+                     odoo_db, uid, odoo_pass, "pos.category", "write",
+                     [[existing[0]["id"]], {"color": color}]
+                     )
             return existing[0]["id"]
 
         topup_cat_id = get_or_create_category("Top-ups", 2)   # Light blue
@@ -433,20 +447,20 @@ def ensure_payment_methods(
 
         method_ids = []
         for method in needed:
-            existing = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "pos.payment.method", "search_read",
-                [[["name", "=", method["name"]]]],
-                {"fields": ["id"]}
-            )
+            existing = _rpc(models,
+                            odoo_db, uid, odoo_pass,
+                            "pos.payment.method", "search_read",
+                            [[["name", "=", method["name"]]]],
+                            {"fields": ["id"]}
+                            )
             if existing:
                 method_ids.append(existing[0]["id"])
             else:
-                pm_id = models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "pos.payment.method", "create",
-                    [{"name": method["name"], "is_cash_count": method["is_cash_count"]}]
-                )
+                pm_id = _rpc(models,
+                             odoo_db, uid, odoo_pass,
+                             "pos.payment.method", "create",
+                             [{"name": method["name"], "is_cash_count": method["is_cash_count"]}]
+                             )
                 print(f"   ✅ Created payment method: {method['name']}", flush=True)
                 method_ids.append(pm_id)
 
@@ -476,13 +490,13 @@ def ensure_demo_products(
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
         def get_tax_id(rate: float):
-            t = models.execute_kw(
-                odoo_db, uid, odoo_pass, "account.tax", "search_read",
-                [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
-                  ["amount_type", "=", "division"],
-                  ["price_include_override", "=", "tax_included"]]],
-                {"fields": ["id"], "limit": 1}
-            )
+            t = _rpc(models,
+                     odoo_db, uid, odoo_pass, "account.tax", "search_read",
+                     [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                       ["amount_type", "=", "division"],
+                         ["price_include_override", "=", "tax_included"]]],
+                     {"fields": ["id"], "limit": 1}
+                     )
             return t[0]["id"] if t else None
 
         tax_0 = tax_map.get(0.0) if tax_map else get_tax_id(0.0)
@@ -527,24 +541,24 @@ def ensure_demo_products(
         ]
 
         for product in demo_products:
-            existing = models.execute_kw(
-                odoo_db, uid, odoo_pass,
-                "product.template", "search_read",
-                [[["name", "=", product["name"]]]],
-                {"fields": ["id"]}
-            )
+            existing = _rpc(models,
+                            odoo_db, uid, odoo_pass,
+                            "product.template", "search_read",
+                            [[["name", "=", product["name"]]]],
+                            {"fields": ["id"]}
+                            )
             if not existing:
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass,
-                    "product.template", "create",
-                    [product]
-                )
+                _rpc(models,
+                     odoo_db, uid, odoo_pass,
+                     "product.template", "create",
+                     [product]
+                     )
                 print(f"   ✅ Created demo product: {product['name']}", flush=True)
             else:
-                models.execute_kw(
-                    odoo_db, uid, odoo_pass, "product.template", "write",
-                    [[existing[0]["id"]], {"color": product["color"], "image_1920": False}]
-                )
+                _rpc(models,
+                     odoo_db, uid, odoo_pass, "product.template", "write",
+                     [[existing[0]["id"]], {"color": product["color"], "image_1920": False}]
+                     )
 
     except Exception as e:
         print(f"⚠️  Could not create demo products: {e}", flush=True)
