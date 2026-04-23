@@ -74,11 +74,11 @@ def setup_database(
             print(f"  -> ODOO_USER='{odoo_user}' or ODOO_PASS may be wrong for this DB.", flush=True)
             print("  -> Will try DB creation in case the database does not exist yet.", flush=True)
     except Exception as e:
-        print("[SETUP] Fast-path auth raised " + type(e).__name__ +
-              " -- DB may not exist yet, attempting creation.", flush=True)
+        print(f"[SETUP] Fast-path auth raised {type(e).__name__} "
+              "-- DB may not exist yet, attempting creation.", flush=True)
 
     # Attempt to create the database
-    print("[SETUP] Attempting to create database '" + odoo_db + "'...", flush=True)
+    print(f"[SETUP] Attempting to create database '{odoo_db}'...", flush=True)
     try:
         resp = requests.post(
             f'{odoo_url}/web/database/create',
@@ -102,9 +102,9 @@ def setup_database(
             print("  2. ODOO_MASTER_PASS is wrong.", flush=True)
             print("  Continuing -- will poll for existing DB to become accessible.", flush=True)
         else:
-            print("[SETUP] DB creation returned HTTP " + str(resp.status_code) + " -- continuing.", flush=True)
+            print(f"[SETUP] DB creation returned HTTP {resp.status_code} -- continuing.", flush=True)
     except Exception as e:
-        print("[SETUP] DB creation HTTP request failed: " + str(e), flush=True)
+        print(f"[SETUP] DB creation HTTP request failed: {e}", flush=True)
 
     # Poll until the DB is accessible (fresh Odoo init can take several minutes)
     print("[SETUP] Polling until '" + odoo_db + "' is accessible (up to 10 min)...", flush=True)
@@ -121,13 +121,13 @@ def setup_database(
                 )
                 return True
             last_result = (
-                "authenticate() returned 0 -- ODOO_USER='" + odoo_user + "' "
+                f"authenticate() returned 0 -- ODOO_USER='{odoo_user}' "
                 "or ODOO_PASS rejected, or database does not exist"
             )
         except Exception as e:
-            last_result = type(e).__name__ + ": " + str(e)
+            last_result = f"{type(e).__name__}: {e}"
         if (attempt + 1) % 6 == 0:
-            print("[SETUP]   " + str((attempt + 1) * 5) + "s elapsed | " + last_result, flush=True)
+            print(f"[SETUP]   {(attempt + 1) * 5}s elapsed | {last_result}", flush=True)
 
     master_status = "<set>" if odoo_master_pass else "NOT SET -- likely the problem"
     print("[SETUP] Database not accessible after 10 minutes.", flush=True)
