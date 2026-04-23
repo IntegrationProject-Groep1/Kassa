@@ -66,13 +66,19 @@ def setup_database(
     try:
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         if uid:
-            print(f"✅ Database '{odoo_db}' already exists and is accessible", flush=True)
+            print(f"[SETUP] Database '{odoo_db}' already exists and is accessible", flush=True)
             return True
-    except Exception:
-        pass
+        else:
+            # uid == 0: DB responded but credentials are wrong for this DB
+            print("[SETUP] Database '" + odoo_db + "' is up but authenticate() returned 0.", flush=True)
+            print("  -> ODOO_USER='" + odoo_user + "' or ODOO_PASS may be wrong for this DB.", flush=True)
+            print("  -> Will try DB creation in case the database does not exist yet.", flush=True)
+    except Exception as e:
+        print("[SETUP] Fast-path auth raised " + type(e).__name__ +
+              " -- DB may not exist yet, attempting creation.", flush=True)
 
-    # Attempt to create the database (ignore errors — it may already exist but not yet ready)
-    print(f"📦 Creating database '{odoo_db}'...", flush=True)
+    # Attempt to create the database
+    print("[SETUP] Attempting to create database '" + odoo_db + "'...", flush=True)
     try:
         resp = requests.post(
             f'{odoo_url}/web/database/create',
@@ -89,35 +95,47 @@ def setup_database(
             allow_redirects=True
         )
         if resp.status_code in (200, 302):
-            print("✅ Database creation request accepted", flush=True)
+            print("[SETUP] DB creation accepted -- waiting for Odoo to initialise", flush=True)
+        elif resp.status_code == 403:
+            print("[SETUP] DB creation returned 403 (Forbidden). Two possible causes:", flush=True)
+            print("  1. Database already exists (normal on restart) -- this is fine.", flush=True)
+            print("  2. ODOO_MASTER_PASS is wrong (current: '" + str(odoo_master_pass) + "').", flush=True)
+            print("  Continuing -- will poll for existing DB to become accessible.", flush=True)
         else:
-            print(
-                f"ℹ️  Database creation returned {resp.status_code} — "
-                "may already exist, continuing",
-                flush=True,
-            )
+            print("[SETUP] DB creation returned HTTP " + str(resp.status_code) + " -- continuing.", flush=True)
     except Exception as e:
-        print(f"⚠️  Database creation request failed: {e} — will keep waiting", flush=True)
+        print("[SETUP] DB creation HTTP request failed: " + str(e), flush=True)
 
-    # Wait up to 10 minutes for the DB to become accessible (fresh Odoo init takes time)
-    print(f"⏳ Waiting for database '{odoo_db}' to become accessible (up to 10 min)...", flush=True)
+    # Poll until the DB is accessible (fresh Odoo init can take several minutes)
+    print("[SETUP] Polling until '" + odoo_db + "' is accessible (up to 10 min)...", flush=True)
+    last_result = "not attempted yet"
     for attempt in range(120):
         time.sleep(5)
         try:
             uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
             if uid:
                 print(
-                    f"✅ Database '{odoo_db}' is now accessible "
-                    f"(after ~{(attempt + 1) * 5}s)",
+                    "[SETUP] Database '" + odoo_db + "' is now accessible "
+                    "(after ~" + str((attempt + 1) * 5) + "s)",
                     flush=True,
                 )
                 return True
-        except Exception:
-            pass
+            last_result = (
+                "authenticate() returned 0 -- ODOO_USER='" + odoo_user + "' "
+                "or ODOO_PASS rejected, or database does not exist"
+            )
+        except Exception as e:
+            last_result = type(e).__name__ + ": " + str(e)
         if (attempt + 1) % 6 == 0:
-            print(f"   ⏳ Still waiting for DB... ({(attempt + 1) * 5}s elapsed)", flush=True)
+            print("[SETUP]   " + str((attempt + 1) * 5) + "s elapsed | " + last_result, flush=True)
 
-    print("❌ Database not accessible after 10 minutes", flush=True)
+    master_status = "<set>" if odoo_master_pass else "NOT SET -- likely the problem"
+    print("[SETUP] Database not accessible after 10 minutes.", flush=True)
+    print("  Last result : " + last_result, flush=True)
+    print("  ODOO_URL    : " + str(odoo_url), flush=True)
+    print("  ODOO_DB     : " + str(odoo_db), flush=True)
+    print("  ODOO_USER   : " + str(odoo_user), flush=True)
+    print("  ODOO_MASTER : " + master_status, flush=True)
     return False
 
 
