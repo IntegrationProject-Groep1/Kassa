@@ -38,11 +38,6 @@ from sender import send_error_to_queue, flush_buffer, now_utc
 
 
 logger = logging.getLogger(__name__)
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
@@ -72,6 +67,10 @@ SCHEMA_MAP = {
     "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
 }
+
+# Cache parsed XSD schemas — avoids re-parsing from disk on every message.
+# Mirrors the same pattern used in sender.py (_schema_cache).
+_schema_cache: dict[str, etree.XMLSchema] = {}
 
 # ── Idempotency cache ──────────────────────────────────────────────────────────
 MAX_CACHE_SIZE = 10_000
@@ -138,6 +137,9 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
     validation is skipped and a warning is printed — this lets us deploy new
     message types before their schema is finalised.
 
+    Parsed schemas are cached in _schema_cache after their first use so that
+    the XSD file is only read from disk once per process lifetime.
+
     Raises ValueError with the full lxml error log if validation fails.
     """
     schema_path = SCHEMA_MAP.get(msg_type)
@@ -145,12 +147,14 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         logger.warning("[VALIDATION] No XSD schema found for type '%s' – skipping validation", msg_type)
         return
 
-    schema_doc = etree.parse(schema_path)
-    schema = etree.XMLSchema(schema_doc)
+    if msg_type not in _schema_cache:
+        schema_doc = etree.parse(schema_path)
+        _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
+
     xml_doc = etree.fromstring(xml_text.encode("utf-8"))
 
-    if not schema.validate(xml_doc):
-        errors = str(schema.error_log)
+    if not _schema_cache[msg_type].validate(xml_doc):
+        errors = str(_schema_cache[msg_type].error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
     logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)

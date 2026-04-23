@@ -40,11 +40,8 @@ import xml.etree.ElementTree as ET
 import uuid
 import sender  # Import the sender module
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Module-level logger — root logging is configured by the caller (main.py).
+# basicConfig() is only called when this module runs as __main__.
 logger = logging.getLogger(__name__)
 
 MAX_CACHE_SIZE = 10_000
@@ -615,4 +612,8 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
     main()

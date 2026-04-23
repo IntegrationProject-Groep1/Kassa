@@ -41,8 +41,8 @@ ODOO_PASS = os.environ.get("ODOO_PASS")
 # ── Field definitions grouped by Odoo model ───────────────────────────────────
 FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
     "res.partner": {
-        "x_user_id":        {"ttype": "char",    "string": "External User ID"},
-        "x_badge_id":       {"ttype": "char",    "string": "Badge ID"},
+        "x_user_id":        {"ttype": "char",    "string": "External User ID", "index": True},
+        "x_badge_id":       {"ttype": "char",    "string": "Badge ID",          "index": True},
         "x_wallet_balance": {"ttype": "float",   "string": "Wallet Balance (EUR)"},
         "x_date_of_birth":  {"ttype": "date",    "string": "Date of Birth"},
         "x_age":            {
@@ -99,6 +99,8 @@ def _create_field(models, model_id: int, fname: str, fdef: dict) -> int:
         "ttype":             fdef["ttype"],
         "store":             True,
     }
+    if "index" in fdef:
+        vals["index"] = fdef["index"]
     if "compute" in fdef:
         vals["compute"] = fdef["compute"]
         vals["depends"] = fdef.get("depends", "")

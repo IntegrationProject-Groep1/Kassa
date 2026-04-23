@@ -39,6 +39,9 @@ import threading
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
+# xml.etree.ElementTree (stdlib) is used for building outgoing XML — no extra dependency.
+# lxml is used only for XSD schema validation (validate_outgoing), because the stdlib
+# ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
 from lxml import etree
