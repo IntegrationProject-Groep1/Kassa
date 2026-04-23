@@ -1,6 +1,6 @@
 [options]
 admin_passwd = <your_odoo_master_password>
-; Disables the public database manager UI — required on every environment
+; Disables the public database manager UI. Set to False in production, True for local dev.
 list_db = True
 addons_path = /mnt/extra-addons
 data_dir = /var/lib/odoo

@@ -4,14 +4,18 @@ Usage:
     python check_vhosts.py
 """
 import os
+import sys
 import pika
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_utils import get_env, parse_rabbit_port  # noqa: E402
 
 
 def check_vhost(vhost: str) -> None:
-    user = os.environ.get("RABBIT_USER")
-    password = os.environ.get("RABBIT_PASS")
-    host = os.environ.get("RABBIT_HOST")
-    port = int(os.environ.get("RABBIT_PORT", "5672"))
+    user = get_env("RABBIT_USER")
+    password = get_env("RABBIT_PASS")
+    host = get_env("RABBIT_HOST")
+    port = parse_rabbit_port()
 
     credentials = pika.PlainCredentials(user, password)
     params = pika.ConnectionParameters(

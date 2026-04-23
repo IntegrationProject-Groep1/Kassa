@@ -5,15 +5,19 @@ Usage:
     python check_ports.py
 """
 import os
+import sys
 import pika
 import socket
 import ssl
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_utils import get_env  # noqa: E402
+
 
 def main() -> None:
-    rabbit_host = os.environ.get("RABBIT_HOST", "")
-    rabbit_user = os.environ.get("RABBIT_USER", "")
-    rabbit_pass = os.environ.get("RABBIT_PASS", "")
+    rabbit_host = get_env("RABBIT_HOST", "")
+    rabbit_user = get_env("RABBIT_USER", "")
+    rabbit_pass = get_env("RABBIT_PASS", "")
 
     # Try multiple ports in order
     ports_to_try = [

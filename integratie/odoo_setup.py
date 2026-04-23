@@ -70,8 +70,8 @@ def setup_database(
             return True
         else:
             # uid == 0: DB responded but credentials are wrong for this DB
-            print("[SETUP] Database '" + odoo_db + "' is up but authenticate() returned 0.", flush=True)
-            print("  -> ODOO_USER='" + odoo_user + "' or ODOO_PASS may be wrong for this DB.", flush=True)
+            print(f"[SETUP] Database '{odoo_db}' is up but authenticate() returned 0.", flush=True)
+            print(f"  -> ODOO_USER='{odoo_user}' or ODOO_PASS may be wrong for this DB.", flush=True)
             print("  -> Will try DB creation in case the database does not exist yet.", flush=True)
     except Exception as e:
         print("[SETUP] Fast-path auth raised " + type(e).__name__ +
@@ -115,8 +115,8 @@ def setup_database(
             uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
             if uid:
                 print(
-                    "[SETUP] Database '" + odoo_db + "' is now accessible "
-                    "(after ~" + str((attempt + 1) * 5) + "s)",
+                    f"[SETUP] Database '{odoo_db}' is now accessible "
+                    f"(after ~{(attempt + 1) * 5}s)",
                     flush=True,
                 )
                 return True
@@ -131,11 +131,11 @@ def setup_database(
 
     master_status = "<set>" if odoo_master_pass else "NOT SET -- likely the problem"
     print("[SETUP] Database not accessible after 10 minutes.", flush=True)
-    print("  Last result : " + last_result, flush=True)
-    print("  ODOO_URL    : " + str(odoo_url), flush=True)
-    print("  ODOO_DB     : " + str(odoo_db), flush=True)
-    print("  ODOO_USER   : " + str(odoo_user), flush=True)
-    print("  ODOO_MASTER : " + master_status, flush=True)
+    print(f"  Last result : {last_result}", flush=True)
+    print(f"  ODOO_URL    : {odoo_url}", flush=True)
+    print(f"  ODOO_DB     : {odoo_db}", flush=True)
+    print(f"  ODOO_USER   : {odoo_user}", flush=True)
+    print(f"  ODOO_MASTER : {master_status}", flush=True)
     return False
 
 

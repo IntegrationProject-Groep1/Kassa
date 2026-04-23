@@ -5,20 +5,20 @@ Usage:
     python check_connection.py
 """
 import os
+import sys
 import pika
 import traceback
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_utils import get_env, parse_rabbit_port  # noqa: E402
+
 
 def main() -> None:
-    rabbit_host = os.environ.get("RABBIT_HOST", "")
-    rabbit_user = os.environ.get("RABBIT_USER", "")
-    rabbit_pass = os.environ.get("RABBIT_PASS", "")
-    port_env = os.environ.get("RABBIT_PORT")
-    try:
-        rabbit_port = int(port_env) if port_env else 5672
-    except ValueError:
-        rabbit_port = 5672
-    rabbit_vhost = os.environ.get("RABBIT_VHOST", "")
+    rabbit_host = get_env("RABBIT_HOST", "")
+    rabbit_user = get_env("RABBIT_USER", "")
+    rabbit_pass = get_env("RABBIT_PASS", "")
+    rabbit_port = parse_rabbit_port()
+    rabbit_vhost = get_env("RABBIT_VHOST", "")
 
     print("🔗 Testing RabbitMQ connection...")
     print(f"   Host: {rabbit_host}:{rabbit_port}")
@@ -50,7 +50,7 @@ def main() -> None:
                 passive=True  # Just check if exists
             )
             print("   ✅ Exchange 'kassa.exchange' exists")
-        except BaseException:
+        except pika.exceptions.AMQPError:
             print("   ⚠️  Exchange needs to be created")
 
         connection.close()

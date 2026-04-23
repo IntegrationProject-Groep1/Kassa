@@ -29,8 +29,6 @@ from odoo_setup import (
     ensure_demo_products,
 )
 
-logging.getLogger("pika").setLevel(logging.WARNING)
-
 
 def _run_receiver() -> None:
     """Start the RabbitMQ receiver in a thread. Retries on connection failure."""
