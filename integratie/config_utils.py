@@ -1,11 +1,30 @@
 """
 config_utils.py — Shared configuration helpers for the Kassa integration service.
 
-Used by both receiver.py and sender.py to read and validate environment variables.
-Keeps the env-parsing logic in one place so neither module duplicates it.
+Used by receiver.py, sender.py, and dev tools to read and validate environment
+variables. Keeps the env-parsing logic in one place so no module duplicates it.
+
+Public API:
+    get_env(name, default)   — read one variable, return default if missing/blank
+    require_env(*names)      — read multiple variables, raise on any missing one
+    parse_rabbit_port()      — read RABBIT_PORT, fall back to 5672 on bad input
 """
 
 import os
+
+
+def get_env(name: str, default: str | None = None) -> str | None:
+    """
+    Read a single environment variable, returning `default` if it is unset or blank.
+
+    This is the lightweight variant of require_env() — it never raises, so it
+    is suitable for optional settings and tool scripts where a missing variable
+    should fall back gracefully rather than abort.
+    """
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    return value
 
 
 def parse_rabbit_port(default: int = 5672) -> int:

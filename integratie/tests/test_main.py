@@ -1,49 +1,49 @@
-# test_main.py – Unit tests for main.py (Odoo auto-setup)
+# test_main.py – Unit tests for odoo_setup.py (Odoo auto-setup functions)
 # Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
 
 from unittest.mock import MagicMock, patch
 
 import requests
 
-import main
+import odoo_setup
 
 
-@patch("main.time.sleep", return_value=None)  # avoid actual sleeping in tests
+@patch("odoo_setup.time.sleep", return_value=None)  # avoid actual sleeping in tests
 class TestMainSetup:
 
     # ── wait_for_odoo ────────────────────────────────────────────────────────
 
-    @patch("main.requests.get")
+    @patch("odoo_setup.requests.get")
     def test_wait_for_odoo_success(self, mock_get, mock_sleep):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_get.return_value = mock_resp
 
-        assert main.wait_for_odoo("http://localhost:8069", timeout=10) is True
+        assert odoo_setup.wait_for_odoo("http://localhost:8069", timeout=10) is True
         mock_get.assert_called_once()
 
-    @patch("main.requests.get")
+    @patch("odoo_setup.requests.get")
     def test_wait_for_odoo_timeout(self, mock_get, mock_sleep):
         mock_get.side_effect = requests.exceptions.RequestException("Conn refused")
 
         # timeout 10 => 10 // 5 = 2 attempts
-        assert main.wait_for_odoo("http://localhost:8069", timeout=10) is False
+        assert odoo_setup.wait_for_odoo("http://localhost:8069", timeout=10) is False
         assert mock_get.call_count == 2
         assert mock_sleep.call_count == 2
 
     # ── setup_database ───────────────────────────────────────────────────────
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_setup_database_already_exists(self, mock_proxy, mock_sleep):
         mock_common = MagicMock()
         mock_common.authenticate.return_value = 1  # auth success => db accessible
         mock_proxy.return_value = mock_common
 
-        assert main.setup_database("url", "db", "u", "p", "mp") is True
+        assert odoo_setup.setup_database("url", "db", "u", "p", "mp") is True
         mock_common.authenticate.assert_called_once()
 
-    @patch("main.requests.post")
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.requests.post")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_setup_database_create_and_wait(self, mock_proxy, mock_post, mock_sleep):
         mock_common = MagicMock()
         mock_proxy.return_value = mock_common
@@ -54,7 +54,7 @@ class TestMainSetup:
         mock_resp.status_code = 200
         mock_post.return_value = mock_resp
 
-        assert main.setup_database("url", "db", "u", "p", "mp") is True
+        assert odoo_setup.setup_database("url", "db", "u", "p", "mp") is True
 
         mock_post.assert_called_once()
         assert mock_post.call_args[1]["data"]["name"] == "db"
@@ -62,7 +62,7 @@ class TestMainSetup:
 
     # ── ensure_custom_fields ─────────────────────────────────────────────────
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_missing(self, mock_proxy, mock_sleep):
         mock_common = MagicMock()
         mock_common.authenticate.return_value = 1
@@ -83,14 +83,14 @@ class TestMainSetup:
         # mock_proxy is called twice: once for common, once for object
         mock_proxy.side_effect = [mock_common, mock_models]
 
-        assert main.ensure_custom_fields("url", "db", "u", "p") is True
+        assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
         # res.partner has 4 fields, pos.order has 3, product.template has 2
         # So create should be called 9 times.
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
         assert len(create_calls) == 9
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -116,14 +116,14 @@ class TestMainSetup:
 
         mock_models.execute_kw.side_effect = my_execute_kw
 
-        assert main.ensure_custom_fields("url", "db", "u", "p") is True
+        assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
         assert len(create_calls) == 0
 
     # ── ensure_pos_installed ─────────────────────────────────────────────────
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_pos_installed_already(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -136,9 +136,9 @@ class TestMainSetup:
                 return [{"state": "installed"}]
         mock_models.execute_kw.side_effect = execute_kw
 
-        assert main.ensure_pos_installed("url", "db", "u", "p") is True
+        assert odoo_setup.ensure_pos_installed("url", "db", "u", "p") is True
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_pos_installed_needs_install(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -158,14 +158,14 @@ class TestMainSetup:
                 return True
         mock_models.execute_kw.side_effect = execute_kw
 
-        assert main.ensure_pos_installed("url", "db", "u", "p") is True
+        assert odoo_setup.ensure_pos_installed("url", "db", "u", "p") is True
         # Check that it pressed the button
         ins_c = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "button_immediate_install"]
         assert len(ins_c) == 1
 
     # ── ensure_settings_and_base_data (tax, categories, products, pos_config)
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_tax_settings(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -184,7 +184,7 @@ class TestMainSetup:
 
         mock_models.execute_kw.side_effect = execute_kw
 
-        res = main.ensure_tax_settings("url", "db", "u", "p")
+        res = odoo_setup.ensure_tax_settings("url", "db", "u", "p")
         # should have created all 4 valid rates mapped to tax_id=55
         assert set(res.keys()) == {0.0, 6.0, 12.0, 21.0}
         assert all(v == 55 for v in res.values())
@@ -193,7 +193,7 @@ class TestMainSetup:
         wc = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "write" and c[0][3] == "res.company"]
         assert len(wc) == 1
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_pos_categories(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -201,13 +201,13 @@ class TestMainSetup:
 
         mock_models.execute_kw.return_value = []  # no existing categories
 
-        main.ensure_pos_categories("url", "db", "u", "p")
+        odoo_setup.ensure_pos_categories("url", "db", "u", "p")
         # Because we mocked execute_kw to return [], create will be called
         # Our dumb mock returns [] for create too, so ids will be []
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
         assert len(create_calls) == 2
 
-    @patch("main.xmlrpc.client.ServerProxy")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_payment_methods(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
@@ -216,6 +216,6 @@ class TestMainSetup:
         # First return true so they appear existing
         mock_models.execute_kw.return_value = [{"id": 42}]
 
-        pm_ids = main.ensure_payment_methods("url", "db", "u", "p")
+        pm_ids = odoo_setup.ensure_payment_methods("url", "db", "u", "p")
         assert len(pm_ids) == 3
         assert pm_ids == [42, 42, 42]
