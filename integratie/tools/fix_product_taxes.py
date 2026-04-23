@@ -1,10 +1,10 @@
 """
-fix_product_taxes.py — Zet BTW-tarief van POS-producten naar 6%
+fix_product_taxes.py — Set VAT rate of POS products to 6%
 
-Zoekt alle producten die beschikbaar zijn in POS en een BTW-tarief hebben
-dat niet in de toegestane waarden (0, 6, 12, 21) staat, en past dit aan.
+Finds all products available in POS with a VAT rate not in the allowed values
+(0, 6, 12, 21) and updates them to the target rate.
 
-Gebruik: docker exec kassa_integratie python tools/fix_product_taxes.py
+Usage: docker exec kassa_integratie python tools/fix_product_taxes.py
 """
 
 import os
@@ -26,15 +26,15 @@ def connect():
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common", allow_none=True)
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
     if not uid:
-        print("FOUT: Odoo authenticatie mislukt")
+        print("ERROR: Odoo authentication failed")
         sys.exit(1)
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object", allow_none=True)
-    print(f"Odoo verbonden (uid={uid})")
+    print(f"Odoo connected (uid={uid})")
     return uid, models
 
 
 def get_or_create_tax(uid, models, rate):
-    """Zoek een bestaande BTW van {rate}% of maak er een aan."""
+    """Find an existing VAT tax at {rate}% or create one."""
     existing = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "account.tax", "search_read",
@@ -43,21 +43,21 @@ def get_or_create_tax(uid, models, rate):
     )
     if existing:
         tax = existing[0]
-        print(f"Bestaande {rate}% BTW gevonden: [{tax['id']}] {tax['name']}")
+        print(f"Existing {rate}% VAT found: [{tax['id']}] {tax['name']}")
         return tax["id"]
 
     tax_id = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "account.tax", "create",
-        [{"name": f"BTW {rate}%", "amount": rate, "type_tax_use": "sale",
+        [{"name": f"VAT {rate}%", "amount": rate, "type_tax_use": "sale",
           "amount_type": "percent"}]
     )
-    print(f"Nieuwe {rate}% BTW aangemaakt: id={tax_id}")
+    print(f"New {rate}% VAT created: id={tax_id}")
     return tax_id
 
 
 def fix_product_taxes(uid, models, target_tax_id):
-    """Pas BTW aan op alle POS-producten met een niet-toegelaten tarief."""
+    """Update VAT on all POS products with an invalid rate."""
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "product.template", "search",
@@ -65,7 +65,7 @@ def fix_product_taxes(uid, models, target_tax_id):
     )
 
     if not product_ids:
-        print("Geen POS-producten gevonden.")
+        print("No POS products found.")
         return
 
     products = models.execute_kw(
@@ -95,15 +95,15 @@ def fix_product_taxes(uid, models, target_tax_id):
         rates = {int(tax_map.get(tid, -1)) for tid in tax_ids}
         if not rates.issubset(VALID_VAT_RATES):
             to_fix.append(product)
-            print(f"  [{product['id']}] {product['name']} — tarief(en): {rates} → wordt aangepast")
+            print(f"  [{product['id']}] {product['name']} — rate(s): {rates} → will be updated")
 
     if not to_fix:
-        print("Alle POS-producten hebben al een geldig BTW-tarief.")
+        print("All POS products already have a valid VAT rate.")
         return
 
     # Batch update all products in a single call
     to_fix_ids = [p["id"] for p in to_fix]
-    print(f"\n{len(to_fix_ids)} product(en) worden aangepast naar {TARGET_VAT_RATE}%...")
+    print(f"\n{len(to_fix_ids)} product(s) will be updated to {TARGET_VAT_RATE}%...")
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "product.template", "write",
@@ -112,13 +112,13 @@ def fix_product_taxes(uid, models, target_tax_id):
     for product in to_fix:
         print(f"  ✅ [{product['id']}] {product['name']}")
 
-    print(f"\n✅ {len(to_fix)} product(en) bijgewerkt naar {TARGET_VAT_RATE}% BTW.")
+    print(f"\n✅ {len(to_fix)} product(s) updated to {TARGET_VAT_RATE}% VAT.")
 
 
 def main():
     print(SEP)
-    print(f"FIX PRODUCT TAXES — Zet niet-standaard BTW naar {TARGET_VAT_RATE}%")
-    print(f"Toegestane tarieven: {sorted(VALID_VAT_RATES)}")
+    print(f"FIX PRODUCT TAXES — Set non-standard VAT rates to {TARGET_VAT_RATE}%")
+    print(f"Allowed rates: {sorted(VALID_VAT_RATES)}")
     print(SEP)
 
     uid, models = connect()

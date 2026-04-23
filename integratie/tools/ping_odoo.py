@@ -9,35 +9,32 @@ def ping_odoo():
     user = os.environ.get("ODOO_USER")
     password = os.environ.get("ODOO_PASS")
 
-    print(f"Binnenkomende configuratie: URL={url}, DB={db}, USER={user}")
-    print("Testen van verbinding met Odoo via XML-RPC...")
+    print(f"Configuration: URL={url}, DB={db}, USER={user}")
+    print("Testing Odoo connection via XML-RPC...")
 
     try:
-        # 1. Testen of Odoo uberhaupt aanstaat
+        # 1. Check if Odoo is reachable
         common = xmlrpc.client.ServerProxy(
             f'{url}/xmlrpc/2/common', allow_none=True
         )
         version_info = common.version()
-        print("✅ Odoo bereikt! Odoo versie: "
-              f"{version_info.get('server_version')}")
-        # 2. Testen of inloggegevens kloppen en we toegang hebben
-        print("Testen van authenticatie...")
+        print(f"✅ Odoo reachable! Version: {version_info.get('server_version')}")
+        # 2. Check credentials and access
+        print("Testing authentication...")
         uid = common.authenticate(db, user, password, {})
         if uid:
-            print(f"✅ Authenticatie geslaagd! User ID: {uid}")
-            print("De XML-RPC verbinding werkt perfect. Integratiescripts "
-                  "kunnen veilig data ophalen wegschrijven!")
+            print(f"✅ Authentication successful! User ID: {uid}")
+            print("XML-RPC connection working. Integration scripts can safely read and write data.")
         else:
-            print("⚠️ Authenticatie mislukt. Controleer of de database "
-                  "bestaat en de inloggegevens in .env correct zijn.")
+            print("⚠️ Authentication failed. Check that the database exists "
+                  "and credentials in .env are correct.")
             sys.exit(1)
 
     except ConnectionRefusedError:
-        print("❌ Connectie geweigerd. Odoo container staat waarschijnlijk "
-              "nog niet aan.")
+        print("❌ Connection refused. The Odoo container is probably not running yet.")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Kan Odoo niet bereiken of er is een fout opgetreden: {e}")
+        print(f"❌ Cannot reach Odoo or an error occurred: {e}")
         sys.exit(1)
 
 
