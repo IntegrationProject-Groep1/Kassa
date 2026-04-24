@@ -409,7 +409,7 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
 def ensure_pos_categories(
     odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str
-) -> tuple:
+) -> tuple[int | None, int | None]:
     """Create (or confirm) the 'Top-ups' and 'Drinks' POS categories. Returns (topup_id, drinks_id)."""
     print("🔍 Checking POS categories...", flush=True)
     try:

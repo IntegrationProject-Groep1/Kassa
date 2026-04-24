@@ -49,8 +49,8 @@ def get_or_create_tax(uid, models, rate):
     tax_id = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "account.tax", "create",
-        [{"name": f"VAT {rate}%", "amount": rate, "type_tax_use": "sale",
-          "amount_type": "percent"}]
+        [{"name": f"BTW {int(rate)}% incl.", "amount": rate, "type_tax_use": "sale",
+          "amount_type": "percent", "price_include": True}]
     )
     print(f"New {rate}% VAT created: id={tax_id}")
     return tax_id
