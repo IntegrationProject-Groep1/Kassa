@@ -495,23 +495,17 @@ class OrderPoller:
 
         if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = round(float(current_balance) - wallet_paid_amount, 2)
-
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'res.partner', 'write',
-                [[customer_info['id']], {'x_wallet_balance': new_balance}]
-            )
-
+            
             try:
-                self.models.execute_kw(
+                # Atomically deduct balance and mark order processed in one Odoo module call
+                new_balance = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'pos.order', 'write',
-                    [[order_id], {'x_wallet_updated': True}]
+                    'pos.order', 'action_process_wallet_payment',
+                    [order_id, customer_info['id'], wallet_paid_amount]
                 )
             except xmlrpc.client.Fault as e:
-                logger.warning(
-                    f"⚠️  x_wallet_updated field might not exist on pos.order: {e}")
+                logger.error(f"⚠️  Atomic wallet processing failed for order {order_id}: {e}")
+                new_balance = round(float(current_balance) - wallet_paid_amount, 2)
 
             wallet_xml = sender.build_wallet_balance_update_xml(
                 user_id=customer_info.get('x_user_id'),

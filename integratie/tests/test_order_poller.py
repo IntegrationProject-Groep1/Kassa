@@ -415,8 +415,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     poller.models.execute_kw.side_effect = [
         # pos.payment read
         [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 4.0}],
-        True,  # res.partner write
-        True,  # pos.order write
+        8.5,  # action_process_wallet_payment returns the new balance atomically
     ]
     mock_sender.build_consumption_order_xml.return_value = (
         '<message><header><message_id>corr-wallet</message_id></header></message>'
@@ -432,19 +431,20 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     assert ok is True
     assert payment_msg_id == 'pay-wallet'
 
+    # Verify the atomic call was made on pos.order with action_process_wallet_payment
+    atomic_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'action_process_wallet_payment'
+    ]
+    assert len(atomic_calls) == 1
+    assert atomic_calls[0][0][5] == [25, 99, 4.0]
+
+    # Verify no separate res.partner or pos.order write calls were made
     partner_write_calls = [
         c for c in poller.models.execute_kw.call_args_list
         if len(c[0]) > 4 and c[0][3] == 'res.partner' and c[0][4] == 'write'
     ]
-    assert len(partner_write_calls) == 1
-    assert partner_write_calls[0][0][5] == [[99], {'x_wallet_balance': 8.5}]
-
-    order_write_calls = [
-        c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'write'
-    ]
-    assert len(order_write_calls) == 1
-    assert order_write_calls[0][0][5] == [[25], {'x_wallet_updated': True}]
+    assert len(partner_write_calls) == 0
 
     mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
         user_id='USR-1',
