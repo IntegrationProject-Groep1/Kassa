@@ -51,7 +51,9 @@ FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
             "compute": (
                 "for rec in self:\n"
                 "    if rec.x_date_of_birth:\n"
-                "        rec['x_age'] = (datetime.date.today() - rec.x_date_of_birth).days // 365\n"
+                "        dob = rec.x_date_of_birth\n"
+                "        today = datetime.date.today()\n"
+                "        rec['x_age'] = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))\n"
                 "    else:\n"
                 "        rec['x_age'] = 0"
             ),
