@@ -9,7 +9,7 @@
 #   4. ensure_custom_fields   – create x_* fields on res.partner / pos.order / product.template
 #   5. ensure_tax_settings    – ensure Belgian VAT rates exist and are price-inclusive
 #   6. ensure_pos_categories  – create "Top-ups" and "Drinks" POS categories
-#   7. ensure_payment_methods – create Cash / Bancontact / Badge Wallet payment methods
+#   7. ensure_payment_methods – create Cash / Card / Badge Wallet payment methods
 #   8. ensure_demo_products   – create demo products linked to the categories and taxes
 
 import time
@@ -450,7 +450,7 @@ def ensure_pos_categories(
 def ensure_payment_methods(
     odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str
 ) -> list:
-    """Create Cash / Bancontact / Badge Wallet payment methods if missing. Returns list of IDs."""
+    """Create Cash / Card / Badge Wallet payment methods if missing. Returns list of IDs."""
     print("🔍 Checking POS payment methods...", flush=True)
     try:
         common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
@@ -459,7 +459,7 @@ def ensure_payment_methods(
 
         needed = [
             {"name": "Cash",         "is_cash_count": True},
-            {"name": "Bancontact",   "is_cash_count": False},
+            {"name": "Card",   "is_cash_count": False},
             {"name": "Badge Wallet", "is_cash_count": False},
         ]
 

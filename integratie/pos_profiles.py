@@ -2,8 +2,8 @@
 # Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
 #
 # Creates two POS configurations in Odoo if they don't exist yet:
-#   - "Bar Kassa"          → Cash, Bancontact, Badge Wallet
-#   - "Inschrijvingskassa" → Cash (Inschrijving), Bancontact
+#   - "Bar Kassa"          → Cash, Card, Badge Wallet
+#   - "Inschrijvingskassa" → Cash (Inschrijving), Card
 #
 # Odoo does not allow a cash payment method (is_cash_count=True) to be used in
 # more than one POS config.  "Cash (Inschrijving)" is therefore created with
@@ -23,7 +23,7 @@ _PROFILES: list[dict[str, Any]] = [
         "name": "Bar Kassa",
         "payment_methods": [
             {"name": "Cash"},
-            {"name": "Bancontact"},
+            {"name": "Card"},
             {"name": "Badge Wallet"},
         ],
     },
@@ -31,7 +31,7 @@ _PROFILES: list[dict[str, Any]] = [
         "name": "Inschrijvingskassa",
         "payment_methods": [
             {"name": "Cash (Inschrijving)", "create_if_missing": {"is_cash_count": False}},
-            {"name": "Bancontact"},
+            {"name": "Card"},
         ],
     },
 ]
@@ -71,8 +71,8 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     for profile in _PROFILES:
         pm_ids, resolved_names = _resolve_payment_method_ids(models, db, uid, password, profile)
         
-        # Check specifically for critical methods: "Cash" and "Bancontact"
-        critical_names = {"Cash", "Bancontact"} & {pm["name"] for pm in profile["payment_methods"]}
+        # Check specifically for critical methods: "Cash" and "Card"
+        critical_names = {"Cash", "Card"} & {pm["name"] for pm in profile["payment_methods"]}
         missing_critical = critical_names - resolved_names
         
         if missing_critical:

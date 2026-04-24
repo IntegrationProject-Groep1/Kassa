@@ -12,7 +12,7 @@ Covers:
   - Two-phase execution: ALL pm lookups before ANY pos.config upsert
   - write skips payment_method_ids when current and desired sets are equal
   - write includes payment_method_ids only when the sets differ
-  - RuntimeError raised when pm_ids is empty for a profile with required Cash/Bancontact
+  - RuntimeError raised when pm_ids is empty for a profile with required Cash/Card
   - Exceptions propagate out of ensure_pos_profiles (no swallowing)
 """
 import pytest
@@ -31,7 +31,7 @@ UID = 1
 PASS = "test_pass"
 
 _PM_CASH = [{"id": 10}]
-_PM_BANCONTACT = [{"id": 20}]
+_PM_CARD = [{"id": 20}]
 _PM_BADGE = [{"id": 30}]
 _PM_CASH_INSCHRIJVING = [{"id": 40}]
 _CASH_INSCHRIJVING_NEW_ID = 40
@@ -60,18 +60,18 @@ def _side_effect_both_absent(bar_id=10, inschrijving_id=11):
     Ten calls: both POS configs absent, "Cash (Inschrijving)" needs creation.
 
     Phase 1 (6 calls):
-      Bar Kassa:          Cash, Bancontact, Badge Wallet lookups
-      Inschrijvingskassa: Cash (Inschrijving) miss + create, Bancontact lookup
+      Bar Kassa:          Cash, Card, Badge Wallet lookups
+      Inschrijvingskassa: Cash (Inschrijving) miss + create, Card lookup
     Phase 2 (4 calls):
       Bar Kassa:          config search → absent, config create
       Inschrijvingskassa: config search → absent, config create
     """
     return [
         # Phase 1 — Bar Kassa pm lookups
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
         # Phase 1 — Inschrijvingskassa pm lookups
         [], _CASH_INSCHRIJVING_NEW_ID,  # Cash (Inschrijving): miss → create
-        _PM_BANCONTACT,
+        _PM_CARD,
         # Phase 2 — Bar Kassa config
         [], bar_id,
         # Phase 2 — Inschrijvingskassa config
@@ -84,15 +84,15 @@ def _side_effect_both_absent_cash_exists(bar_id=10, inschrijving_id=11):
     Nine calls: both configs absent, "Cash (Inschrijving)" already present.
 
     Phase 1 (5 calls):
-      Bar Kassa:          Cash, Bancontact, Badge Wallet lookups
-      Inschrijvingskassa: Cash (Inschrijving) found, Bancontact lookup
+      Bar Kassa:          Cash, Card, Badge Wallet lookups
+      Inschrijvingskassa: Cash (Inschrijving) found, Card lookup
     Phase 2 (4 calls):
       Both configs: search → absent, create
     """
     return [
         # Phase 1
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
-        _PM_CASH_INSCHRIJVING, _PM_BANCONTACT,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
+        _PM_CASH_INSCHRIJVING, _PM_CARD,
         # Phase 2
         [], bar_id,
         [], inschrijving_id,
@@ -247,10 +247,10 @@ def test_updates_existing_bar_kassa(patched_proxy):
     """Existing Bar Kassa with different pm_ids → write is called with the correct config_id."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1 — Bar Kassa pm lookups
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
         # Phase 1 — Inschrijvingskassa: Cash (Inschrijving) absent → create
         [], _CASH_INSCHRIJVING_NEW_ID,
-        _PM_BANCONTACT,
+        _PM_CARD,
         # Phase 2 — Bar Kassa config exists with DIFFERENT pm_ids → write with pm update
         [{"id": 99, "payment_method_ids": [1, 2]}], True,
         # Phase 2 — Inschrijvingskassa config absent → create
@@ -270,8 +270,8 @@ def test_updates_both_when_both_exist(patched_proxy):
     """Both configs exist with different pm_ids → two write calls."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
-        _PM_CASH_INSCHRIJVING, _PM_BANCONTACT,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
+        _PM_CASH_INSCHRIJVING, _PM_CARD,
         # Phase 2 — both configs exist with DIFFERENT pm_ids → two writes
         [{"id": 1, "payment_method_ids": [1, 2]}], True,
         [{"id": 2, "payment_method_ids": [3, 4]}], True,
@@ -294,8 +294,8 @@ def test_write_skips_payment_methods_when_unchanged(patched_proxy):
     """When existing config already has the correct pm_ids, write must NOT include payment_method_ids."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
-        _PM_CASH_INSCHRIJVING, _PM_BANCONTACT,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
+        _PM_CASH_INSCHRIJVING, _PM_CARD,
         # Phase 2 — both configs exist with MATCHING pm_ids
         [{"id": 1, "payment_method_ids": [10, 20, 30]}], True,
         [{"id": 2, "payment_method_ids": [40, 20]}], True,
@@ -316,8 +316,8 @@ def test_write_includes_payment_methods_when_changed(patched_proxy):
     """When existing config has different pm_ids, write MUST include payment_method_ids."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1
-        _PM_CASH, _PM_BANCONTACT, _PM_BADGE,
-        _PM_CASH_INSCHRIJVING, _PM_BANCONTACT,
+        _PM_CASH, _PM_CARD, _PM_BADGE,
+        _PM_CASH_INSCHRIJVING, _PM_CARD,
         # Phase 2 — Bar Kassa exists with DIFFERENT pm_ids
         [{"id": 1, "payment_method_ids": [99, 100]}], True,
         # Inschrijvingskassa absent
@@ -377,7 +377,7 @@ def test_inschrijvingskassa_has_cash_inschrijving_and_bancontact(patched_proxy):
     )
     pm_ids = inschrijving_create[0][5][0]["payment_method_ids"][0][2]
     assert _CASH_INSCHRIJVING_NEW_ID in pm_ids   # Cash (Inschrijving)
-    assert 20 in pm_ids                           # Bancontact
+    assert 20 in pm_ids                           # Card
     assert 10 not in pm_ids                       # shared "Cash" must NOT appear
 
 
@@ -402,9 +402,9 @@ def test_missing_payment_method_still_creates_profile(patched_proxy):
     """Badge Wallet not found (no create_if_missing) → profile still created."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1 — Bar Kassa: Badge Wallet missing, no create
-        _PM_CASH, _PM_BANCONTACT, [],
+        _PM_CASH, _PM_CARD, [],
         # Phase 1 — Inschrijvingskassa
-        [], _CASH_INSCHRIJVING_NEW_ID, _PM_BANCONTACT,
+        [], _CASH_INSCHRIJVING_NEW_ID, _PM_CARD,
         # Phase 2 — both absent
         [], 10,
         [], 11,
@@ -422,8 +422,8 @@ def test_missing_badge_wallet_excluded_from_bar_kassa(patched_proxy):
     """When Badge Wallet is missing it is not included in Bar Kassa's pm list."""
     patched_proxy.execute_kw.side_effect = [
         # Phase 1
-        _PM_CASH, _PM_BANCONTACT, [],  # Badge Wallet not found
-        [], _CASH_INSCHRIJVING_NEW_ID, _PM_BANCONTACT,
+        _PM_CASH, _PM_CARD, [],  # Badge Wallet not found
+        [], _CASH_INSCHRIJVING_NEW_ID, _PM_CARD,
         # Phase 2
         [], 10,
         [], 11,
@@ -446,9 +446,9 @@ def test_missing_badge_wallet_excluded_from_bar_kassa(patched_proxy):
 # ---------------------------------------------------------------------------
 
 def test_raises_when_pm_ids_empty(patched_proxy):
-    """RuntimeError raised when pm_ids is empty for a profile with required Cash/Bancontact."""
+    """RuntimeError raised when pm_ids is empty for a profile with required Cash/Card."""
     patched_proxy.execute_kw.side_effect = [
-        # Phase 1 — Bar Kassa: all methods missing (Cash, Bancontact, Badge Wallet all return [])
+        # Phase 1 — Bar Kassa: all methods missing (Cash, Card, Badge Wallet all return [])
         [], [], [],
     ]
     with pytest.raises(RuntimeError):
