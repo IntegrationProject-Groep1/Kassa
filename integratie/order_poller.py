@@ -495,7 +495,7 @@ class OrderPoller:
 
         if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
             current_balance = customer_info.get('x_wallet_balance') or 0.0
-            
+
             try:
                 # Atomically deduct balance and mark order processed in one Odoo module call
                 new_balance = self.models.execute_kw(
