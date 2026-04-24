@@ -22,6 +22,7 @@ from odoo_setup import (
     wait_for_odoo,
     setup_database,
     ensure_pos_installed,
+    ensure_kassa_addons,
     ensure_custom_fields,
     ensure_tax_settings,
     ensure_pos_categories,
@@ -73,6 +74,9 @@ def main():
     if not ensure_pos_installed(odoo_url, odoo_db, odoo_user, odoo_pass):
         print("❌ POS module installation failed. Exiting.", flush=True)
         sys.exit(1)
+
+    # Step 3b: Auto-install/upgrade Kassa custom addons
+    ensure_kassa_addons(odoo_url, odoo_db, odoo_user, odoo_pass)
 
     # Step 4: Ensure custom Odoo fields exist (x_user_id, x_badge_id, etc.)
     ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass)

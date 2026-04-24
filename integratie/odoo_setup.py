@@ -6,6 +6,7 @@
 #   1. wait_for_odoo          – wait for the Odoo web process
 #   2. setup_database         – create the DB if it doesn't exist yet
 #   3. ensure_pos_installed   – auto-install the point_of_sale module
+#   3b. ensure_kassa_addons    – auto-install/upgrade kassa_pos_custom addon
 #   4. ensure_custom_fields   – create x_* fields on res.partner / pos.order / product.template
 #   5. ensure_tax_settings    – ensure Belgian VAT rates exist and are price-inclusive
 #   6. ensure_pos_categories  – create "Top-ups" and "Drinks" POS categories
@@ -206,6 +207,80 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
 
     except Exception as e:
         print(f"⚠️  Could not auto-install POS module: {e}", flush=True)
+        return False
+
+
+# ── Step 3b: Kassa custom addons ──────────────────────────────────────────────
+
+# List of custom addons to install/upgrade on every startup.
+_KASSA_ADDONS = ['kassa_pos_custom']
+
+
+def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
+    """
+    Ensure kassa_pos_custom (and any future addons in _KASSA_ADDONS) are installed
+    and up-to-date. Installs missing modules and upgrades already-installed ones.
+    Safe to call on every container startup — idempotent.
+    """
+    print("🔍 Checking Kassa custom addons...", flush=True)
+    try:
+        common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
+        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+        if not uid:
+            print("⚠️  Cannot check custom addons — Odoo auth failed", flush=True)
+            return False
+
+        models = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/object', allow_none=True)
+
+        for addon_name in _KASSA_ADDONS:
+            module_ids = _rpc(
+                models, odoo_db, uid, odoo_pass,
+                'ir.module.module', 'search',
+                [[["name", "=", addon_name]]]
+            )
+
+            if not module_ids:
+                print(f"⚠️  Addon '{addon_name}' not found in registry — skipping", flush=True)
+                continue
+
+            module_info = _rpc(
+                models, odoo_db, uid, odoo_pass,
+                'ir.module.module', 'read',
+                [module_ids, ['name', 'state']]
+            )
+            state = module_info[0]['state'] if module_info else 'unknown'
+
+            if state == 'installed':
+                # Upgrade to pick up new Python code / views
+                print(f"   🔄 Upgrading '{addon_name}'...", flush=True)
+                _rpc(models, odoo_db, uid, odoo_pass,
+                     'ir.module.module', 'button_immediate_upgrade', [module_ids])
+            elif state in ('uninstalled', 'to install'):
+                print(f"   📦 Installing '{addon_name}'...", flush=True)
+                _rpc(models, odoo_db, uid, odoo_pass,
+                     'ir.module.module', 'button_immediate_install', [module_ids])
+            else:
+                print(f"   ⏳ Addon '{addon_name}' state={state} — skipping", flush=True)
+                continue
+
+            # Poll until installed (up to 120 s)
+            for attempt in range(24):
+                time.sleep(5)
+                info = _rpc(models, odoo_db, uid, odoo_pass,
+                            'ir.module.module', 'read', [module_ids, ['state']])
+                new_state = info[0]['state']
+                print(f"      ⏳ ({(attempt + 1) * 5}s) state={new_state}", flush=True)
+                if new_state == 'installed':
+                    print(f"   ✅ Addon '{addon_name}' ready", flush=True)
+                    break
+            else:
+                print(f"   ⚠️  Addon '{addon_name}' did not finish in time — continuing", flush=True)
+
+        print("✅ Kassa addons check complete", flush=True)
+        return True
+
+    except Exception as e:
+        print(f"⚠️  Could not verify Kassa addons: {e}", flush=True)
         return False
 
 
