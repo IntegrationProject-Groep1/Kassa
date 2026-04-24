@@ -70,17 +70,17 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     all_pm_ids: dict[str, list] = {}
     for profile in _PROFILES:
         pm_ids, resolved_names = _resolve_payment_method_ids(models, db, uid, password, profile)
-        
+
         # Check specifically for critical methods: "Cash" and "Card"
         critical_names = {"Cash", "Card"} & {pm["name"] for pm in profile["payment_methods"]}
         missing_critical = critical_names - resolved_names
-        
+
         if missing_critical:
             raise RuntimeError(
                 f"Critical payment method(s) {missing_critical} not resolved for '{profile['name']}': "
                 f"these are required to properly configure the Point of Sale."
             )
-            
+
         all_pm_ids[profile["name"]] = pm_ids
         print(f"   🔑 '{profile['name']}' payment method IDs: {pm_ids}", flush=True)
 
