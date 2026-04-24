@@ -382,6 +382,28 @@ class TestProcessMessage:
         ch.basic_ack.assert_called_once_with(delivery_tag=42)
         ch.basic_nack.assert_not_called()
 
+    @patch("receiver.get_odoo_connection")
+    @patch("receiver.validate_xml")
+    def test_successful_delivery_marks_message_id(self, mock_validate, mock_odoo, ch, method):
+        uid = 1
+        models = MagicMock()
+        models.execute_kw.side_effect = [[], 50]
+        mock_odoo.return_value = (uid, models)
+
+        body = _xml_bytes(
+            "new_registration",
+            "<customer>"
+            "<email>x@x.com</email><name>X</name><type>private</type>"
+            "<user_id>uid-999</user_id><date_of_birth>2006-01-01</date_of_birth>"
+            "</customer>"
+            "<payment_due><amount>10</amount><status>unpaid</status></payment_due>",
+            message_id="msg-ok-001",
+        )
+
+        receiver.process_message(ch, method, None, body)
+
+        assert "msg-ok-001" in receiver.seen_message_ids
+
     @patch("receiver.send_error_to_queue")
     def test_nacks_on_invalid_xml(self, mock_send_error, ch, method):
         receiver.process_message(ch, method, None, b"not valid xml <<<")
@@ -415,6 +437,23 @@ class TestProcessMessage:
         ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
         mock_send_error.assert_called_once()
         assert mock_send_error.call_args[0][0] == "odoo_api_error"
+
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    @patch("receiver.validate_xml")
+    def test_odoo_failure_does_not_cache_message_id(self, mock_validate, mock_odoo, mock_send_error, ch, method):
+        mock_odoo.side_effect = ConnectionError("Temporary Odoo outage")
+        body = _xml_bytes(
+            "badge_scanned",
+            "<badge_id>B1</badge_id><location>bar</location>",
+            message_id="msg-fail-001",
+        )
+
+        receiver.process_message(ch, method, None, body)
+
+        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
+        assert "msg-fail-001" not in receiver.seen_message_ids
+        mock_send_error.assert_called_once()
 
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")

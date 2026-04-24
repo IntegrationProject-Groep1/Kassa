@@ -11,9 +11,13 @@ import uuid
 import pika
 import xmlrpc.client
 
+# Allow importing config_utils from the integratie/ root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_utils import parse_rabbit_port  # noqa: E402
+
 # ── RabbitMQ config ────────────────────────────────────────────────────────────
 RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", "5672"))
+RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
 RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")

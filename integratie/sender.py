@@ -39,6 +39,9 @@ import threading
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
+# xml.etree.ElementTree (stdlib) is used for building outgoing XML — no extra dependency.
+# lxml is used only for XSD schema validation (validate_outgoing), because the stdlib
+# ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
 from lxml import etree
@@ -181,7 +184,7 @@ def flush_buffer() -> list:
 
     for entry in entries:
         try:
-            send_message(entry["routing_key"], entry["xml"])
+            _publish_or_raise(entry["routing_key"], entry["xml"])
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
@@ -244,6 +247,7 @@ def connect_to_rabbitmq():
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
     setup_exchange(_channel)
+
     return _connection, _channel
 
 
@@ -593,7 +597,7 @@ def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
 
-    bal = ET.SubElement(body, "new_balance")
+    bal = ET.SubElement(body, "wallet_balance")
     bal.text = f"{new_balance:.2f}"
     bal.set("currency", "eur")
 

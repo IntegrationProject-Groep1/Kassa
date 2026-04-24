@@ -52,25 +52,25 @@ class TestSenderBuffer:
         finally:
             sender.BUFFER_MAX_MESSAGES = original_max
 
-    @patch("sender.send_message")
+    @patch("sender._publish_or_raise")
     def test_flush_buffer_success(self, mock_send, tmp_buffer):
         sender._buffer_message("r.1", "<1/>", order_id=10)
         sender._buffer_message("r.2", "<2/>", order_id=20)
 
-        mock_send.return_value = True
+        mock_send.return_value = None
 
         success_ids = sender.flush_buffer()
         assert success_ids == [10, 20]
         assert not tmp_buffer.exists()
         assert mock_send.call_count == 2
 
-    @patch("sender.send_message")
+    @patch("sender._publish_or_raise")
     def test_flush_buffer_stops_on_failure(self, mock_send, tmp_buffer):
         sender._buffer_message("r.1", "<1/>", order_id=10)
         sender._buffer_message("r.2", "<2/>", order_id=20)
 
         # First succeeds, second raises exception
-        mock_send.side_effect = [True, Exception("Broker offline")]
+        mock_send.side_effect = [None, Exception("Broker offline")]
 
         success_ids = sender.flush_buffer()
         assert success_ids == [10]
@@ -87,7 +87,7 @@ class TestSenderXMLBuilders:
         xml_out = sender.build_wallet_balance_update_xml("uid-555", 15.5)
         assert "<type>wallet_balance_update</type>" in xml_out
         assert "<user_id>uid-555</user_id>" in xml_out
-        assert '<new_balance currency="eur">15.50</new_balance>' in xml_out
+        assert '<wallet_balance currency="eur">15.50</wallet_balance>' in xml_out
 
     def test_build_badge_assigned_xml(self):
         xml_out = sender.build_badge_assigned_xml("B-01", "uid-1")

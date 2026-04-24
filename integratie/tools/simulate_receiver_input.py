@@ -1,14 +1,14 @@
-# test_sender.py – Local test simulator for receiver.py
+# simulate_receiver_input.py – Local test simulator for receiver.py
 # Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
 #
-# Usage: python test_sender.py [message_type]
+# Usage: python simulate_receiver_input.py [message_type]
 #
 # Examples:
-#   python test_sender.py new_registration
-#   python test_sender.py profile_update
-#   python test_sender.py badge_scanned
-#   python test_sender.py cancel_registration
-#   python test_sender.py all   (sends all 4 types)
+#   python simulate_receiver_input.py new_registration
+#   python simulate_receiver_input.py profile_update
+#   python simulate_receiver_input.py badge_scanned
+#   python simulate_receiver_input.py cancel_registration
+#   python simulate_receiver_input.py all   (sends all 4 types)
 #
 # Requires a local RabbitMQ – start with:
 #   docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
@@ -54,12 +54,12 @@ def send(xml_text: str, label: str) -> None:
             properties=pika.BasicProperties(delivery_mode=2),
         )
         conn.close()
-        print(f"[TEST_SENDER] ✓ Sent: {label}")
-        print(f"[TEST_SENDER]   To queue: {QUEUE_NAME} on {RABBIT_HOST}")
+        print(f"[SIMULATE] ✓ Sent: {label}")
+        print(f"[SIMULATE]   To queue: {QUEUE_NAME} on {RABBIT_HOST}")
     except Exception as e:
-        print(f"[TEST_SENDER] ✗ Error sending '{label}': {e}")
-        print(f"[TEST_SENDER]   Tip: make sure RabbitMQ is reachable on {RABBIT_HOST}:{RABBIT_PORT}")
-        print(f"[TEST_SENDER]   Current vhost: {RABBIT_VHOST}")
+        print(f"[SIMULATE] ✗ Error sending '{label}': {e}")
+        print(f"[SIMULATE]   Tip: make sure RabbitMQ is reachable on {RABBIT_HOST}:{RABBIT_PORT}")
+        print(f"[SIMULATE]   Current vhost: {RABBIT_VHOST}")
 
 
 # ── XML builders for all 4 message types ──────────────────────────────────────
@@ -204,8 +204,8 @@ def build_unknown_type() -> str:
 if __name__ == "__main__":
     arg = sys.argv[1] if len(sys.argv) > 1 else "all"
 
-    print(f"\n[TEST_SENDER] RabbitMQ: {RABBIT_HOST} | Queue: {QUEUE_NAME}")
-    print(f"[TEST_SENDER] Mode: {arg}\n")
+    print(f"\n[SIMULATE] RabbitMQ: {RABBIT_HOST} | Queue: {QUEUE_NAME}")
+    print(f"[SIMULATE] Mode: {arg}\n")
 
     if arg in ("new_registration", "all"):
         send(build_new_registration(company=False), "new_registration (private)")
@@ -225,4 +225,4 @@ if __name__ == "__main__":
         send(build_invalid_xml(), "invalid XML (sad path)")
         send(build_unknown_type(), "unknown message type (sad path)")
 
-    print("\n[TEST_SENDER] Done. Check the logs of receiver.py.")
+    print("\n[SIMULATE] Done. Check the logs of receiver.py.")

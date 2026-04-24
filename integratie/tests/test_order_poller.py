@@ -350,6 +350,114 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
     )
     poller._process_consumption(order, None, is_anonymous=True)
 
+    call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
+    items = call_kwargs['items']
+    assert items[0]['id'] == 'LINE-10'
+    assert items[0]['sku'] == '1'
+    assert items[1]['id'] == 'LINE-11'
+    assert items[1]['sku'] == '2'
+    assert call_kwargs['is_anonymous'] is True
+
+
+@patch('order_poller.sender')
+def test_process_consumption_sets_payment_link_fields(mock_sender, poller):
+    """payment_registered links to consumption_order and always uses on_site payment."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-123</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-123</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 24,
+        'lines': [],
+        'amount_total': 15.0,
+        'payment_ids': [],
+        'create_date': '2026-04-01 12:00:00',
+    }
+
+    ok, payment_msg_id = poller._process_consumption(
+        order, None, is_anonymous=True)
+
+    assert ok is True
+    assert payment_msg_id == 'pay-123'
+
+    pay_kwargs = mock_sender.build_payment_registered_xml.call_args[1]
+    assert pay_kwargs['payment_context'] == 'consumption'
+    assert pay_kwargs['correlation_id'] == 'corr-123'
+    assert pay_kwargs['payment_method'] == 'on_site'
+
+    msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert msg_types == ['consumption_order', 'payment_registered_consumption']
+
+
+@patch('order_poller.sender')
+def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
+    """Badge Wallet consumption deducts balance and emits wallet_balance_update."""
+    customer_info = {
+        'id': 99,
+        'x_wallet_balance': 12.5,
+        'x_user_id': 'USR-1',
+        'is_company': False,
+        'parent_id': False,
+        'email': '',
+    }
+    order = {
+        'id': 25,
+        'lines': [],
+        'amount_total': 4.0,
+        'payment_ids': [9],
+        'x_wallet_updated': False,
+        'create_date': '2026-04-01 12:00:00',
+    }
+    poller.models.execute_kw.side_effect = [
+        # pos.payment read
+        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 4.0}],
+        8.5,  # action_process_wallet_payment returns the new balance atomically
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-wallet</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-wallet</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True, True]
+
+    ok, payment_msg_id = poller._process_consumption(
+        order, customer_info, is_anonymous=False)
+
+    assert ok is True
+    assert payment_msg_id == 'pay-wallet'
+
+    # Verify the atomic call was made on pos.order with action_process_wallet_payment
+    atomic_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'action_process_wallet_payment'
+    ]
+    assert len(atomic_calls) == 1
+    assert atomic_calls[0][0][5] == [25, 99, 4.0]
+
+    # Verify no separate res.partner or pos.order write calls were made
+    partner_write_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][3] == 'res.partner' and c[0][4] == 'write'
+    ]
+    assert len(partner_write_calls) == 0
+
+    mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
+        user_id='USR-1',
+        new_balance=8.5,
+    )
+
+    msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert msg_types == [
+        'consumption_order',
+        'wallet_balance_update',
+        'payment_registered_consumption',
+    ]
+
 
 @patch('order_poller.sender')
 def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
@@ -398,6 +506,7 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
 
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
     assert call_kwargs['customer_type'] == 'company'
+    assert call_kwargs['is_anonymous'] is False
 
 
 @patch('order_poller.sender')

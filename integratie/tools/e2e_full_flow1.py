@@ -1,12 +1,12 @@
 """
-test_full_flow1.py — Volledige end-to-end test van Flow 1 (bedrijfsklant)
+e2e_full_flow1.py — Full end-to-end test for Flow 1 (company customer)
 
-Stap 1: stuurt een new_registration naar kassa.incoming (simuleert CRM)
-Stap 2: wacht tot receiver de klant aanmaakt in Odoo
-Stap 3: maakt een POS-order aan gekoppeld aan die klant
-Stap 4: wacht tot poller de order verwerkt en naar RabbitMQ stuurt
+Step 1: sends a new_registration to kassa.incoming (simulates CRM)
+Step 2: waits for receiver to create the customer in Odoo
+Step 3: creates a POS order linked to that customer
+Step 4: waits for the poller to process the order and send it to RabbitMQ
 
-Gebruik: docker exec kassa_integratie python tools/test_full_flow1.py
+Usage: docker exec kassa_integratie python tools/e2e_full_flow1.py
 """
 
 import os
@@ -17,7 +17,7 @@ import xmlrpc.client
 import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_utils import get_env, parse_rabbit_port  # noqa: E402
+from config_utils import parse_rabbit_port  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 ODOO_URL = os.environ.get("ODOO_URL")
@@ -25,17 +25,17 @@ ODOO_DB = os.environ.get("ODOO_DB")
 ODOO_USER = os.environ.get("ODOO_USER")
 ODOO_PASS = os.environ.get("ODOO_PASS")
 
-RABBIT_HOST = get_env("RABBIT_HOST")
+RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_USER = get_env("RABBIT_USER")
-RABBIT_PASS = get_env("RABBIT_PASS")
-RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
+RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
+RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 INCOMING_QUEUE = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
-TEST_USER_ID = str(uuid.uuid4())   # fresh UUID elke run
+TEST_USER_ID = str(uuid.uuid4())   # fresh UUID on every run
 TEST_NAME = "Test e2e Janssen"
-TEST_EMAIL = f"janssen.{TEST_USER_ID[:8]}@testbedrijf.be"
-TEST_COMPANY = "Test e2e Bedrijf NV"
+TEST_EMAIL = f"janssen.{TEST_USER_ID[:8]}@testcompany.be"
+TEST_COMPANY = "Test e2e Company NV"
 TEST_VAT = "BE0999888777"
 
 SEP = "-" * 60
@@ -74,7 +74,7 @@ NEW_REGISTRATION_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 def publish_new_registration():
-    print("Stap 1: new_registration sturen naar kassa.incoming...")
+    print("Step 1: sending new_registration to kassa.incoming...")
     creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     conn = pika.BlockingConnection(pika.ConnectionParameters(
         host=RABBIT_HOST, port=RABBIT_PORT,
@@ -89,8 +89,8 @@ def publish_new_registration():
         properties=pika.BasicProperties(delivery_mode=2)
     )
     conn.close()
-    print(f"  Verstuurd: user_id={TEST_USER_ID}")
-    print(f"  Naam:      {TEST_NAME}  |  Bedrijf: {TEST_COMPANY}")
+    print(f"  Sent:    user_id={TEST_USER_ID}")
+    print(f"  Name:    {TEST_NAME}  |  Company: {TEST_COMPANY}")
 
 
 # ── Stap 2: wachten tot partner in Odoo staat ─────────────────────────────────
@@ -193,17 +193,17 @@ def wait_for_poller(uid, models, order_id, timeout=15):
 
 def main():
     print(SEP)
-    print("FLOW 1 — Volledige end-to-end test (new_registration → order → RabbitMQ)")
+    print("FLOW 1 — Full end-to-end test (new_registration → order → RabbitMQ)")
     print(SEP)
 
-    # Odoo verbinden
+    # Connect to Odoo
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common", allow_none=True)
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
     if not uid:
-        print("FOUT: Odoo authenticatie mislukt")
+        print("ERROR: Odoo authentication failed")
         sys.exit(1)
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object", allow_none=True)
-    print(f"Odoo verbonden (uid={uid})")
+    print(f"Odoo connected (uid={uid})")
     print()
 
     publish_new_registration()
@@ -216,12 +216,12 @@ def main():
 
     print()
     print(SEP)
-    print("Verwacht resultaat in de logs:")
+    print("Expected result in the logs:")
     print(f"  [RECEIVER] New customer created: {TEST_NAME} ...")
     print(f"  [POLLER]   Order {order_id}: {TEST_NAME}")
     print("  [SENDER]   Sent: routing_key=kassa.payments.consumption")
     print()
-    print("Check met:")
+    print("Check with:")
     print("  docker logs kassa_integratie --since 60s")
     print(SEP)
 

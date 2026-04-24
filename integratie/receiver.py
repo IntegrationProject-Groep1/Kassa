@@ -5,20 +5,21 @@ Connects to the broker defined by RABBIT_HOST/PORT/VHOST and listens on the
 queue set by RABBIT_INCOMING_QUEUE (default: kassa.incoming).
 
 Handles four incoming message types sent by the CRM / IoT teams:
-  - new_registration     → creates or updates a res.partner in Odoo
-  - profile_update       → updates name, email, age, VAT on an existing partner
-  - badge_scanned        → looks up a customer by x_badge_id; sends a
-                           system_error to kassa.errors if the badge is unknown
-  - cancel_registration  → sets active=False on the partner (soft delete)
+    - new_registration     → creates or updates a res.partner in Odoo
+    - profile_update       → updates name, email, age, VAT on an existing partner
+    - badge_scanned        → looks up a customer by x_badge_id; sends a
+                                                     system_error to kassa.errors if the badge is unknown
+    - cancel_registration  → sets active=False on the partner (soft delete)
 
 Error handling:
-  - Unparseable XML          → basic_nack(requeue=False) + system_error sent
-  - XSD validation failure   → basic_nack(requeue=False) + system_error sent
-  - Unknown message type     → basic_nack(requeue=False) + system_error sent
-  - Odoo connection/API error → basic_nack(requeue=False) + system_error sent
-  - Duplicate message_id     → basic_ack, no Odoo write (silently ignored)
+    - Unparseable XML          → basic_nack(requeue=False) + system_error sent
+    - XSD validation failure   → basic_nack(requeue=False) + system_error sent
+    - Unknown message type     → basic_nack(requeue=False) + system_error sent
+    - Odoo connection/API error → basic_nack(requeue=True) + system_error sent
+    - Duplicate message_id     → basic_ack, no Odoo write (silently ignored)
 
-Duplicate detection uses an in-memory LRU cache (max 10,000 entries).
+Duplicate detection uses an in-memory bounded cache (max 10,000 entries)
+with FIFO eviction.
 The cache is cleared on container restart, so restarts do not cause replay
 protection across sessions — that trade-off is intentional for simplicity.
 """
@@ -37,14 +38,6 @@ from sender import send_error_to_queue, flush_buffer, now_utc
 
 
 logger = logging.getLogger(__name__)
-
-
-def setup_logging():
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        )
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
@@ -75,27 +68,39 @@ SCHEMA_MAP = {
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
 }
 
+# Cache parsed XSD schemas — avoids re-parsing from disk on every message.
+# Mirrors the same pattern used in sender.py (_schema_cache).
+_schema_cache: dict[str, etree.XMLSchema] = {}
+
 # ── Idempotency cache ──────────────────────────────────────────────────────────
 MAX_CACHE_SIZE = 10_000
 seen_message_ids: OrderedDict = OrderedDict()
 
 
-def is_duplicate(message_id: str) -> bool:
+def _remember_message_id(message_id: str) -> None:
+    seen_message_ids[message_id] = now_utc()
+    if len(seen_message_ids) > MAX_CACHE_SIZE:
+        seen_message_ids.popitem(last=False)
+
+
+def is_duplicate(message_id: str, track_if_new: bool = True) -> bool:
     """
     Return True if this message_id has already been processed in this session.
 
-    Uses an OrderedDict as a bounded LRU cache. When the cache hits
+    Uses an OrderedDict as a bounded FIFO cache. When the cache hits
     MAX_CACHE_SIZE the oldest entry is evicted (popitem(last=False)) to keep
     memory usage constant. The timestamp stored as the value is only for
     debugging — it is not used for expiry.
+
+    track_if_new controls whether new IDs should be added immediately. The
+    receiver callback uses track_if_new=False and only remembers IDs after a
+    successful full processing + ACK.
     """
     if message_id in seen_message_ids:
         logger.info("[IDEMPOTENCY] Duplicate detected: message_id=%s – skipped", message_id)
         return True
-    seen_message_ids[message_id] = now_utc()
-    # Evict the oldest entry once the cache is full
-    if len(seen_message_ids) > MAX_CACHE_SIZE:
-        seen_message_ids.popitem(last=False)
+    if track_if_new:
+        _remember_message_id(message_id)
     return False
 
 
@@ -132,6 +137,9 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
     validation is skipped and a warning is printed — this lets us deploy new
     message types before their schema is finalised.
 
+    Parsed schemas are cached in _schema_cache after their first use so that
+    the XSD file is only read from disk once per process lifetime.
+
     Raises ValueError with the full lxml error log if validation fails.
     """
     schema_path = SCHEMA_MAP.get(msg_type)
@@ -139,12 +147,14 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         logger.warning("[VALIDATION] No XSD schema found for type '%s' – skipping validation", msg_type)
         return
 
-    schema_doc = etree.parse(schema_path)
-    schema = etree.XMLSchema(schema_doc)
+    if msg_type not in _schema_cache:
+        schema_doc = etree.parse(schema_path)
+        _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
+
     xml_doc = etree.fromstring(xml_text.encode("utf-8"))
 
-    if not schema.validate(xml_doc):
-        errors = str(schema.error_log)
+    if not _schema_cache[msg_type].validate(xml_doc):
+        errors = str(_schema_cache[msg_type].error_log)
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
     logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)
@@ -275,15 +285,12 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
     update_vals = {
         "email": email,
         "is_company": ctype == "company",
+        "name": name or company_name or "Unknown",
     }
-    if dob_str:
-        update_vals["x_date_of_birth"] = dob_str
-    if name:
-        update_vals["name"] = name
-    if company_name and ctype == "company":
-        update_vals["name"] = company_name
-    if vat_number:
-        update_vals["vat"] = vat_number
+    if body.find("vat_number") is not None:
+        update_vals["vat"] = vat_number if vat_number else False
+    if body.find("date_of_birth") is not None:
+        update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
     if existing:
         partner_id = existing[0]["id"]
@@ -395,7 +402,6 @@ def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
 
 
 # ── Central message processing ─────────────────────────────────────────────────
-
 def process_message(ch, method, properties, body):
     """
     RabbitMQ delivery callback — called once per message by pika.
@@ -407,14 +413,12 @@ def process_message(ch, method, properties, body):
       4. XSD validation        — reject if message does not match its schema
       5. Odoo connection       — authenticate fresh per message (stateless)
       6. Business logic        — dispatch to the correct process_* function
-      7. ACK                   — tell the broker the message was handled
+      7. ACK + remember ID     — cache message_id only after successful handling
 
     On any validation or business-logic error:
       - A system_error is forwarded to kassa.errors via send_error_to_queue.
-      - basic_nack(requeue=False) is sent instead of basic_ack. requeue=False
-        means the broker discards the message (or routes it to a dead-letter
-        exchange if one is configured) rather than putting it back in the queue.
-        Re-queuing a malformed message would just cause an infinite retry loop.
+      - Validation and business errors use basic_nack(requeue=False).
+      - Odoo connection/auth errors use basic_nack(requeue=True).
     """
     xml_text = body.decode("utf-8")
     related_message_id = None
@@ -444,7 +448,7 @@ def process_message(ch, method, properties, body):
             return
 
         # ── Step 3: Idempotency check ──────────────────────────────────────
-        if related_message_id and is_duplicate(related_message_id):
+        if related_message_id and is_duplicate(related_message_id, track_if_new=False):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
@@ -477,6 +481,10 @@ def process_message(ch, method, properties, body):
 
         else:
             raise ValueError(f"Unknown message type: '{msg_type}'")
+
+        if related_message_id:
+            _remember_message_id(related_message_id)
+            logger.info("[IDEMPOTENCY] Stored message_id=%s after successful processing", related_message_id)
 
         # ── Step 7: ACK on success ─────────────────────────────────────────
         ch.basic_ack(delivery_tag=method.delivery_tag)
