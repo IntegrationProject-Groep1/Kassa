@@ -306,7 +306,7 @@ class OrderPoller:
         ok_wallet = True  # True by default — only overwritten when wallet send is attempted
 
         # 2. Update wallet balance if necessary
-        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
+        if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
             refund_amount_positive = wallet_refund_amount
             current_balance = customer_info.get('x_wallet_balance') or 0.0
             new_balance = round(float(current_balance) + refund_amount_positive, 2)
@@ -493,7 +493,7 @@ class OrderPoller:
         is_badge_wallet, wallet_paid_amount = self._get_wallet_payment_amount(payment_ids)
         ok_wallet = True
 
-        if is_badge_wallet and customer_info and order.get('x_wallet_updated') is False:
+        if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
             current_balance = customer_info.get('x_wallet_balance') or 0.0
             new_balance = round(float(current_balance) - wallet_paid_amount, 2)
 

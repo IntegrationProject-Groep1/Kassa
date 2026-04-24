@@ -71,10 +71,10 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     for profile in _PROFILES:
         pm_ids = _resolve_payment_method_ids(models, db, uid, password, profile)
         required_names = {pm["name"] for pm in profile["payment_methods"] if "create_if_missing" not in pm}
-        if not pm_ids and ({"Cash", "Bancontact"} & required_names):
+        if len(pm_ids) < len(profile["payment_methods"]) and ({"Cash", "Bancontact"} & required_names):
             raise RuntimeError(
-                f"No payment method IDs resolved for '{profile['name']}': "
-                f"Cash or Bancontact is required but none were found."
+                f"Not all payment method IDs resolved for '{profile['name']}': "
+                f"Cash or Bancontact is required but might be missing."
             )
         all_pm_ids[profile["name"]] = pm_ids
         print(f"   🔑 '{profile['name']}' payment method IDs: {pm_ids}", flush=True)
