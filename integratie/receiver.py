@@ -286,9 +286,11 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
         "email": email,
         "is_company": ctype == "company",
         "name": name or company_name or "Unknown",
-        "vat": vat_number if vat_number else False,
-        "x_date_of_birth": dob_str if dob_str else False,
     }
+    if body.find("vat_number") is not None:
+        update_vals["vat"] = vat_number if vat_number else False
+    if body.find("date_of_birth") is not None:
+        update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
     if existing:
         partner_id = existing[0]["id"]
