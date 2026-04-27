@@ -19,6 +19,7 @@ from typing import Any
 
 import requests
 
+
 def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:
     """
     Thin wrapper around ServerProxy.execute_kw() that returns Any.
