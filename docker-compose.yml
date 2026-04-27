@@ -1,6 +1,6 @@
 services:
   kassa-web:
-    image: odoo:latest
+    image: ${ODOO_IMAGE:-odoo:17.0}
     depends_on:
       - kassa-db
     container_name: kassa_odoo

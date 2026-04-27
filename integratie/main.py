@@ -59,6 +59,9 @@ def main():
     odoo_user = os.environ.get("ODOO_USER")
     odoo_pass = os.environ.get("ODOO_PASS")
     odoo_master_pass = os.environ.get("ODOO_MASTER_PASS")
+    odoo_load_demo_data = os.environ.get("ODOO_LOAD_DEMO_DATA", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
     # Step 1: Wait for Odoo web server to be reachable
     if not wait_for_odoo(odoo_url):
@@ -66,7 +69,14 @@ def main():
         sys.exit(1)
 
     # Step 2: Auto-create database if it doesn't exist
-    if not setup_database(odoo_url, odoo_db, odoo_user, odoo_pass, odoo_master_pass):
+    if not setup_database(
+        odoo_url,
+        odoo_db,
+        odoo_user,
+        odoo_pass,
+        odoo_master_pass,
+        odoo_load_demo=odoo_load_demo_data,
+    ):
         print("❌ Database setup failed. Exiting.", flush=True)
         sys.exit(1)
 

@@ -33,9 +33,19 @@ def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:
     return models.execute_kw(*args, **kwargs)  # type: ignore[no-any-return]
 
 
+def _extract_company_id(user_info: list) -> "int | None":
+    """Safely extract company_id from a res.users.read result.
+
+    Odoo returns many2one fields as [id, name] when set or False when unset.
+    Indexing False raises TypeError, so we guard with isinstance.
+    """
+    raw = user_info[0].get("company_id") if user_info else None
+    return raw[0] if isinstance(raw, (list, tuple)) else None
+
+
 # ── Step 1: Wait for Odoo web server ─────────────────────────────────────────
 
-def wait_for_odoo(odoo_url: str, timeout: int = 120) -> bool:
+def wait_for_odoo(odoo_url: str, timeout: int = 300) -> bool:
     """Wait until Odoo web server is responding (before DB exists)."""
     print("⏳ Waiting for Odoo to become available...", flush=True)
     for i in range(timeout // 5):
@@ -59,6 +69,7 @@ def setup_database(
     odoo_user: str,
     odoo_pass: str,
     odoo_master_pass: str,
+    odoo_load_demo: bool = False,
 ) -> bool:
     """Auto-create the Odoo database if it doesn't exist yet, then wait until accessible."""
     common = xmlrpc.client.ServerProxy(f'{odoo_url}/xmlrpc/2/common', allow_none=True)
@@ -80,6 +91,7 @@ def setup_database(
 
     # Attempt to create the database
     print(f"[SETUP] Attempting to create database '{odoo_db}'...", flush=True)
+    print(f"[SETUP] Demo data on create: {'enabled' if odoo_load_demo else 'disabled'}", flush=True)
     try:
         resp = requests.post(
             f'{odoo_url}/web/database/create',
@@ -91,6 +103,7 @@ def setup_database(
                 'lang': 'en_US',
                 'country_code': 'be',
                 'phone': '',
+                'demo': '1' if odoo_load_demo else '',
             },
             timeout=120,
             allow_redirects=True
@@ -393,24 +406,34 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
+        user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read",
+                         [[uid], ["company_id"]])
+        company_id: int | None = _extract_company_id(user_info)
+
         tax_map_by_rate = {}
         for rate in VALID_VAT_RATES:
+            domain = [["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
+                      ["amount_type", "=", "percent"], ["price_include", "=", True]]
+            if company_id:
+                domain.append(["company_id", "=", company_id])
             inclusive = _rpc(models,
                              odoo_db, uid, odoo_pass,
                              "account.tax", "search_read",
-                             [[["amount", "=", rate], ["type_tax_use", "in", ["sale", "all"]],
-                               ["amount_type", "=", "percent"], ["price_include", "=", True]]],
+                             [domain],
                              {"fields": ["id", "name"], "limit": 1}
                              )
             if inclusive:
                 tax_id = inclusive[0]["id"]
             else:
+                create_vals: dict = {"name": f"BTW {int(rate)}% incl.", "amount": rate,
+                                     "type_tax_use": "sale", "amount_type": "percent",
+                                     "price_include": True}
+                if company_id:
+                    create_vals["company_id"] = company_id
                 tax_id = _rpc(models,
                               odoo_db, uid, odoo_pass,
                               "account.tax", "create",
-                              [{"name": f"BTW {int(rate)}% incl.", "amount": rate,
-                                "type_tax_use": "sale", "amount_type": "percent",
-                                "price_include": True}]
+                              [create_vals]
                               )
                 print(f"   ✅ Created {rate}% inclusive tax (percent + price_include)", flush=True)
 
@@ -419,10 +442,9 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
         target_tax_id = tax_map_by_rate[TARGET_VAT_RATE]
 
         # Set BTW 6% incl. as the default sales tax on the company
-        company_ids = _rpc(models, odoo_db, uid, odoo_pass, "res.company", "search", [[]])
-        if company_ids:
+        if company_id:
             _rpc(models, odoo_db, uid, odoo_pass, "res.company", "write",
-                 [[company_ids[0]], {"account_sale_tax_id": target_tax_id}])
+                 [[company_id], {"account_sale_tax_id": target_tax_id}])
             print(f"   ✅ Set default sales tax to BTW {TARGET_VAT_RATE}% incl.", flush=True)
 
         # Check all POS products for invalid tax rates
@@ -492,7 +514,7 @@ def ensure_pos_categories(
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
-        def get_or_create_category(name: str, color: int = 1) -> int:
+        def get_or_create_category(name: str) -> int:
             existing = _rpc(models,
                             odoo_db, uid, odoo_pass, "pos.category", "search_read",
                             [[["name", "=", name]]], {"fields": ["id"]}
@@ -500,19 +522,14 @@ def ensure_pos_categories(
             if not existing:
                 cat_id = _rpc(models,
                               odoo_db, uid, odoo_pass, "pos.category", "create",
-                              [{"name": name, "color": color}]
+                              [{"name": name}]
                               )
                 print(f"   ✅ Created POS category '{name}'", flush=True)
                 return cat_id
-            else:
-                _rpc(models,
-                     odoo_db, uid, odoo_pass, "pos.category", "write",
-                     [[existing[0]["id"]], {"color": color}]
-                     )
             return existing[0]["id"]
 
-        topup_cat_id = get_or_create_category("Top-ups", 2)   # Light blue
-        drinks_cat_id = get_or_create_category("Drinks", 3)   # Yellow
+        topup_cat_id = get_or_create_category("Top-ups")
+        drinks_cat_id = get_or_create_category("Drinks")
         return topup_cat_id, drinks_cat_id
 
     except Exception as e:
@@ -532,27 +549,37 @@ def ensure_payment_methods(
         uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
         models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
 
+        user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read",
+                         [[uid], ["company_id"]])
+        company_id: int | None = _extract_company_id(user_info)
+
         needed = [
             {"name": "Cash",         "is_cash_count": True},
-            {"name": "Card",   "is_cash_count": False},
+            {"name": "Card",         "is_cash_count": False},
             {"name": "Badge Wallet", "is_cash_count": False},
         ]
 
         method_ids = []
         for method in needed:
+            domain = [["name", "=", method["name"]]]
+            if company_id:
+                domain.append(["company_id", "=", company_id])
             existing = _rpc(models,
                             odoo_db, uid, odoo_pass,
                             "pos.payment.method", "search_read",
-                            [[["name", "=", method["name"]]]],
+                            [domain],
                             {"fields": ["id"]}
                             )
             if existing:
                 method_ids.append(existing[0]["id"])
             else:
+                create_vals: dict = {"name": method["name"], "is_cash_count": method["is_cash_count"]}
+                if company_id:
+                    create_vals["company_id"] = company_id
                 pm_id = _rpc(models,
                              odoo_db, uid, odoo_pass,
                              "pos.payment.method", "create",
-                             [{"name": method["name"], "is_cash_count": method["is_cash_count"]}]
+                             [create_vals]
                              )
                 print(f"   ✅ Created payment method: {method['name']}", flush=True)
                 method_ids.append(pm_id)
@@ -601,34 +628,31 @@ def ensure_demo_products(
             {
                 "name": "Cola", "list_price": 2.50,
                 "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
-                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "available_in_pos": True, "type": "consu",
                 "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else [],
             },
             {
                 "name": "Koffie", "list_price": 2.80,
                 "taxes_id": [(6, 0, [tax_6])] if tax_6 else [],
-                "available_in_pos": True, "type": "consu", "color": 3, "image_1920": False,
+                "available_in_pos": True, "type": "consu",
                 "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else [],
             },
             {
                 "name": "Pintje", "list_price": 3.00,
                 "taxes_id": [(6, 0, [tax_21])] if tax_21 else [],
                 "available_in_pos": True, "type": "consu", "x_age_restricted": True,
-                "color": 3, "image_1920": False,
                 "pos_categ_ids": [(6, 0, [drinks_cat_id])] if drinks_cat_id else [],
             },
             {
                 "name": "Top-up €10", "list_price": 10.00,
                 "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
                 "available_in_pos": True, "type": "service", "x_is_topup": True,
-                "color": 2, "image_1920": False,
                 "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else [],
             },
             {
                 "name": "Top-up €20", "list_price": 20.00,
                 "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
                 "available_in_pos": True, "type": "service", "x_is_topup": True,
-                "color": 2, "image_1920": False,
                 "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else [],
             },
         ]
@@ -648,9 +672,15 @@ def ensure_demo_products(
                      )
                 print(f"   ✅ Created demo product: {product['name']}", flush=True)
             else:
+                update_vals: dict = {
+                    "image_1920": False,
+                    "pos_categ_ids": product["pos_categ_ids"],
+                }
+                if product.get("taxes_id"):
+                    update_vals["taxes_id"] = product["taxes_id"]
                 _rpc(models,
                      odoo_db, uid, odoo_pass, "product.template", "write",
-                     [[existing[0]["id"]], {"color": product["color"], "image_1920": False}]
+                     [[existing[0]["id"]], update_vals]
                      )
 
     except Exception as e:
