@@ -1,16 +1,47 @@
 """
-Sender — Verstuurt berichten naar RabbitMQ via kassa.exchange
-Met lokale buffer (outbox.json) voor offline resilience
-Versie 3.5 — Uitgaande XSD-validatie voor consumption_order
+sender.py — Publishes outbound messages to RabbitMQ on behalf of the Kassa service.
+
+All messages go through the topic exchange defined by RABBIT_EXCHANGE
+(default: kassa.exchange). Each message type maps to a routing key so that
+downstream teams can bind their own queues to exactly the events they care about.
+
+Offline buffer:
+    When the broker is unreachable, send_message() writes the message to a
+    JSON file at OUTBOX_DIR/outbox.json instead of dropping it. The buffer
+    holds up to BUFFER_MAX_MESSAGES (500) entries. Once the connection is
+    restored, flush_buffer() is called by the receiver on startup and by the
+    order poller every 30 seconds to replay any queued messages in order.
+
+Routing key map (see ROUTING_KEYS):
+    consumption_order              → kassa.payments.consumption
+    payment_registered_consumption → kassa.payments.consumption
+    payment_registered_registration→ kassa.payments.registration
+    invoice_request                → kassa.payments.invoice
+    badge_assigned                 → kassa.payments.badge
+    refund_processed               → kassa.payments.refund
+    payment_status                 → kassa.frontend.payment
+    wallet_balance_update          → kassa.frontend.wallet
+    system_error                   → kassa.errors
+
+Public API:
+    send_message(routing_key, xml)      — send with an explicit routing key
+    send_typed_message(msg_type, xml)   — send using the type→key map above
+    flush_buffer()                      — replay buffered messages
+    send_error_to_queue(...)            — send a system_error (never buffered)
+    build_*_xml(...)                    — XML builder functions
 """
 
 import pika
 import json
 import os
 import time
+import threading
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
+# xml.etree.ElementTree (stdlib) is used for building outgoing XML — no extra dependency.
+# lxml is used only for XSD schema validation (validate_outgoing), because the stdlib
+# ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
 from lxml import etree
@@ -77,30 +108,50 @@ OUTBOUND_QUEUE_BINDINGS = {
 BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
+_buffer_lock = threading.Lock()
+_cached_buffer_ids: set[int] = set()
+_last_buffer_mtime = 0.0
 
-def _buffer_message(routing_key: str, message_xml: str) -> None:
-    """Store message in local buffer when RabbitMQ is unavailable"""
-    entry = {"routing_key": routing_key, "xml": message_xml}
-    entries = _read_buffer()
 
-    if len(entries) >= BUFFER_MAX_MESSAGES:
-        send_error_to_queue(
-            "offline_queue_full",
-            None,
-            f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
-        raise BufferFullError(
-            f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
-        )
+def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
+    """
+    Append a message to the local JSON outbox when the broker is unreachable.
 
-    entries.append(entry)
-    BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
-    logger.info(
-        f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
+    If the buffer is already at BUFFER_MAX_MESSAGES the incoming message is
+    dropped and a system_error is attempted (best-effort). This caps disk and
+    memory usage at the cost of losing the oldest un-sendable message once the
+    buffer is full — acceptable because a full buffer means the broker has been
+    down for an extended period.
+
+    order_id, when provided, is stored in the entry so that flush_buffer() can
+    return the Odoo order IDs of successfully flushed messages and the poller
+    can then write x_rabbitmq_sent=True for those orders.
+    """
+    with _buffer_lock:
+        entry: dict[str, str | int] = {
+            "routing_key": routing_key, "xml": message_xml}
+        if order_id is not None:
+            entry["order_id"] = order_id
+        entries = _read_buffer()
+
+        if len(entries) >= BUFFER_MAX_MESSAGES:
+            send_error_to_queue(
+                "offline_queue_full",
+                None,
+                f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+            raise BufferFullError(
+                f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+            )
+
+        entries.append(entry)
+        BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        logger.info(
+            f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
 
 def _read_buffer() -> list:
-    """Read all buffered messages from outbox.json"""
+    """Return all entries from outbox.json, or an empty list if the file does not exist."""
     if not BUFFER_FILE.exists():
         return []
     try:
@@ -110,38 +161,60 @@ def _read_buffer() -> list:
         return []
 
 
-def flush_buffer() -> None:
-    """Resend all buffered messages when connection is restored"""
-    entries = _read_buffer()
-    if not entries:
-        return
+def flush_buffer() -> list:
+    """
+    Replay buffered messages in order, stopping at the first send failure.
+
+    Messages that were successfully sent are removed from the file; messages
+    that failed (and all messages after the first failure) are left in place
+    so the next call can try again. Stopping on the first error preserves
+    message order — partial replays could deliver later messages before earlier
+    ones if we skipped failures and continued.
+
+    Returns a list of Odoo order IDs for entries that were successfully flushed,
+    so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
+    """
+    with _buffer_lock:
+        entries = _read_buffer()
+        if not entries:
+            return []
 
     logger.info(f"🔄 Flushing {len(entries)} buffered messages...")
     succeeded = []
 
     for entry in entries:
         try:
-            send_message(entry["routing_key"], entry["xml"])
+            _publish_or_raise(entry["routing_key"], entry["xml"])
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
                 f"⚠️  Buffer resend failed for {entry.get('routing_key', '?')}: {e}")
             break  # Stop on first error, retry later
 
-    remaining = [e for e in entries if e not in succeeded]
+    with _buffer_lock:
+        # Re-read entries in case something was buffered while we were sending
+        current_entries = _read_buffer()
+        # Remove succeeded from current_entries (careful, dicts can't be hashed, so compare id/xml)
+        # For simplicity, we just rebuild: order_ids we succeeded on.
+        # But wait, original code was: 'remaining = [e for e in entries if e not in succeeded]'
+        # To handle thread-safety properly:
+        succeeded_xmls = {e["xml"] for e in succeeded}
+        remaining = [e for e in current_entries if e["xml"] not in succeeded_xmls]
 
-    if remaining:
-        BUFFER_FILE.write_text(
-            json.dumps(
-                remaining,
-                ensure_ascii=False,
-                indent=2))
-    else:
-        BUFFER_FILE.unlink(missing_ok=True)
+        if remaining:
+            BUFFER_FILE.write_text(
+                json.dumps(
+                    remaining,
+                    ensure_ascii=False,
+                    indent=2))
+        else:
+            BUFFER_FILE.unlink(missing_ok=True)
 
     if succeeded:
         logger.info(
             f"✅ Successfully flushed {len(succeeded)} buffered messages")
+
+    return [e["order_id"] for e in succeeded if "order_id" in e]
 
 
 _connection = None
@@ -149,7 +222,13 @@ _channel = None
 
 
 def connect_to_rabbitmq():
-    """Establish connection to RabbitMQ if not already connected"""
+    """
+    Return the existing open connection, or open a new one.
+
+    The module-level _connection and _channel are reused across calls so we
+    don't open a new TCP connection for every message. If the connection was
+    closed (e.g. by a broker restart), a fresh one is created.
+    """
     global _connection, _channel
 
     if _connection and not _connection.is_closed:
@@ -168,6 +247,7 @@ def connect_to_rabbitmq():
     _connection = pika.BlockingConnection(params)
     _channel = _connection.channel()
     setup_exchange(_channel)
+
     return _connection, _channel
 
 
@@ -183,7 +263,8 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+        # type: ignore[attr-defined]
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):
             global _connection, _channel
             _connection = None
             _channel = None
@@ -194,7 +275,15 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
 
 
 def setup_exchange(channel):
-    """Declare the topic exchange"""
+    """
+    Declare the topic exchange and, optionally, the outbound queues.
+
+    The exchange declaration is idempotent — calling it when the exchange
+    already exists is harmless. Queue creation only runs when
+    RABBIT_AUTO_SETUP_TOPOLOGY=true, which is useful in local development
+    where no other team's consumer has pre-created the queues. In production
+    the infra team owns the topology.
+    """
     channel.exchange_declare(
         exchange=EXCHANGE_NAME,
         exchange_type="topic",
@@ -220,16 +309,29 @@ def setup_exchange(channel):
             )
 
 
-def send_message(routing_key: str, message_xml: str) -> None:
-    """Send message via kassa.exchange using routing key. Buffer on error."""
+def send_message(routing_key: str, message_xml: str, order_id: int | None = None) -> bool:
+    """
+    Publish xml to kassa.exchange with the given routing_key.
+
+    On any exception (connection refused, timeout, channel error) the message
+    is written to the local outbox buffer instead of being lost. The connection
+    globals are reset to None so the next call opens a fresh connection rather
+    than retrying a broken one.
+    Returns True if successfully sent, False if buffered.
+
+    order_id is stored in the buffer entry when provided, so that
+    flush_buffer() can report which Odoo orders were successfully flushed.
+    """
     try:
         _publish_or_raise(routing_key, message_xml)
         logger.info(f"✅ Sent: routing_key={routing_key}")
+        return True
     except Exception as e:
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml)
+        _buffer_message(routing_key, message_xml, order_id=order_id)
+        return False
 
 
 # ── Outgoing XSD validation ────────────────────────────────────────────────────
@@ -237,6 +339,9 @@ _SCHEMA_DIR = Path(__file__).parent / "schemas"
 
 _OUTGOING_SCHEMA_MAP = {
     "consumption_order": _SCHEMA_DIR / "schema_consumption_order_v2.3.xsd",
+    "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
+    "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
+    "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -253,23 +358,42 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+        _schema_cache[msg_type] = etree.XMLSchema(
+            etree.parse(str(schema_path)))
 
     xml_doc = etree.fromstring(message_xml.encode("utf-8"))
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        raise ValueError(
+            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str) -> None:
+def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        logger.warning(
+            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    send_message(routing_key, message_xml)
+    return send_message(routing_key, message_xml, order_id=order_id)
+
+
+def get_buffered_order_ids() -> set:
+    """Return the set of Odoo order IDs currently waiting in the outbox buffer (cached)."""
+    global _last_buffer_mtime, _cached_buffer_ids
+    with _buffer_lock:
+        if not BUFFER_FILE.exists():
+            _cached_buffer_ids = set()
+            _last_buffer_mtime = 0.0
+            return _cached_buffer_ids
+        mtime = os.path.getmtime(BUFFER_FILE)
+        if mtime > _last_buffer_mtime:
+            _cached_buffer_ids = {e["order_id"] for e in _read_buffer() if "order_id" in e}
+            _last_buffer_mtime = mtime
+
+        return _cached_buffer_ids.copy()
 
 
 def now_utc() -> str:
@@ -307,7 +431,21 @@ def build_consumption_order_xml(
     customer_type="private",
     email=None, address=None, is_anonymous=False
 ) -> str:
-    """Build consumption_order message (POS order with items)"""
+    """
+    Build a consumption_order XML message for a completed POS sale.
+
+    Args:
+        items:             List of dicts, each with keys: id, description,
+                           quantity, unit_price, vat_rate, currency, item_type.
+        customer_id:       Odoo res.partner ID as a string (None for anonymous).
+        user_id:           CRM x_user_id (external UUID) of the customer.
+        is_company_linked: True if the customer belongs to a company account.
+        company_id:        Odoo res.partner ID of the parent company, if any.
+        email:             Customer email address.
+        address:           Dict of address fields (street, city, zip, country).
+        is_anonymous:      True for walk-in / badge-not-found sales. When True
+                           the <customer> block is omitted from the XML entirely.
+    """
     root = ET.Element("message")
     _make_header(root, "consumption_order")
     body = ET.SubElement(root, "body")
@@ -349,7 +487,22 @@ def build_payment_registered_xml(
     due_date, trx_id, payment_method,
     invoice_id=None, user_id=None, correlation_id=None
 ) -> str:
-    """Build payment_registered message (payment confirmed)"""
+    """
+    Build a payment_registered message confirming a payment was processed.
+
+    Args:
+        payment_context: 'consumption' or 'registration' — tells the CRM which
+                         flow this payment belongs to.
+        invoice_status:  Current invoice state, e.g. 'paid' or 'partial'.
+        amount_paid:     Amount actually paid (EUR).
+        due_date:        Invoice due date as an ISO-8601 date string.
+        trx_id:          Unique transaction ID from the payment terminal.
+        payment_method:  How the customer paid, e.g. 'cash', 'card', 'wallet'.
+        invoice_id:      Odoo invoice ID, included if available.
+        user_id:         CRM x_user_id of the customer, if known.
+        correlation_id:  message_id of the original consumption_order, used by
+                         the CRM to link this payment back to the sale.
+    """
     root = ET.Element("message")
     _make_header(root, "payment_registered", correlation_id)
     body = ET.SubElement(root, "body")
@@ -378,7 +531,15 @@ def build_payment_registered_xml(
 def build_invoice_request_xml(
     user_id: str, invoice_data: dict, correlation_id=None
 ) -> str:
-    """Build invoice_request message"""
+    """
+    Build an invoice_request message asking the CRM to generate a formal invoice.
+
+    Args:
+        user_id:       CRM x_user_id of the customer requesting the invoice.
+        invoice_data:  Dict with keys: name, email, address (dict), and
+                       optionally vat_number for B2B invoices.
+        correlation_id: message_id of the original sale this invoice covers.
+    """
     root = ET.Element("message")
     _make_header(root, "invoice_request", correlation_id)
     body = ET.SubElement(root, "body")
@@ -413,7 +574,13 @@ def build_invoice_request_xml(
 
 
 def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
-    """Build badge_assigned message"""
+    """
+    Build a badge_assigned message notifying the CRM that a badge was linked.
+
+    Args:
+        badge_id: Physical badge/RFID identifier (e.g. 'BADGE-RF-00142').
+        user_id:  CRM x_user_id of the customer the badge was assigned to.
+    """
     root = ET.Element("message")
     _make_header(root, "badge_assigned")
     body = ET.SubElement(root, "body")
@@ -430,7 +597,7 @@ def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
 
-    bal = ET.SubElement(body, "new_balance")
+    bal = ET.SubElement(body, "wallet_balance")
     bal.text = f"{new_balance:.2f}"
     bal.set("currency", "eur")
 
@@ -442,16 +609,37 @@ def build_refund_processed_xml(
     refund_type: str, refund_amount: float,
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
-    user_id=None, description=None, new_wallet_balance=None
+    user_id=None, description=None, new_wallet_balance=None,
+    is_anonymous=False
 ) -> str:
-    """Build refund_processed message"""
+    """
+    Build a refund_processed message confirming a refund was issued.
+
+    Args:
+        original_payment_msg_id: message_id of the payment_registered message
+                                 being refunded — sent as correlation_id so the
+                                 CRM can locate the original transaction.
+        refund_type:             'full' or 'partial'.
+        refund_amount:           Amount refunded in EUR.
+        refund_method:           How the refund was returned, e.g. 'cash',
+                                 'card', 'wallet'.
+        refund_reason:           Short human-readable reason for the refund.
+        original_transaction_id: Terminal transaction ID from the original sale.
+        user_id:                 CRM x_user_id if the customer is known.
+        description:             Optional longer description of the refund.
+        new_wallet_balance:      Updated wallet balance after the refund, if the
+                                 refund method was 'wallet'. Included in the XML
+                                 so the CRM can update its own balance record.
+    """
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "refund_type").text = refund_type
+    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
-    if user_id:
+    if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
+
+    ET.SubElement(body, "refund_type").text = refund_type
 
     refund = ET.SubElement(body, "refund")
     amt = ET.SubElement(refund, "amount")
@@ -478,7 +666,22 @@ def build_refund_processed_xml(
 def send_error_to_queue(
     error_code: str, related_message_id: str | None, error_description: str
 ) -> None:
-    """Send system_error message to kassa.errors queue. Does not buffer on failure."""
+    """
+    Send a system_error message directly to kassa.errors — without buffering.
+
+    Args:
+        error_code:          Short snake_case code, e.g. 'invalid_xml_format',
+                             'badge_not_found', 'odoo_api_error'.
+        related_message_id:  message_id of the message that caused the error,
+                             so the receiving team can correlate it. None if
+                             the original message could not be parsed.
+        error_description:   Human-readable explanation, truncated to 500 chars.
+
+    Why no buffer: error messages are diagnostic signals, not business data.
+    If the broker is down when an error occurs, logging it locally is enough —
+    buffering errors and replaying them later would be confusing and could
+    arrive out of order relative to the events that caused them.
+    """
     root = ET.Element("message")
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")

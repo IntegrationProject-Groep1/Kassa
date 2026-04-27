@@ -1,9 +1,10 @@
 services:
   kassa-web:
-    image: odoo:latest
+    image: ${ODOO_IMAGE:-odoo:17.0}
     depends_on:
       - kassa-db
     container_name: kassa_odoo
+    restart: unless-stopped
     ports:
       - "8069:8069"
     volumes:
@@ -14,10 +15,11 @@ services:
       - HOST=kassa-db
       - USER=${POSTGRES_USER}
       - PASSWORD=${POSTGRES_PASSWORD}
- 
+
   kassa-db:
     image: postgres:15
     container_name: kassa_db
+    restart: unless-stopped
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}

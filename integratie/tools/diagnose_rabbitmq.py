@@ -15,20 +15,20 @@ RABBIT_PORT = 5672
 def test_dns_resolution():
     """Test if hostname can be resolved to IP"""
     print("\n1️⃣  DNS RESOLUTION TEST")
-    print("   Testing: {RABBIT_HOST}")
+    print(f"   Testing: {RABBIT_HOST}")
     try:
         ip = socket.gethostbyname(RABBIT_HOST)
-        print("   ✅ Resolved to: {ip}")
+        print(f"   ✅ Resolved to: {ip}")
         return ip
-    except socket.gaierror:
-        print("   ❌ Failed: {e}")
+    except socket.gaierror as e:
+        print(f"   ❌ Failed: {e}")
         return None
 
 
 def test_tcp_connection(host, port, timeout=5):
     """Test raw TCP connection to host:port"""
     print("\n2️⃣  TCP CONNECTION TEST")
-    print("   Testing: {host}:{port} (timeout: {timeout}s)")
+    print(f"   Testing: {host}:{port} (timeout: {timeout}s)")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -38,13 +38,13 @@ def test_tcp_connection(host, port, timeout=5):
         sock.close()
         return True
     except socket.timeout:
-        print("   ❌ Connection timed out (waited {timeout}s)")
+        print(f"   ❌ Connection timed out (waited {timeout}s)")
         return False
     except ConnectionRefusedError:
         print("   ❌ Connection refused (port not accepting connections)")
         return False
-    except OSError:
-        print("   ❌ Network error: {e}")
+    except OSError as e:
+        print(f"   ❌ Network error: {e}")
         return False
     finally:
         sock.close()
@@ -53,7 +53,7 @@ def test_tcp_connection(host, port, timeout=5):
 def test_amqp_handshake(host, port):
     """Test AMQP protocol handshake"""
     print("\n3️⃣  AMQP HANDSHAKE TEST")
-    print("   Testing: {host}:{port}")
+    print(f"   Testing: {host}:{port}")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
@@ -63,13 +63,13 @@ def test_amqp_handshake(host, port):
         # AMQP server should send 0x4d 0x51 0x50 (MQP) in first few bytes
         data = sock.recv(16)
         if len(data) > 0:
-            print("   ✅ Server responded ({len(data)} bytes): {data[:4]}")
+            print(f"   ✅ Server responded ({len(data)} bytes): {data[:4]}")
             return True
         else:
             print("   ❌ Server accepted connection but sent no data")
             return False
-    except Exception:
-        print("   ❌ Failed: {e}")
+    except Exception as e:
+        print(f"   ❌ Failed: {e}")
         return False
     finally:
         sock.close()
@@ -100,8 +100,8 @@ def test_pika_connection():
         print("   ✅ Pika connected successfully!")
         conn.close()
         return True
-    except Exception:
-        print("   ❌ Pika connection failed: {e}")
+    except Exception as e:
+        print(f"   ❌ Pika connection failed: {e}")
         return False
 
 
