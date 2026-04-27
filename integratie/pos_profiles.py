@@ -12,6 +12,8 @@
 import xmlrpc.client
 from typing import Any, cast
 
+from odoo_setup import _extract_company_id
+
 # Each payment method entry is a dict with:
 #   "name"              – exact Odoo name to look up
 #   "create_if_missing" – optional dict of extra fields passed to create()
@@ -70,7 +72,7 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     user_info = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password, "res.users", "read", [[uid], ["company_id"]]
     ))
-    company_id: int | None = user_info[0]["company_id"][0] if user_info else None
+    company_id: int | None = _extract_company_id(user_info)
 
     # Build a name→id map for pos.category so profiles can filter by category
     all_categs = cast(list[dict[str, Any]], models.execute_kw(

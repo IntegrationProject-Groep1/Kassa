@@ -33,6 +33,16 @@ def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:
     return models.execute_kw(*args, **kwargs)  # type: ignore[no-any-return]
 
 
+def _extract_company_id(user_info: list) -> "int | None":
+    """Safely extract company_id from a res.users.read result.
+
+    Odoo returns many2one fields as [id, name] when set or False when unset.
+    Indexing False raises TypeError, so we guard with isinstance.
+    """
+    raw = user_info[0].get("company_id") if user_info else None
+    return raw[0] if isinstance(raw, (list, tuple)) else None
+
+
 # ── Step 1: Wait for Odoo web server ─────────────────────────────────────────
 
 def wait_for_odoo(odoo_url: str, timeout: int = 300) -> bool:
@@ -398,7 +408,7 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
         user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read",
                          [[uid], ["company_id"]])
-        company_id: int | None = user_info[0]["company_id"][0] if user_info else None
+        company_id: int | None = _extract_company_id(user_info)
 
         tax_map_by_rate = {}
         for rate in VALID_VAT_RATES:
@@ -541,7 +551,7 @@ def ensure_payment_methods(
 
         user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read",
                          [[uid], ["company_id"]])
-        company_id: int | None = user_info[0]["company_id"][0] if user_info else None
+        company_id: int | None = _extract_company_id(user_info)
 
         needed = [
             {"name": "Cash",         "is_cash_count": True},
