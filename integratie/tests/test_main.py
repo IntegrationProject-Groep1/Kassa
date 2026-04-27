@@ -36,7 +36,7 @@ class TestMainSetup:
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_setup_database_already_exists(self, mock_proxy, mock_sleep):
         mock_common = MagicMock()
-        mock_common.authenticate.return_value = 1  # auth success => db accessible
+        mock_common.authenticate.return_value = 1
         mock_proxy.return_value = mock_common
 
         assert odoo_setup.setup_database("url", "db", "u", "p", "mp") is True
@@ -47,7 +47,6 @@ class TestMainSetup:
     def test_setup_database_create_and_wait(self, mock_proxy, mock_post, mock_sleep):
         mock_common = MagicMock()
         mock_proxy.return_value = mock_common
-        # First 2 authenticate calls fail (simulating DB not ready), 3rd succeeds
         mock_common.authenticate.side_effect = [Exception("Not ready"), Exception("Not ready"), 1]
 
         mock_resp = MagicMock()
@@ -58,7 +57,23 @@ class TestMainSetup:
 
         mock_post.assert_called_once()
         assert mock_post.call_args[1]["data"]["name"] == "db"
+        assert mock_post.call_args[1]["data"]["demo"] == ""  # falsy string disables demo data
         assert mock_common.authenticate.call_count == 3
+
+    @patch("odoo_setup.requests.post")
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
+    def test_setup_database_create_with_demo_enabled(self, mock_proxy, mock_post, mock_sleep):
+        mock_common = MagicMock()
+        mock_proxy.return_value = mock_common
+        mock_common.authenticate.side_effect = [Exception("Not ready"), Exception("Not ready"), 1]
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_post.return_value = mock_resp
+
+        assert odoo_setup.setup_database("url", "db", "u", "p", "mp", odoo_load_demo=True) is True
+
+        assert mock_post.call_args[1]["data"]["demo"] == "1"  # truthy string enables demo data
 
     # ── ensure_custom_fields ─────────────────────────────────────────────────
 
@@ -79,14 +94,11 @@ class TestMainSetup:
             return []
 
         mock_models.execute_kw.side_effect = my_execute_kw
-
-        # mock_proxy is called twice: once for common, once for object
         mock_proxy.side_effect = [mock_common, mock_models]
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 4 fields, pos.order has 3, product.template has 2
-        # So create should be called 9 times.
+        # res.partner has 4 fields, pos.order has 3, product.template has 2 → 9 creates
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
         assert len(create_calls) == 9
 
@@ -100,7 +112,6 @@ class TestMainSetup:
             if obj == "ir.model" and method == "search_read":
                 return [{"id": 10}]
             if obj == "ir.model.fields" and method == "search_read":
-                # pretend all fields exist
                 return [
                     {"name": "x_user_id"},
                     {"name": "x_badge_id"},
@@ -152,18 +163,16 @@ class TestMainSetup:
                 return [1]
             if method == "read":
                 call_count += 1
-                # 1st read: uninstalled, 2nd: installed
                 return [{"state": "installed" if call_count > 1 else "uninstalled"}]
             if method == "button_immediate_install":
                 return True
         mock_models.execute_kw.side_effect = execute_kw
 
         assert odoo_setup.ensure_pos_installed("url", "db", "u", "p") is True
-        # Check that it pressed the button
         ins_c = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "button_immediate_install"]
         assert len(ins_c) == 1
 
-    # ── ensure_settings_and_base_data (tax, categories, products, pos_config)
+    # ── ensure_tax_settings ──────────────────────────────────────────────────
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_tax_settings(self, mock_proxy, mock_sleep):
@@ -172,12 +181,14 @@ class TestMainSetup:
         mock_proxy.side_effect = [mock_common, mock_models]
 
         def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "res.users" and method == "read":
+                return [{"company_id": [1, "Test Company"]}]
             if obj == "account.tax" and method == "search_read":
-                return []  # none exist
+                return []  # none exist → will create
             if obj == "account.tax" and method == "create":
-                return 55  # mock tax_id
-            if obj == "res.company" and method == "search":
-                return [1]
+                return 55
+            if obj == "res.company" and method == "write":
+                return True
             if obj == "product.template" and method == "search":
                 return []  # no products to fix
             return True
@@ -185,37 +196,124 @@ class TestMainSetup:
         mock_models.execute_kw.side_effect = execute_kw
 
         res = odoo_setup.ensure_tax_settings("url", "db", "u", "p")
-        # should have created all 4 valid rates mapped to tax_id=55
         assert set(res.keys()) == {0.0, 6.0, 12.0, 21.0}
         assert all(v == 55 for v in res.values())
 
-        # company target tax write
-        wc = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "write" and c[0][3] == "res.company"]
-        assert len(wc) == 1
+        write_calls = [
+            c for c in mock_models.execute_kw.call_args_list
+            if c[0][4] == "write" and c[0][3] == "res.company"
+        ]
+        assert len(write_calls) == 1
+
+    # ── ensure_pos_categories ────────────────────────────────────────────────
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
-    def test_ensure_pos_categories(self, mock_proxy, mock_sleep):
+    def test_ensure_pos_categories_creates_two(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
         mock_proxy.side_effect = [mock_common, mock_models]
 
-        mock_models.execute_kw.return_value = []  # no existing categories
+        create_ids = iter([101, 102])
+
+        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "pos.category" and method == "search_read":
+                return []
+            if obj == "pos.category" and method == "create":
+                return next(create_ids)
+            return []
+
+        mock_models.execute_kw.side_effect = execute_kw
+
+        topup_id, drinks_id = odoo_setup.ensure_pos_categories("url", "db", "u", "p")
+        assert (topup_id, drinks_id) == (101, 102)
+
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
+    def test_ensure_pos_categories_no_image_in_create(self, mock_proxy, mock_sleep):
+        """Categories are created with just the name — no image or color fields."""
+        mock_common, mock_models = MagicMock(), MagicMock()
+        mock_common.authenticate.return_value = 1
+        mock_proxy.side_effect = [mock_common, mock_models]
+
+        create_ids = iter([101, 102])
+
+        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "pos.category" and method == "search_read":
+                return []
+            if obj == "pos.category" and method == "create":
+                vals = args[0]
+                assert set(vals.keys()) == {"name"}, f"unexpected fields in create: {set(vals.keys())}"
+                return next(create_ids)
+            return []
+
+        mock_models.execute_kw.side_effect = execute_kw
 
         odoo_setup.ensure_pos_categories("url", "db", "u", "p")
-        # Because we mocked execute_kw to return [], create will be called
-        # Our dumb mock returns [] for create too, so ids will be []
-        create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 2
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
-    def test_ensure_payment_methods(self, mock_proxy, mock_sleep):
+    def test_ensure_pos_categories_skips_create_when_present(self, mock_proxy, mock_sleep):
+        """When both categories already exist no create call is made."""
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
         mock_proxy.side_effect = [mock_common, mock_models]
 
-        # First return true so they appear existing
-        mock_models.execute_kw.return_value = [{"id": 42}]
+        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "pos.category" and method == "search_read":
+                return [{"id": 5}]
+            return []
+
+        mock_models.execute_kw.side_effect = execute_kw
+
+        odoo_setup.ensure_pos_categories("url", "db", "u", "p")
+
+        create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
+        assert len(create_calls) == 0
+
+    # ── ensure_payment_methods ───────────────────────────────────────────────
+
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
+    def test_ensure_payment_methods_all_present(self, mock_proxy, mock_sleep):
+        mock_common, mock_models = MagicMock(), MagicMock()
+        mock_common.authenticate.return_value = 1
+        mock_proxy.side_effect = [mock_common, mock_models]
+
+        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "res.users" and method == "read":
+                return [{"company_id": [1, "Test"]}]
+            return [{"id": 42}]
+
+        mock_models.execute_kw.side_effect = execute_kw
+
+        pm_ids = odoo_setup.ensure_payment_methods("url", "db", "u", "p")
+        assert pm_ids == [42, 42, 42]
+
+    @patch("odoo_setup.xmlrpc.client.ServerProxy")
+    def test_ensure_payment_methods_creates_missing(self, mock_proxy, mock_sleep):
+        """Missing payment methods are created with correct name and is_cash_count flag."""
+        mock_common, mock_models = MagicMock(), MagicMock()
+        mock_common.authenticate.return_value = 1
+        mock_proxy.side_effect = [mock_common, mock_models]
+
+        created = []
+
+        def execute_kw(db, uid, pwd, obj, method, args, kw=None):
+            if obj == "res.users" and method == "read":
+                return [{"company_id": [1, "Test"]}]
+            if obj == "pos.payment.method" and method == "search_read":
+                return []  # nothing exists
+            if obj == "pos.payment.method" and method == "create":
+                created.append(args[0])
+                return len(created)
+            return []
+
+        mock_models.execute_kw.side_effect = execute_kw
 
         pm_ids = odoo_setup.ensure_payment_methods("url", "db", "u", "p")
         assert len(pm_ids) == 3
-        assert pm_ids == [42, 42, 42]
+        names = [v["name"] for v in created]
+        assert "Cash" in names
+        assert "Card" in names
+        assert "Badge Wallet" in names
+        cash_vals = next(v for v in created if v["name"] == "Cash")
+        assert cash_vals["is_cash_count"] is True
+        card_vals = next(v for v in created if v["name"] == "Card")
+        assert card_vals["is_cash_count"] is False

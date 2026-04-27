@@ -26,6 +26,7 @@ _PROFILES: list[dict[str, Any]] = [
             {"name": "Card"},
             {"name": "Badge Wallet"},
         ],
+        "categ_names": ["Drinks", "Top-ups"],
     },
     {
         "name": "Inschrijvingskassa",
@@ -33,12 +34,12 @@ _PROFILES: list[dict[str, Any]] = [
             {"name": "Cash (Inschrijving)", "create_if_missing": {"is_cash_count": False}},
             {"name": "Card"},
         ],
+        "categ_names": ["Top-ups"],
     },
 ]
 
 _SHARED_VALS = {
     "iface_tax_included": "total",
-    "limit_categories": False,
 }
 
 
@@ -66,10 +67,28 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
     print("🔍 Checking POS profiles...", flush=True)
     models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
 
+    user_info = cast(list[dict[str, Any]], models.execute_kw(
+        db, uid, password, "res.users", "read", [[uid], ["company_id"]]
+    ))
+    company_id: int | None = user_info[0]["company_id"][0] if user_info else None
+
+    # Build a name→id map for pos.category so profiles can filter by category
+    all_categs = cast(list[dict[str, Any]], models.execute_kw(
+        db, uid, password, "pos.category", "search_read",
+        [[]], {"fields": ["id", "name"]},
+    ))
+    categ_map: dict[str, int] = {c["name"]: c["id"] for c in all_categs}
+
+    # Archive unmanaged configs first so their cash methods are freed before we resolve
+    _archive_unmanaged_pos_configs(models, db, uid, password,
+                                   keep={p["name"] for p in _PROFILES})
+
     # ── Phase 1: resolve / create all payment methods ─────────────────────
     all_pm_ids: dict[str, list] = {}
     for profile in _PROFILES:
-        pm_ids, resolved_names = _resolve_payment_method_ids(models, db, uid, password, profile)
+        pm_ids, resolved_names = _resolve_payment_method_ids(
+            models, db, uid, password, profile, company_id
+        )
 
         # Check specifically for critical methods: "Cash" and "Card"
         critical_names = {"Cash", "Card"} & {pm["name"] for pm in profile["payment_methods"]}
@@ -86,9 +105,10 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
 
     # ── Phase 2: create / update pos.config records ───────────────────────
     for profile in _PROFILES:
+        categ_ids = [categ_map[n] for n in profile.get("categ_names", []) if n in categ_map]
         _upsert_pos_config(
             models, db, uid, password,
-            profile["name"], all_pm_ids[profile["name"]],
+            profile["name"], all_pm_ids[profile["name"]], company_id, categ_ids,
         )
 
     print("✅ POS profiles ready", flush=True)
@@ -98,12 +118,36 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _archive_unmanaged_pos_configs(
+    models: xmlrpc.client.ServerProxy,
+    db: str,
+    uid: int,
+    password: str,
+    keep: set[str],
+) -> None:
+    """Archive any pos.config records whose name is not in *keep* (e.g. Odoo's default 'Shop')."""
+    all_configs = cast(list[dict[str, Any]], models.execute_kw(
+        db, uid, password,
+        "pos.config", "search_read",
+        [[["active", "=", True]]],
+        {"fields": ["id", "name"]},
+    ))
+    to_archive = [c for c in all_configs if c["name"] not in keep]
+    if not to_archive:
+        return
+    models.execute_kw(db, uid, password, "pos.config", "write",
+                      [[c["id"] for c in to_archive], {"active": False}])
+    for c in to_archive:
+        print(f"   🗑️  Archived unmanaged POS config '{c['name']}'", flush=True)
+
+
 def _resolve_payment_method_ids(
     models: xmlrpc.client.ServerProxy,
     db: str,
     uid: int,
     password: str,
     profile: dict[str, Any],
+    company_id: int | None = None,
 ) -> tuple[list[int], set[str]]:
     """Return a tuple of (pos.payment.method IDs, set of resolved names) for the entries listed in *profile*.
 
@@ -115,22 +159,44 @@ def _resolve_payment_method_ids(
     resolved_names = set()
     for pm_spec in profile["payment_methods"]:
         name = pm_spec["name"]
+        domain: list = [["name", "=", name]]
+        if company_id:
+            domain.append(["company_id", "=", company_id])
         result = cast(list[dict[str, Any]], models.execute_kw(
             db, uid, password,
             "pos.payment.method", "search_read",
-            [[["name", "=", name]]],
-            {"fields": ["id"], "limit": 1},
+            [domain],
+            {"fields": ["id", "is_cash_count"], "limit": 1},
         ))
         if result:
             found_id = cast(int, result[0]["id"])
+            # If a method exists but was manually created with mismatched flags,
+            # normalize it to the expected value for this profile.
+            if "create_if_missing" in pm_spec and "is_cash_count" in pm_spec["create_if_missing"]:
+                expected_is_cash_count = bool(pm_spec["create_if_missing"]["is_cash_count"])
+                current_is_cash_count = bool(result[0].get("is_cash_count"))
+                if current_is_cash_count != expected_is_cash_count:
+                    models.execute_kw(
+                        db, uid, password,
+                        "pos.payment.method", "write",
+                        [[found_id], {"is_cash_count": expected_is_cash_count}],
+                    )
+                    print(
+                        f"   🔧 Normalized payment method '{name}' is_cash_count "
+                        f"{current_is_cash_count} → {expected_is_cash_count}",
+                        flush=True,
+                    )
             print(f"   🔍 Found payment method '{name}' → id={found_id}", flush=True)
             pm_ids.append(found_id)
             resolved_names.add(name)
         elif "create_if_missing" in pm_spec:
+            create_vals = {"name": name, **pm_spec["create_if_missing"]}
+            if company_id:
+                create_vals["company_id"] = company_id
             new_id = cast(int, models.execute_kw(
                 db, uid, password,
                 "pos.payment.method", "create",
-                [{"name": name, **pm_spec["create_if_missing"]}],
+                [create_vals],
             ))
             print(f"   ✅ Created payment method '{name}' → id={new_id}", flush=True)
             pm_ids.append(new_id)
@@ -151,48 +217,134 @@ def _upsert_pos_config(
     password: str,
     name: str,
     pm_ids: list[int],
+    company_id: int | None = None,
+    categ_ids: list[int] | None = None,
 ) -> int:
-    """Create or update a pos.config record. Returns the record id.
-
-    When updating an existing config, payment_method_ids is only included in
-    the write payload when the current set differs from the desired set.
-    This avoids Odoo's 'cash method already in use' error on a no-op update.
-    """
+    """Create or update a pos.config record. Returns the record id."""
     existing = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password,
         "pos.config", "search_read",
         [[["name", "=", name]]],
-        {"fields": ["id", "payment_method_ids"], "limit": 1},
+        {"fields": ["id"], "limit": 1},
     ))
 
     if existing:
         config_id = cast(int, existing[0]["id"])
-        current_pm_ids = set(cast(list[int], existing[0].get("payment_method_ids", [])))
-        desired_pm_ids = set(pm_ids)
+        write_vals = {
+            **_SHARED_VALS,
+            "limit_categories": bool(categ_ids),
+            "payment_method_ids": [(6, 0, pm_ids)],
+        }
+        if categ_ids:
+            write_vals["iface_available_categ_ids"] = [(6, 0, categ_ids)]
 
-        write_vals = {**_SHARED_VALS}
-        if current_pm_ids != desired_pm_ids:
-            write_vals["payment_method_ids"] = [(6, 0, pm_ids)]
-            print(
-                f"   🔄 Updating payment methods for '{name}': "
-                f"{sorted(current_pm_ids)} → {sorted(desired_pm_ids)}",
-                flush=True,
-            )
-        else:
-            print(
-                f"   ✅ Payment methods for '{name}' unchanged — skipping pm write",
-                flush=True,
-            )
+        try:
+            models.execute_kw(db, uid, password, "pos.config", "write", [[config_id], write_vals])
+        except xmlrpc.client.Fault as fault:
+            if not (
+                "payment_method_ids" in write_vals
+                and _is_cash_method_conflict_fault(fault)
+            ):
+                raise
 
-        models.execute_kw(db, uid, password, "pos.config", "write", [[config_id], write_vals])
+            recovered_pm_ids = _replace_conflicting_cash_methods(
+                models, db, uid, password, name, pm_ids, company_id,
+            )
+            if recovered_pm_ids == pm_ids:
+                raise
+            write_vals["payment_method_ids"] = [(6, 0, recovered_pm_ids)]
+            models.execute_kw(db, uid, password, "pos.config", "write", [[config_id], write_vals])
+
         print(f"   ✅ Updated POS profile '{name}' (id={config_id})", flush=True)
         return config_id
 
-    vals = {
+    vals: dict = {
         **_SHARED_VALS,
         "payment_method_ids": [(6, 0, pm_ids)],
         "name": name,
+        "limit_categories": bool(categ_ids),
     }
-    config_id = cast(int, models.execute_kw(db, uid, password, "pos.config", "create", [vals]))
+    if categ_ids:
+        vals["iface_available_categ_ids"] = [(6, 0, categ_ids)]
+    if company_id:
+        vals["company_id"] = company_id
+    try:
+        config_id = cast(int, models.execute_kw(db, uid, password, "pos.config", "create", [vals]))
+    except xmlrpc.client.Fault as fault:
+        if not _is_cash_method_conflict_fault(fault):
+            raise
+
+        recovered_pm_ids = _replace_conflicting_cash_methods(
+            models, db, uid, password, name, pm_ids, company_id,
+        )
+        if recovered_pm_ids == pm_ids:
+            raise
+
+        vals["payment_method_ids"] = [(6, 0, recovered_pm_ids)]
+        config_id = cast(int, models.execute_kw(db, uid, password, "pos.config", "create", [vals]))
+
     print(f"   ✅ Created POS profile '{name}' (id={config_id})", flush=True)
     return config_id
+
+
+def _is_cash_method_conflict_fault(fault: xmlrpc.client.Fault) -> bool:
+    """Return True if an XML-RPC fault matches Odoo's cash payment method exclusivity error."""
+    return "cash payment method is already used in another point of sale" in fault.faultString.lower()
+
+
+def _replace_conflicting_cash_methods(
+    models: xmlrpc.client.ServerProxy,
+    db: str,
+    uid: int,
+    password: str,
+    profile_name: str,
+    pm_ids: list[int],
+    company_id: int | None = None,
+) -> list[int]:
+    """Swap shared cash-count methods with profile-specific methods to satisfy Odoo constraints."""
+    methods = cast(list[dict[str, Any]], models.execute_kw(
+        db, uid, password,
+        "pos.payment.method", "read",
+        [pm_ids, ["id", "name", "is_cash_count"]],
+    ))
+
+    replacement_map: dict[int, int] = {}
+    for method in methods:
+        method_id = cast(int, method["id"])
+        if not bool(method.get("is_cash_count")):
+            continue
+
+        base_name = cast(str, method.get("name") or "Cash")
+        dedicated_name = f"{base_name} ({profile_name})"
+
+        dedicated = cast(list[dict[str, Any]], models.execute_kw(
+            db, uid, password,
+            "pos.payment.method", "search_read",
+            [[["name", "=", dedicated_name]]],
+            {"fields": ["id"], "limit": 1},
+        ))
+        if dedicated:
+            dedicated_id = cast(int, dedicated[0]["id"])
+        else:
+            create_vals: dict = {"name": dedicated_name, "is_cash_count": True}
+            if company_id:
+                create_vals["company_id"] = company_id
+            dedicated_id = cast(int, models.execute_kw(
+                db, uid, password,
+                "pos.payment.method", "create",
+                [create_vals],
+            ))
+            print(
+                f"   ✅ Created dedicated cash method '{dedicated_name}' → id={dedicated_id}",
+                flush=True,
+            )
+
+        replacement_map[method_id] = dedicated_id
+
+    resolved_pm_ids = [replacement_map.get(pm_id, pm_id) for pm_id in pm_ids]
+    if resolved_pm_ids != pm_ids:
+        print(
+            f"   🔧 Resolved cash-method conflict for '{profile_name}' by using dedicated cash method(s)",
+            flush=True,
+        )
+    return resolved_pm_ids
