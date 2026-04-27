@@ -81,7 +81,8 @@ def ensure_pos_profiles(url: str, db: str, uid: int, password: str) -> None:
 
     # Archive unmanaged configs first so their cash methods are freed before we resolve
     _archive_unmanaged_pos_configs(models, db, uid, password,
-                                   keep={p["name"] for p in _PROFILES})
+                                   keep={p["name"] for p in _PROFILES},
+                                   company_id=company_id)
 
     # ── Phase 1: resolve / create all payment methods ─────────────────────
     all_pm_ids: dict[str, list] = {}
@@ -124,12 +125,16 @@ def _archive_unmanaged_pos_configs(
     uid: int,
     password: str,
     keep: set[str],
+    company_id: int | None = None,
 ) -> None:
     """Archive any pos.config records whose name is not in *keep* (e.g. Odoo's default 'Shop')."""
+    domain: list = [["active", "=", True]]
+    if company_id:
+        domain.append(["company_id", "=", company_id])
     all_configs = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password,
         "pos.config", "search_read",
-        [[["active", "=", True]]],
+        [domain],
         {"fields": ["id", "name"]},
     ))
     to_archive = [c for c in all_configs if c["name"] not in keep]
@@ -221,10 +226,13 @@ def _upsert_pos_config(
     categ_ids: list[int] | None = None,
 ) -> int:
     """Create or update a pos.config record. Returns the record id."""
+    domain: list = [["name", "=", name]]
+    if company_id:
+        domain.append(["company_id", "=", company_id])
     existing = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password,
         "pos.config", "search_read",
-        [[["name", "=", name]]],
+        [domain],
         {"fields": ["id"], "limit": 1},
     ))
 
@@ -317,10 +325,13 @@ def _replace_conflicting_cash_methods(
         base_name = cast(str, method.get("name") or "Cash")
         dedicated_name = f"{base_name} ({profile_name})"
 
+        dedicated_domain: list = [["name", "=", dedicated_name]]
+        if company_id:
+            dedicated_domain.append(["company_id", "=", company_id])
         dedicated = cast(list[dict[str, Any]], models.execute_kw(
             db, uid, password,
             "pos.payment.method", "search_read",
-            [[["name", "=", dedicated_name]]],
+            [dedicated_domain],
             {"fields": ["id"], "limit": 1},
         ))
         if dedicated:
