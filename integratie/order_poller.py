@@ -139,7 +139,7 @@ class OrderPoller:
 
             fields = [
                 'id', 'name', 'partner_id', 'lines', 'amount_total',
-                'amount_tax', 'payment_ids', 'create_date', 'session_id'
+                'amount_tax', 'payment_ids', 'create_date', 'session_id', 'to_invoice'
             ]
             try:
                 # Try reading with x_wallet_updated and x_payment_message_id
@@ -177,7 +177,8 @@ class OrderPoller:
                 partner_id = partner_id[0]
 
             base_fields = ['id', 'name', 'email', 'phone',
-                           'is_company', 'parent_id', 'x_wallet_balance']
+                           'is_company', 'parent_id', 'x_wallet_balance',
+                           'street', 'street2', 'zip', 'city', 'country_id', 'vat']
             try:
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
@@ -235,6 +236,14 @@ class OrderPoller:
             else:
                 all_sent, payment_msg_id = self._process_consumption(
                     order, customer_info, is_anonymous)
+
+            # Story 7: Invoice Request logic
+            if order.get('to_invoice'):
+                if is_anonymous:
+                    logger.warning(f"⚠️ Klant zonder account: geen invoice_request aangemaakt — medewerker geïnformeerd")
+                else:
+                    inv_sent = self._process_invoice_request(order, customer_info)
+                    all_sent = all_sent and inv_sent
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
@@ -406,6 +415,44 @@ class OrderPoller:
         ok_refund = sender.send_typed_message(
             'refund_processed', refund_xml, order_id=order_id)
         return ok_wallet and ok_refund
+
+    def _process_invoice_request(self, order, customer_info) -> bool:
+        """Build and send the invoice_request XML message for a linked partner."""
+        street_full = customer_info.get('street') or "Onbekend"
+        number = customer_info.get('street2') or "1"
+        zip_code = customer_info.get('zip') or "0000"
+        city = customer_info.get('city') or "Onbekend"
+
+        country_id_val = customer_info.get('country_id')
+        country_code = "be"
+        if country_id_val and isinstance(country_id_val, (list, tuple)) and len(country_id_val) > 1:
+            c_name = country_id_val[1].lower()
+            if c_name.startswith("bel"):
+                country_code = "be"
+            elif c_name.startswith("ned") or c_name.startswith("neth"):
+                country_code = "nl"
+            else:
+                country_code = c_name[:2]
+
+        user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
+
+        invoice_data = {
+            "name": customer_info.get('name') or "Unknown",
+            "email": customer_info.get('email') or "no-reply@example.com",
+            "address": {
+                "street": street_full,
+                "number": number,
+                "postal_code": zip_code,
+                "city": city,
+                "country": country_code
+            }
+        }
+        vat = customer_info.get('vat')
+        if vat:
+            invoice_data["vat_number"] = vat
+
+        xml_str = sender.build_invoice_request_xml(user_id=user_id, invoice_data=invoice_data)
+        return sender.send_typed_message("invoice_request", xml_str, order_id=order['id'])
 
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle regular sales orders and dispatch consumption_order.

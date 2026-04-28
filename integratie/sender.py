@@ -342,6 +342,7 @@ _OUTGOING_SCHEMA_MAP = {
     "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
+    "invoice_request": _SCHEMA_DIR / "schema_invoice_request.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
