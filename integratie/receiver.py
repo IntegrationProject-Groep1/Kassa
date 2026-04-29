@@ -33,7 +33,7 @@ from collections import OrderedDict
 from typing import Any, List, Dict, Tuple, cast
 from lxml import etree
 
-from config_utils import parse_rabbit_port, require_env
+from config_utils import get_env, parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
 from typing_utils import OdooModelsProxy, OdooRecord
 
@@ -50,10 +50,10 @@ RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
 
-ODOO_URL = os.environ.get("ODOO_URL")
-ODOO_DB = os.environ.get("ODOO_DB")
-ODOO_USER = os.environ.get("ODOO_USER")
-ODOO_PASS = os.environ.get("ODOO_PASS")
+ODOO_URL = get_env("ODOO_URL")
+ODOO_DB = get_env("ODOO_DB")
+ODOO_USER = get_env("ODOO_USER")
+ODOO_PASS = get_env("ODOO_PASS")
 
 QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 DLX_NAME = os.environ.get("RABBIT_DLX", "kassa.dlx")
@@ -463,6 +463,18 @@ def start_listening():
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.retry-recovery")
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
+    except pika.exceptions.ChannelClosedByBroker as exc:
+        if getattr(exc, "reply_code", None) == 406:
+            logger.critical(
+                "RabbitMQ topology conflict (406 PRECONDITION_FAILED) while declaring "
+                "exchange=%s queue=%s dlq=%s retry_queue=%s: %s",
+                EXCHANGE_NAME,
+                QUEUE_NAME,
+                DLQ_NAME,
+                RETRY_QUEUE,
+                getattr(exc, "reply_text", ""),
+            )
+        raise
     except Exception:
         logger.critical("Failed to setup RabbitMQ topology")
         raise
@@ -487,3 +499,5 @@ def start_listening():
 
 if __name__ == "__main__":
     start_listening()
+
+
