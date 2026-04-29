@@ -30,7 +30,7 @@ import defusedxml.xmlrpc
 import defusedxml.ElementTree as ET
 from xml.etree.ElementTree import Element
 from collections import OrderedDict
-from typing import Any, List, Dict, Optional, Tuple, Union, cast
+from typing import Any, List, Dict, Tuple, cast
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
@@ -140,7 +140,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     """Handle a new_registration message (Flow 1)."""
     # local vars to satisfy mypy about non-None env
     db, pw = str(ODOO_DB), str(ODOO_PASS)
-    
+
     body = root.find("body")
     if body is None:
         raise ValueError("new_registration: <body> missing")
@@ -468,13 +468,15 @@ def start_listening():
         raise
 
     channel.basic_qos(prefetch_count=1)
-    
     # Optional: flush buffer on start
     try:
         flushed_ids = flush_buffer()
         if flushed_ids:
             uid, models = get_odoo_connection()
-            models.execute_kw(str(ODOO_DB), uid, str(ODOO_PASS), 'pos.order', 'write', [list(set(flushed_ids)), {'x_rabbitmq_sent': True}])
+            models.execute_kw(
+                str(ODOO_DB), uid, str(ODOO_PASS), 'pos.order', 'write',
+                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}]
+            )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
 
