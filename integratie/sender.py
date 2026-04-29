@@ -64,6 +64,9 @@ RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
+# Uptime tracking
+_APP_START_TIME = time.monotonic()
+
 # Routing key mapping
 ROUTING_KEYS = {
     "consumption_order": "kassa.payments.consumption",
@@ -354,7 +357,8 @@ def send_heartbeat() -> None:
     _make_header(root, "heartbeat")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "status").text = "up"
-    ET.SubElement(body, "uptime_seconds").text = str(int(time.monotonic()))
+    uptime = int(time.monotonic() - _APP_START_TIME)
+    ET.SubElement(body, "uptime_seconds").text = str(uptime)
 
     heartbeat_xml = _to_xml(root)
     send_typed_message("heartbeat", heartbeat_xml, buffer_on_fail=False)
