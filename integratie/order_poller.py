@@ -30,18 +30,18 @@ Offline resilience:
     inside the polling loop to replay any buffered messages.
 """
 
+import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
-import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 import os
 import time
 import logging
 from pathlib import Path
 import collections
-import xml.etree.ElementTree as ET
-import defusedxml.ElementTree as DET  # Use for safe parsing
+import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+
+defusedxml.xmlrpc.monkey_patch()
 
 # Module-level logger — root logging is configured by the caller (main.py).
 # basicConfig() is only called when this module runs as __main__.
@@ -142,7 +142,7 @@ class OrderPoller:
 
             fields = [
                 'id', 'name', 'partner_id', 'lines', 'amount_total',
-                'amount_tax', 'payment_ids', 'create_date', 'session_id', 'to_invoice'
+                'amount_tax', 'payment_ids', 'create_date', 'session_id'
             ]
             try:
                 # Try reading with x_wallet_updated and x_payment_message_id
@@ -180,8 +180,7 @@ class OrderPoller:
                 partner_id = partner_id[0]
 
             base_fields = ['id', 'name', 'email', 'phone',
-                           'is_company', 'parent_id', 'x_wallet_balance',
-                           'street', 'street2', 'zip', 'city', 'country_id', 'vat']
+                           'is_company', 'parent_id', 'x_wallet_balance']
             try:
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
@@ -239,14 +238,6 @@ class OrderPoller:
             else:
                 all_sent, payment_msg_id = self._process_consumption(
                     order, customer_info, is_anonymous)
-
-            # Story 7: Invoice Request logic
-            if order.get('to_invoice'):
-                if is_anonymous:
-                    logger.warning(f"⚠️ Klant zonder account: geen invoice_request aangemaakt — medewerker geïnformeerd")
-                else:
-                    inv_sent = self._process_invoice_request(order, customer_info)
-                    all_sent = all_sent and inv_sent
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
@@ -419,54 +410,6 @@ class OrderPoller:
             'refund_processed', refund_xml, order_id=order_id)
         return ok_wallet and ok_refund
 
-    def _process_invoice_request(self, order, customer_info) -> bool:
-        """Build and send the invoice_request XML message for a linked partner."""
-        street_full = customer_info.get('street') or "Onbekend"
-        number = customer_info.get('street2') or "1"
-        zip_code = customer_info.get('zip') or "0000"
-        city = customer_info.get('city') or "Onbekend"
-
-        # Fetch ISO country code from res.country model for robustness
-        country_code = "be"  # Default to Belgium
-        country_id_val = customer_info.get('country_id')
-        
-        if country_id_val:
-            try:
-                # Extract country ID from tuple/list if needed
-                country_id = country_id_val[0] if isinstance(country_id_val, (list, tuple)) else country_id_val
-                
-                country_data = self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'res.country', 'read',
-                    [country_id, ['code']]
-                )
-                
-                if country_data and country_data[0].get('code'):
-                    country_code = country_data[0]['code'].lower()
-            except Exception as e:
-                logger.warning(f"⚠️  Could not fetch ISO country code for ID {country_id_val}: {e}")
-                # Fall back to default "be"
-
-        user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
-
-        invoice_data = {
-            "name": customer_info.get('name') or "Unknown",
-            "email": customer_info.get('email') or "no-reply@example.com",
-            "address": {
-                "street": street_full,
-                "number": number,
-                "postal_code": zip_code,
-                "city": city,
-                "country": country_code
-            }
-        }
-        vat = customer_info.get('vat')
-        if vat:
-            invoice_data["vat_number"] = vat
-
-        xml_str = sender.build_invoice_request_xml(user_id=user_id, invoice_data=invoice_data)
-        return sender.send_typed_message("invoice_request", xml_str, order_id=order['id'])
-
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle regular sales orders and dispatch consumption_order.
         Returns a tuple: (all_sent_boolean, payment_message_id_string)."""
@@ -546,7 +489,7 @@ class OrderPoller:
             'consumption_order', xml_message, order_id=order_id)
 
         # Extract message_id to link payment
-        correlation_id = DET.fromstring(xml_message).findtext('.//message_id')
+        correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
 
         # Check for Badge Wallet payment and update balance
         payment_ids = order.get('payment_ids', [])
@@ -595,7 +538,7 @@ class OrderPoller:
         )
         ok_payment = sender.send_typed_message(
             'payment_registered_consumption', payment_xml, order_id=order_id)
-        payment_msg_id = DET.fromstring(payment_xml).findtext('.//message_id')
+        payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
         return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
 
     def poll(self, interval=5):

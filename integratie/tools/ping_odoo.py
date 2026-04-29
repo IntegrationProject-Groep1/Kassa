@@ -1,6 +1,4 @@
-import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
-import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
+import xmlrpc.client  # nosec
 import os
 import sys
 

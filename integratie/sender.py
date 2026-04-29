@@ -56,22 +56,16 @@ class BufferFullError(RuntimeError):
 logger = logging.getLogger(__name__)
 
 
-def _as_bool(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # Configuration
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
-    os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
-)
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
+
+# Uptime tracking
+_APP_START_TIME = time.monotonic()
 
 # Routing key mapping
 ROUTING_KEYS = {
@@ -83,26 +77,10 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
+    "heartbeat": "kassa.heartbeat",
     "system_error": "kassa.errors",
 }
 
-# Optional queue topology auto-setup (useful when CRM consumers are not online yet)
-OUTBOUND_QUEUE_BINDINGS = {
-    "kassa.payments.consumption": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_CONSUMPTION", "kassa.out.payments.consumption"
-    ),
-    "kassa.payments.registration": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_REGISTRATION", "kassa.out.payments.registration"
-    ),
-    "kassa.payments.refund": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_REFUND", "kassa.out.payments.refund"
-    ),
-    "kassa.payments.badge": os.environ.get("RABBIT_QUEUE_PAYMENTS_BADGE", "kassa.out.payments.badge"),
-    "kassa.payments.invoice": os.environ.get("RABBIT_QUEUE_PAYMENTS_INVOICE", "kassa.out.payments.invoice"),
-    "kassa.frontend.payment": os.environ.get("RABBIT_QUEUE_FRONTEND_PAYMENT", "kassa.out.frontend.payment"),
-    "kassa.frontend.wallet": os.environ.get("RABBIT_QUEUE_FRONTEND_WALLET", "kassa.out.frontend.wallet"),
-    "kassa.errors": os.environ.get("RABBIT_QUEUE_ERRORS", "kassa.out.errors"),
-}
 
 # Buffer configuration
 BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
@@ -276,13 +254,10 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
 
 def setup_exchange(channel):
     """
-    Declare the topic exchange and, optionally, the outbound queues.
+    Declare the topic exchange.
 
     The exchange declaration is idempotent — calling it when the exchange
-    already exists is harmless. Queue creation only runs when
-    RABBIT_AUTO_SETUP_TOPOLOGY=true, which is useful in local development
-    where no other team's consumer has pre-created the queues. In production
-    the infra team owns the topology.
+    already exists is harmless.
     """
     channel.exchange_declare(
         exchange=EXCHANGE_NAME,
@@ -290,34 +265,16 @@ def setup_exchange(channel):
         durable=True
     )
 
-    if not RABBIT_AUTO_SETUP_TOPOLOGY:
-        return
 
-    for routing_key, queue_name in OUTBOUND_QUEUE_BINDINGS.items():
-        if not queue_name:
-            continue
-        try:
-            channel.queue_declare(queue=queue_name, durable=True)
-            channel.queue_bind(
-                exchange=EXCHANGE_NAME,
-                queue=queue_name,
-                routing_key=routing_key,
-            )
-        except Exception as exc:
-            logger.warning(
-                f"⚠️  Could not declare/bind queue '{queue_name}' for '{routing_key}': {exc}"
-            )
-
-
-def send_message(routing_key: str, message_xml: str, order_id: int | None = None) -> bool:
+def send_message(routing_key: str, message_xml: str, order_id: int | None = None, buffer_on_fail: bool = True) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
     On any exception (connection refused, timeout, channel error) the message
-    is written to the local outbox buffer instead of being lost. The connection
-    globals are reset to None so the next call opens a fresh connection rather
-    than retrying a broken one.
-    Returns True if successfully sent, False if buffered.
+    is written to the local outbox buffer instead of being lost, unless
+    buffer_on_fail is set to False. The connection globals are reset to None
+    so the next call opens a fresh connection rather than retrying a broken one.
+    Returns True if successfully sent, False if failed (and possibly buffered).
 
     order_id is stored in the buffer entry when provided, so that
     flush_buffer() can report which Odoo orders were successfully flushed.
@@ -327,6 +284,11 @@ def send_message(routing_key: str, message_xml: str, order_id: int | None = None
         logger.info(f"✅ Sent: routing_key={routing_key}")
         return True
     except Exception as e:
+        if not buffer_on_fail:
+            logger.warning(
+                f"⚠️  Send failed ({type(e).__name__}), message discarded (not buffered)")
+            return False
+
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
@@ -369,7 +331,12 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
             f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None) -> bool:
+def send_typed_message(
+    msg_type: str,
+    message_xml: str,
+    order_id: int | None = None,
+    buffer_on_fail: bool = True
+) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
@@ -378,7 +345,24 @@ def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = N
             f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml, order_id=order_id)
+    return send_message(routing_key, message_xml, order_id=order_id, buffer_on_fail=buffer_on_fail)
+
+
+def send_heartbeat() -> None:
+    """
+    Send a heartbeat message to kassa.heartbeat — without buffering.
+    Heartbeats are diagnostic signals used for monitoring; they are discarded
+    if the broker is unreachable to avoid filling the buffer with stale pings.
+    """
+    root = ET.Element("message")
+    _make_header(root, "heartbeat")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "status").text = "up"
+    uptime = int(time.monotonic() - _APP_START_TIME)
+    ET.SubElement(body, "uptime_seconds").text = str(uptime)
+
+    heartbeat_xml = _to_xml(root)
+    send_typed_message("heartbeat", heartbeat_xml, buffer_on_fail=False)
 
 
 def get_buffered_order_ids() -> set:
