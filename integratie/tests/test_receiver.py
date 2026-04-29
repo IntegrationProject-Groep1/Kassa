@@ -434,7 +434,7 @@ class TestProcessMessage:
         mock_odoo.side_effect = ConnectionError("Odoo down")
         body = _xml_bytes("badge_scanned", "<badge_id>B1</badge_id><location>bar</location>")
         receiver.process_message(ch, method, None, body)
-        
+
         # In the new robust receiver, we basic_publish to retry queue and basic_ack the original
         ch.basic_publish.assert_called_once()
         routing_key = ch.basic_publish.call_args[1]["routing_key"]
