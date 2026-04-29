@@ -30,6 +30,7 @@ import pika
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
 import defusedxml.ElementTree as ET
+from xml.etree.ElementTree import Element
 from collections import OrderedDict
 from lxml import etree
 
@@ -164,7 +165,7 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
 
 # ── Business logic per message type ───────────────────────────────────────────
 
-def process_new_registration(root: ET.Element, uid: int, models) -> None:
+def process_new_registration(root: Element, uid: int, models) -> None:
     """
     Handle a new_registration message (Flow 1).
 
@@ -246,7 +247,7 @@ def process_new_registration(root: ET.Element, uid: int, models) -> None:
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
 
 
-def process_profile_update(root: ET.Element, uid: int, models) -> None:
+def process_profile_update(root: Element, uid: int, models) -> None:
     """
     Handle a profile_update message (Flow 3).
 
@@ -312,7 +313,7 @@ def process_profile_update(root: ET.Element, uid: int, models) -> None:
         logger.warning("[PROFILE_UPDATE] ⚠ Customer not found – created new: Odoo ID=%s", partner_id)
 
 
-def process_badge_scan(root: ET.Element, uid: int, models) -> None:
+def process_badge_scan(root: Element, uid: int, models) -> None:
     """
     Handle a badge_scanned message (Flow 2).
 
@@ -361,7 +362,7 @@ def process_badge_scan(root: ET.Element, uid: int, models) -> None:
         # ACK (not NACK) – an unknown badge stays unknown until Flow 12 runs
 
 
-def process_cancel_registration(root: ET.Element, uid: int, models) -> None:
+def process_cancel_registration(root: Element, uid: int, models) -> None:
     """
     Handle a cancel_registration message (Flow 4).
 
