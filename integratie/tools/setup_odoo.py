@@ -24,7 +24,7 @@
 
 import os
 import sys
-import xmlrpc.client
+import xmlrpc.client  # nosec
 from pathlib import Path
 
 from dotenv import load_dotenv

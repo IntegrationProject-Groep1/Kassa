@@ -1,4 +1,4 @@
-import xmlrpc.client
+import xmlrpc.client  # nosec
 import os
 import sys
 

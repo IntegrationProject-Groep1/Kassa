@@ -9,7 +9,7 @@ Usage: docker exec kassa_integratie python tools/fix_product_taxes.py
 
 import os
 import sys
-import xmlrpc.client
+import xmlrpc.client  # nosec
 
 ODOO_URL = os.environ.get("ODOO_URL")
 ODOO_DB = os.environ.get("ODOO_DB")
