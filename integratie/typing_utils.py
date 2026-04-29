@@ -4,6 +4,7 @@ typing_utils.py — Type definitions and protocols for the Kassa integration ser
 
 from typing import Any, Protocol, TypedDict, Union, List, Dict
 
+
 # Odoo XML-RPC search_read result item
 class OdooRecord(TypedDict, total=False):
     id: int
@@ -28,6 +29,7 @@ class OdooRecord(TypedDict, total=False):
     x_payment_message_id: str
     vat: Union[str, bool]
 
+
 # Protocol for the Odoo models proxy (ServerProxy)
 class OdooModelsProxy(Protocol):
     def execute_kw(
@@ -40,6 +42,7 @@ class OdooModelsProxy(Protocol):
         args: List[Any],
         kwargs: Dict[str, Any] = ...,
     ) -> Any: ...
+
 
 class OdooCommonProxy(Protocol):
     def authenticate(
