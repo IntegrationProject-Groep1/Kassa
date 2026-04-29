@@ -3,13 +3,18 @@ End-to-End Test for Story 7: Invoice Request
 Creates a real order with to_invoice=True and verifies the full flow
 """
 
-import xmlrpc.client
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 import os
 import sys
 import time
 import json
 from datetime import datetime
 from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def get_odoo_connection():
@@ -34,6 +39,19 @@ def create_test_customer(models, uid, db, password):
     """Create a test customer for invoice testing"""
     print("\n📝 Creating test customer...")
     
+    # Fetch Belgium country ID dynamically
+    try:
+        country_ids = models.execute_kw(
+            db, uid, password,
+            'res.country', 'search',
+            [[['code', '=', 'BE']]],
+            {'limit': 1}
+        )
+        country_id = country_ids[0] if country_ids else 12  # Fallback to 12 if not found
+    except Exception as e:
+        print(f"⚠️  Could not fetch Belgium country ID: {e}, using fallback")
+        country_id = 12
+    
     customer_data = {
         'name': f"Test Customer {datetime.now().strftime('%H%M%S')}",
         'email': 'test.invoice@example.com',
@@ -42,7 +60,7 @@ def create_test_customer(models, uid, db, password):
         'street2': '42',
         'zip': '1000',
         'city': 'Brussel',
-        'country_id': 12,  # Belgium
+        'country_id': country_id,  # Belgium (dynamically resolved)
         'vat': 'BE0123456789',
     }
     
@@ -187,6 +205,8 @@ def run_poller():
         return True
     except Exception as e:
         print(f"❌ Poller error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 

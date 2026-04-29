@@ -12,7 +12,10 @@ import os
 import sys
 import threading
 import time
-import xmlrpc.client
+
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 
 import receiver
 import sender

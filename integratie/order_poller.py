@@ -30,13 +30,16 @@ Offline resilience:
     inside the polling loop to replay any buffered messages.
 """
 
-import xmlrpc.client
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 import os
 import time
 import logging
 from pathlib import Path
 import collections
 import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as DET  # Use for safe parsing
 import uuid
 import sender  # Import the sender module
 
@@ -423,16 +426,26 @@ class OrderPoller:
         zip_code = customer_info.get('zip') or "0000"
         city = customer_info.get('city') or "Onbekend"
 
+        # Fetch ISO country code from res.country model for robustness
+        country_code = "be"  # Default to Belgium
         country_id_val = customer_info.get('country_id')
-        country_code = "be"
-        if country_id_val and isinstance(country_id_val, (list, tuple)) and len(country_id_val) > 1:
-            c_name = country_id_val[1].lower()
-            if c_name.startswith("bel"):
-                country_code = "be"
-            elif c_name.startswith("ned") or c_name.startswith("neth"):
-                country_code = "nl"
-            else:
-                country_code = c_name[:2]
+        
+        if country_id_val:
+            try:
+                # Extract country ID from tuple/list if needed
+                country_id = country_id_val[0] if isinstance(country_id_val, (list, tuple)) else country_id_val
+                
+                country_data = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.country', 'read',
+                    [country_id, ['code']]
+                )
+                
+                if country_data and country_data[0].get('code'):
+                    country_code = country_data[0]['code'].lower()
+            except Exception as e:
+                logger.warning(f"⚠️  Could not fetch ISO country code for ID {country_id_val}: {e}")
+                # Fall back to default "be"
 
         user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
 
@@ -533,7 +546,7 @@ class OrderPoller:
             'consumption_order', xml_message, order_id=order_id)
 
         # Extract message_id to link payment
-        correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
+        correlation_id = DET.fromstring(xml_message).findtext('.//message_id')
 
         # Check for Badge Wallet payment and update balance
         payment_ids = order.get('payment_ids', [])
@@ -582,7 +595,7 @@ class OrderPoller:
         )
         ok_payment = sender.send_typed_message(
             'payment_registered_consumption', payment_xml, order_id=order_id)
-        payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
+        payment_msg_id = DET.fromstring(payment_xml).findtext('.//message_id')
         return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
 
     def poll(self, interval=5):

@@ -9,7 +9,9 @@ Usage: docker exec kassa_integratie python tools/fix_product_taxes.py
 
 import os
 import sys
-import xmlrpc.client
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 
 ODOO_URL = os.environ.get("ODOO_URL")
 ODOO_DB = os.environ.get("ODOO_DB")

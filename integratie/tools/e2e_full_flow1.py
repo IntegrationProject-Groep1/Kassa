@@ -13,7 +13,9 @@ import os
 import sys
 import time
 import uuid
-import xmlrpc.client
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

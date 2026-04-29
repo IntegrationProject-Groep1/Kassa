@@ -27,11 +27,16 @@ protection across sessions — that trade-off is intentional for simplicity.
 import os
 import logging
 import pika
-import xmlrpc.client
+
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
+
+import defusedxml.ElementTree as DET  # Use for safe parsing only
 
 from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
@@ -426,7 +431,7 @@ def process_message(ch, method, properties, body):
     try:
         # ── Step 1: Parse XML ──────────────────────────────────────────────
         try:
-            root = ET.fromstring(xml_text)
+            root = DET.fromstring(xml_text)
         except ET.ParseError as e:
             logger.error("[RECEIVER] ❌ XML parse error: %s", e)
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
