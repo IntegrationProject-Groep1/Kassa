@@ -14,10 +14,13 @@
 #   8. ensure_demo_products   – create demo products linked to the categories and taxes
 
 import time
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
 from typing import Any
 
 import requests
+
+defusedxml.xmlrpc.monkey_patch()
 
 
 def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:

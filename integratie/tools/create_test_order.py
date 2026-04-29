@@ -2,7 +2,7 @@
 Test Order Creator — Maakt een test order in Odoo POS
 """
 
-import xmlrpc.client
+import xmlrpc.client  # nosec
 import os
 from datetime import datetime
 
