@@ -239,6 +239,14 @@ class OrderPoller:
                 all_sent, payment_msg_id = self._process_consumption(
                     order, customer_info, is_anonymous)
 
+            # Story 7: Invoice Request logic
+            if order.get('to_invoice'):
+                if is_anonymous:
+                    logger.warning(f"⚠️ Klant zonder account: geen invoice_request aangemaakt — medewerker geïnformeerd")
+                else:
+                    inv_sent = self._process_invoice_request(order, customer_info)
+                    all_sent = all_sent and inv_sent
+
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
             self.processed_orders[order_id] = True
@@ -298,6 +306,44 @@ class OrderPoller:
                 wallet_amount += abs(pm.get('amount', 0.0))
 
         return is_badge_wallet, wallet_amount
+
+    def _process_invoice_request(self, order, customer_info) -> bool:
+        """Build and send the invoice_request XML message for a linked partner."""
+        street_full = customer_info.get('street') or "Onbekend"
+        number = customer_info.get('street2') or "1"
+        zip_code = customer_info.get('zip') or "0000"
+        city = customer_info.get('city') or "Onbekend"
+
+        country_id_val = customer_info.get('country_id')
+        country_code = "be"
+        if country_id_val and isinstance(country_id_val, (list, tuple)) and len(country_id_val) > 1:
+            c_name = country_id_val[1].lower()
+            if c_name.startswith("bel"):
+                country_code = "be"
+            elif c_name.startswith("ned") or c_name.startswith("neth"):
+                country_code = "nl"
+            else:
+                country_code = c_name[:2]
+
+        user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
+
+        invoice_data = {
+            "name": customer_info.get('name') or "Unknown",
+            "email": customer_info.get('email') or "no-reply@example.com",
+            "address": {
+                "street": street_full,
+                "number": number,
+                "postal_code": zip_code,
+                "city": city,
+                "country": country_code
+            }
+        }
+        vat = customer_info.get('vat')
+        if vat:
+            invoice_data["vat_number"] = vat
+
+        xml_str = sender.build_invoice_request_xml(user_id=user_id, invoice_data=invoice_data)
+        return sender.send_typed_message("invoice_request", xml_str, order_id=order['id'])
 
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> bool:
         """Handle refund logic and wallet updates. Returns True if all messages were sent
