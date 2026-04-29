@@ -34,7 +34,7 @@ from collections import OrderedDict
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
-from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange
+from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -550,12 +550,12 @@ def start_listening():
     conn = connect_to_rabbitmq()
     channel = conn.channel()
 
-    # Ensure the main exchange exists and has the correct type (topic)
-    # The sender owns the declaration, so we reuse its setup logic.
-    setup_exchange(channel)
-
-    # --- DLQ Setup ---
+    # --- RabbitMQ Setup ---
     try:
+        # 0. Ensure the main exchange exists and has the correct type (topic)
+        # The sender owns the declaration, so we reuse its setup logic.
+        setup_exchange(channel)
+
         # 1. Declare the Dead Letter Exchange (DLX)
         channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
 
@@ -574,6 +574,11 @@ def start_listening():
                 "x-dead-letter-routing-key": DLQ_ROUTING_KEY,
             }
         )
+
+        # 5. Bind the main queue to the topic exchange.
+        # This ensures messages published to EXCHANGE_NAME with QUEUE_NAME as routing key reach us.
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=QUEUE_NAME)
+
     except pika.exceptions.ChannelClosedByBroker as exc:
         if getattr(exc, "reply_code", None) == 406:
             logger.critical(
