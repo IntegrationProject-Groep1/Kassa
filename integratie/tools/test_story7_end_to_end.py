@@ -3,15 +3,17 @@ End-to-End Test for Story 7: Invoice Request
 Creates a real order with to_invoice=True and verifies the full flow
 """
 
-import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
-import xmlrpc.client  # nosec B411 - mitigated by monkey_patch above
 import os
 import sys
 import time
 import json
 from datetime import datetime
 from pathlib import Path
+
+import defusedxml.xmlrpc
+import xmlrpc.client  # nosec B411 - mitigated by monkey_patch below
+
+defusedxml.xmlrpc.monkey_patch()  # Patch xmlrpc.client to use defusedxml
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -38,7 +40,7 @@ def get_odoo_connection():
 def create_test_customer(models, uid, db, password):
     """Create a test customer for invoice testing"""
     print("\n📝 Creating test customer...")
-    
+
     # Fetch Belgium country ID dynamically
     try:
         country_ids = models.execute_kw(
@@ -51,7 +53,7 @@ def create_test_customer(models, uid, db, password):
     except Exception as e:
         print(f"⚠️  Could not fetch Belgium country ID: {e}, using fallback")
         country_id = 12
-    
+
     customer_data = {
         'name': f"Test Customer {datetime.now().strftime('%H%M%S')}",
         'email': 'test.invoice@example.com',
@@ -63,7 +65,7 @@ def create_test_customer(models, uid, db, password):
         'country_id': country_id,  # Belgium (dynamically resolved)
         'vat': 'BE0123456789',
     }
-    
+
     try:
         customer_id = models.execute_kw(
             db, uid, password,
@@ -80,22 +82,22 @@ def create_test_customer(models, uid, db, password):
 def create_test_order_with_invoice(models, uid, db, password, customer_id):
     """Create a POS order with to_invoice=True"""
     print("\n📦 Creating POS order with to_invoice=True...")
-    
+
     # Get active session
     session_ids = models.execute_kw(
         db, uid, password,
         'pos.session', 'search',
         [[['state', '=', 'opened']]]
     )
-    
+
     if not session_ids:
         print("❌ No active POS session. Open a register first!")
         print("   Go to POS → Orders and click 'New Session'")
         return False
-    
+
     session_id = session_ids[0]
     print(f"✅ Using session: {session_id}")
-    
+
     # Get a product
     product_ids = models.execute_kw(
         db, uid, password,
@@ -103,13 +105,13 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
         [[['sale_ok', '=', True]]],
         {'limit': 1}
     )
-    
+
     if not product_ids:
         print("❌ No products found")
         return False
-    
+
     product_id = product_ids[0]
-    
+
     # Create order
     order_data = {
         'session_id': session_id,
@@ -123,7 +125,7 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
         'to_invoice': True,  # ← STORY 7: Mark for invoicing
         'company_id': 1,
     }
-    
+
     try:
         order_id = models.execute_kw(
             db, uid, password,
@@ -131,7 +133,7 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
             [order_data]
         )
         print(f"✅ Order created: ID {order_id}")
-        
+
         # Add order line
         line_data = {
             'order_id': order_id,
@@ -141,14 +143,14 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
             'price_subtotal': 10.00,
             'price_subtotal_incl': 12.50,
         }
-        
+
         line_id = models.execute_kw(
             db, uid, password,
             'pos.order.line', 'create',
             [line_data]
         )
         print(f"✅ Added order line: {line_id}")
-        
+
         # Mark as paid
         try:
             models.execute_kw(
@@ -162,10 +164,10 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
                 'pos.order', 'write',
                 [[order_id], {'state': 'paid'}]
             )
-        
-        print(f"✅ Order marked as PAID")
+
+        print("✅ Order marked as PAID")
         return order_id
-        
+
     except Exception as e:
         print(f"❌ Error creating order: {e}")
         return False
@@ -174,14 +176,14 @@ def create_test_order_with_invoice(models, uid, db, password, customer_id):
 def verify_order_state(models, uid, db, password, order_id):
     """Check the order state before poller runs"""
     print(f"\n🔍 Checking order {order_id} state...")
-    
+
     fields = ['id', 'name', 'state', 'to_invoice', 'x_rabbitmq_sent', 'partner_id']
     order = models.execute_kw(
         db, uid, password,
         'pos.order', 'read',
         [[order_id], fields]
     )
-    
+
     if order:
         o = order[0]
         print(f"   📌 Order: {o['name']}")
@@ -196,7 +198,7 @@ def verify_order_state(models, uid, db, password, order_id):
 def run_poller():
     """Run the order poller to process the order"""
     print("\n🚀 Running order poller...")
-    
+
     try:
         from order_poller import OrderPoller
         poller = OrderPoller()
@@ -213,14 +215,14 @@ def run_poller():
 def check_invoice_message_sent(models, uid, db, password, order_id):
     """Check if invoice_request was sent"""
     print(f"\n📨 Checking if invoice_request was sent for order {order_id}...")
-    
+
     fields = ['x_rabbitmq_sent']
     result = models.execute_kw(
         db, uid, password,
         'pos.order', 'read',
         [[order_id], fields]
     )
-    
+
     if result and result[0]['x_rabbitmq_sent']:
         print("✅ x_rabbitmq_sent = True")
         return True
@@ -232,16 +234,16 @@ def check_invoice_message_sent(models, uid, db, password, order_id):
 def check_outbox_buffer():
     """Check if messages were buffered"""
     print("\n📂 Checking outbox buffer...")
-    
+
     outbox_path = Path("/app/outbox/outbox.json")
     if outbox_path.exists():
         try:
             with open(outbox_path, 'r') as f:
                 data = json.load(f)
-            
-            invoice_msgs = [msg for msg in data.get('messages', []) 
-                           if msg.get('message_type') == 'invoice_request']
-            
+
+            invoice_msgs = [msg for msg in data.get('messages', [])
+                            if msg.get('message_type') == 'invoice_request']
+
             if invoice_msgs:
                 print(f"✅ Found {len(invoice_msgs)} buffered invoice_request messages")
                 for msg in invoice_msgs[:1]:  # Show first one
@@ -262,48 +264,48 @@ def main():
     print("=" * 60)
     print("🧪 Story 7 - End-to-End Test: Invoice Request")
     print("=" * 60)
-    
+
     # Connect to Odoo
     models, uid, db, password = get_odoo_connection()
     if not models:
         print("❌ Failed to connect to Odoo")
         return False
-    
+
     print("✅ Connected to Odoo")
-    
+
     # Create customer
     customer_id = create_test_customer(models, uid, db, password)
     if not customer_id:
         return False
-    
+
     # Create order with to_invoice=True
     order_id = create_test_order_with_invoice(models, uid, db, password, customer_id)
     if not order_id:
         return False
-    
+
     # Verify initial state
     before = verify_order_state(models, uid, db, password, order_id)
-    
+
     # Run poller
     time.sleep(1)  # Small delay to ensure order is persisted
     run_poller()
     time.sleep(1)  # Give poller time to process
-    
+
     # Verify after poller
     after = verify_order_state(models, uid, db, password, order_id)
-    
+
     # Check for buffered messages
     check_outbox_buffer()
-    
+
     print("\n" + "=" * 60)
     print("📊 TEST RESULTS")
     print("=" * 60)
-    
+
     if before and before['to_invoice']:
         print("✅ Order has to_invoice=True")
     else:
         print("❌ Order missing to_invoice flag")
-    
+
     if after and after['x_rabbitmq_sent']:
         print("✅ Order marked x_rabbitmq_sent=True (invoice sent!)")
         print("\n🎉 SUCCESS: Story 7 End-to-End Test PASSED")

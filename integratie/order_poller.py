@@ -242,7 +242,9 @@ class OrderPoller:
             # Story 7: Invoice Request logic
             if order.get('to_invoice'):
                 if is_anonymous:
-                    logger.warning(f"⚠️ Klant zonder account: geen invoice_request aangemaakt — medewerker geïnformeerd")
+                    logger.warning(
+                        "⚠️ Klant zonder account: geen invoice_request aangemaakt"
+                    )
                 else:
                     inv_sent = self._process_invoice_request(order, customer_info)
                     all_sent = all_sent and inv_sent

@@ -3,12 +3,15 @@ Test suite for Story 7: Invoice Request (Factuur vragen voor een drankje)
 Covers: building invoice_request XML, sending messages, and poller detection.
 """
 import os
+import sys
 import pytest
 from unittest.mock import patch, MagicMock
 from lxml import etree
 
-import sender
-import order_poller
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))  # noqa: E402
+
+import sender  # noqa: E402
+import order_poller  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -50,21 +53,21 @@ class TestBuildInvoiceRequestXML:
             user_id="e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
             invoice_data=invoice_data
         )
-        
+
         # Verify XML structure
         root = etree.fromstring(xml_str.encode('utf-8'))
         assert root.tag == "message"
-        
+
         # Check header
         header = root.find("header")
         assert header is not None
         assert header.find("type").text == "invoice_request"
-        
+
         # Check body
         body = root.find("body")
         assert body is not None
         assert body.find("user_id").text == "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
-        
+
         # Check invoice_data
         inv_data = body.find("invoice_data")
         assert inv_data is not None
@@ -72,7 +75,7 @@ class TestBuildInvoiceRequestXML:
         assert inv_data.find("last_name").text == "Peeters"
         assert inv_data.find("email").text == "jan@example.com"
         assert inv_data.find("vat_number").text == "BE0123456789"
-        
+
         # Check address
         addr = inv_data.find("address")
         assert addr is not None
@@ -99,10 +102,10 @@ class TestBuildInvoiceRequestXML:
             user_id="user-123",
             invoice_data=invoice_data
         )
-        
+
         root = etree.fromstring(xml_str.encode('utf-8'))
         inv_data = root.find("body/invoice_data")
-        
+
         # VAT number should not exist
         assert inv_data.find("vat_number") is None
         assert inv_data.find("first_name").text == "Marie"
@@ -121,16 +124,16 @@ class TestBuildInvoiceRequestXML:
             }
         }
         correlation_id = "abc-def-123-456"
-        
+
         xml_str = sender.build_invoice_request_xml(
             user_id="user-xyz",
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
-        
+
         root = etree.fromstring(xml_str.encode('utf-8'))
         header = root.find("header")
-        
+
         # Correlation ID should match the original consumption_order message_id
         assert header.find("correlation_id").text == correlation_id
 
@@ -141,15 +144,15 @@ class TestInvoiceRequestXMLValidation:
     def test_invoice_request_xml_validates_against_schema(self):
         """Verify generated XML passes XSD validation."""
         from pathlib import Path
-        
+
         schema_path = Path(__file__).parent.parent / "schemas" / "schema_invoice_request.xsd"
         if not schema_path.exists():
             pytest.skip(f"Schema file not found: {schema_path}")
-        
+
         # Load schema
         schema_doc = etree.parse(str(schema_path))
         schema = etree.XMLSchema(schema_doc)
-        
+
         # Generate valid XML
         invoice_data = {
             "first_name": "Test",
@@ -168,7 +171,7 @@ class TestInvoiceRequestXMLValidation:
             user_id="test-user-123",
             invoice_data=invoice_data
         )
-        
+
         # Validate
         xml_doc = etree.fromstring(xml_str.encode('utf-8'))
         assert schema.validate(xml_doc), f"XML validation failed: {schema.error_log}"
@@ -190,7 +193,7 @@ class TestOrderPollerInvoiceRequestDetection:
         """Process order with to_invoice=True for identified customer."""
         mock_sender.send_typed_message.return_value = True
         mock_sender.get_buffered_order_ids.return_value = []
-        
+
         # Mock Odoo order
         order = {
             'id': 100,
@@ -205,7 +208,7 @@ class TestOrderPollerInvoiceRequestDetection:
             'to_invoice': True,  # Customer requested invoice
             'lines': []
         }
-        
+
         # Mock customer info
         customer_info = {
             'id': 1,
@@ -219,13 +222,13 @@ class TestOrderPollerInvoiceRequestDetection:
             'x_user_id': 'user-123',
             'vat': 'BE0123456789'
         }
-        
+
         # Process the order
         with patch.object(poller, '_process_consumption', return_value=(True, 'msg-123')):
             with patch.object(poller, '_process_invoice_request', return_value=True) as mock_inv:
                 with patch.object(poller, 'get_customer_info', return_value=customer_info):
                     poller.process_order(order)
-                    
+
                     # Verify invoice request was processed
                     mock_inv.assert_called_once()
                     call_args = mock_inv.call_args
@@ -236,7 +239,7 @@ class TestOrderPollerInvoiceRequestDetection:
         """Skip invoice_request for anonymous customers."""
         mock_sender.send_typed_message.return_value = True
         mock_sender.get_buffered_order_ids.return_value = []
-        
+
         # Anonymous order (partner_id = False)
         order = {
             'id': 101,
@@ -251,13 +254,13 @@ class TestOrderPollerInvoiceRequestDetection:
             'to_invoice': True,  # Flag set but ignored for anonymous
             'lines': []
         }
-        
+
         poller.models.execute_kw.return_value = []
-        
+
         with patch.object(poller, '_process_consumption', return_value=(True, 'msg-124')):
             with patch.object(poller, '_process_invoice_request') as mock_inv:
                 poller.process_order(order)
-                
+
                 # Invoice request should NOT be processed for anonymous
                 mock_inv.assert_not_called()
 
@@ -275,19 +278,19 @@ class TestOrderPollerInvoiceRequestDetection:
             'x_user_id': 'e8b27c1d-4f2a-4b3e-9c5f-123456789abc',
             'vat': 'BE0123456789'
         }
-        
+
         order = {'id': 100}
-        
+
         with patch('order_poller.sender') as mock_sender:
             mock_sender.send_typed_message.return_value = True
             mock_sender.build_invoice_request_xml.return_value = "<xml/>"
-            
+
             poller._process_invoice_request(order, customer_info)
-            
+
             # Verify build_invoice_request_xml was called with correct data
             mock_sender.build_invoice_request_xml.assert_called_once()
             call_kwargs = mock_sender.build_invoice_request_xml.call_args[1]
-            
+
             assert call_kwargs['user_id'] == 'e8b27c1d-4f2a-4b3e-9c5f-123456789abc'
             assert call_kwargs['invoice_data']['email'] == 'jan@example.com'
             assert call_kwargs['invoice_data']['address']['street'] == 'Kiekenmarkt'
@@ -311,17 +314,17 @@ class TestInvoiceRequestMessaging:
                 "country": "be"
             }
         }
-        
+
         xml_str = sender.build_invoice_request_xml(
             user_id="user-123",
             invoice_data=invoice_data
         )
-        
+
         # Mock successful publish
         mock_publish.return_value = None
-        
-        result = sender.send_typed_message("invoice_request", xml_str, order_id=100)
-        
+
+        sender.send_typed_message("invoice_request", xml_str, order_id=100)
+
         # Verify published to correct routing key
         assert mock_publish.called
         routing_key = mock_publish.call_args[0][0]
@@ -346,15 +349,15 @@ class TestInvoiceRequestDoD:
             },
             "vat_number": "BE0123456789"
         }
-        
+
         xml_str = sender.build_invoice_request_xml(
             user_id="user-123",
             invoice_data=invoice_data
         )
-        
+
         root = etree.fromstring(xml_str.encode('utf-8'))
         inv_data = root.find("body/invoice_data")
-        
+
         assert inv_data.find("first_name").text == "Test"
         assert inv_data.find("last_name").text == "User"
         assert inv_data.find("email").text == "test@example.com"
