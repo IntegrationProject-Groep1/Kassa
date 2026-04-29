@@ -30,15 +30,18 @@ Offline resilience:
     inside the polling loop to replay any buffered messages.
 """
 
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
 import os
 import time
 import logging
 from pathlib import Path
 import collections
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+
+defusedxml.xmlrpc.monkey_patch()
 
 # Module-level logger — root logging is configured by the caller (main.py).
 # basicConfig() is only called when this module runs as __main__.

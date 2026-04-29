@@ -13,7 +13,7 @@ import os
 import sys
 import time
 import uuid
-import xmlrpc.client
+import xmlrpc.client  # nosec
 import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

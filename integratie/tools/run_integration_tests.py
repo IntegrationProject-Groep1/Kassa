@@ -9,7 +9,7 @@ import sys
 import time
 import uuid
 import pika
-import xmlrpc.client
+import xmlrpc.client  # nosec
 
 # Allow importing config_utils from the integratie/ root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
