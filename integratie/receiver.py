@@ -344,7 +344,23 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
 
 # ── Central message processing ─────────────────────────────────────────────────
 def process_message(ch, method, properties, body):
-    """RabbitMQ delivery callback — called once per message by pika."""
+    """
+    RabbitMQ delivery callback — called once per message by pika.
+
+    Processing pipeline:
+      1. Parse XML             — reject immediately if not valid XML
+      2. Read header           — extract message_id and type
+      3. Idempotency check     — skip if message_id seen before in this session
+      4. XSD validation        — reject if message does not match its schema
+      5. Odoo connection       — authenticate fresh per message (stateless)
+      6. Business logic        — dispatch to the correct process_* function
+      7. ACK + remember ID     — cache message_id only after successful handling
+
+    On any validation or business-logic error:
+      - A system_error is forwarded to kassa.errors via send_error_to_queue.
+      - Validation and business errors use basic_nack(requeue=False).
+      - Odoo connection/auth errors are retried up to MAX_RETRIES.
+    """
     xml_text = body.decode("utf-8")
     related_message_id = None
 
