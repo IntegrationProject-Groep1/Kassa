@@ -9,7 +9,9 @@
 # more than one POS config.  "Cash (Inschrijving)" is therefore created with
 # is_cash_count=False — cash counting is not required for a registration desk.
 
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()
 from typing import Any, cast
 
 from odoo_setup import _extract_company_id

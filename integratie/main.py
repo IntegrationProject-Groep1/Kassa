@@ -12,7 +12,9 @@ import os
 import sys
 import threading
 import time
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()
 
 import receiver
 import sender

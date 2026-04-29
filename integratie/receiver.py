@@ -27,9 +27,11 @@ protection across sessions — that trade-off is intentional for simplicity.
 import os
 import logging
 import pika
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()
 
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
 

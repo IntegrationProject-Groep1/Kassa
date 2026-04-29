@@ -14,7 +14,9 @@
 #   8. ensure_demo_products   – create demo products linked to the categories and taxes
 
 import time
-import xmlrpc.client
+import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
+defusedxml.xmlrpc.monkey_patch()
 from typing import Any
 
 import requests
