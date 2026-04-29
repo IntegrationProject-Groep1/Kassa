@@ -56,7 +56,7 @@ ODOO_USER = get_env("ODOO_USER")
 ODOO_PASS = get_env("ODOO_PASS")
 
 QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
-DLX_NAME = os.environ.get("RABBIT_DLX", "kassa.dlx")
+DLX_NAME = os.environ.get("RABBIT_DLX", EXCHANGE_NAME)
 DLQ_NAME = os.environ.get("RABBIT_DLQ", "kassa.incoming.dlq")
 DLQ_ROUTING_KEY = os.environ.get("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
 
@@ -459,13 +459,15 @@ def start_listening():
 
     try:
         setup_exchange(channel)
-        channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
+        dead_letter_exchange = DLX_NAME
+        if DLX_NAME != EXCHANGE_NAME:
+            channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
         channel.queue_declare(queue=DLQ_NAME, durable=True)
-        channel.queue_bind(exchange=DLX_NAME, queue=DLQ_NAME, routing_key=DLQ_ROUTING_KEY)
+        channel.queue_bind(exchange=dead_letter_exchange, queue=DLQ_NAME, routing_key=DLQ_ROUTING_KEY)
 
         channel.queue_declare(
             queue=QUEUE_NAME, durable=True,
-            arguments={"x-dead-letter-exchange": DLX_NAME, "x-dead-letter-routing-key": DLQ_ROUTING_KEY}
+            arguments={"x-dead-letter-exchange": dead_letter_exchange, "x-dead-letter-routing-key": DLQ_ROUTING_KEY}
         )
 
         channel.queue_declare(
