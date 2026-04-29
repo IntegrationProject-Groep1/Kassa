@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import time
 import xmlrpc.client  # nosec
-from typing import Any
+from typing import Any, cast
 
 import defusedxml.xmlrpc
 import requests
@@ -331,7 +331,7 @@ def ensure_payment_methods(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pas
     company_id = _extract_company_id(user_info)
 
     def _ensure_method(name: str, is_cash_count: bool, extra_vals: dict[str, Any] | None = None) -> int:
-        domain = [["name", "=", name]]
+        domain: list[list[str | int | bool]] = [["name", "=", name]]
         if company_id is not None:
             domain.append(["company_id", "=", company_id])
 
@@ -346,20 +346,21 @@ def ensure_payment_methods(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pas
             {"fields": ["id"], "limit": 1},
         )
         if records:
-            return records[0]["id"]
+            return cast(int, records[0]["id"])
 
         vals: dict[str, Any] = {"name": name, "is_cash_count": is_cash_count}
         if extra_vals:
             vals.update(extra_vals)
         if company_id is not None:
             vals["company_id"] = company_id
-        return _rpc(models, odoo_db, uid, odoo_pass, "pos.payment.method", "create", [vals])
+        return cast(int, _rpc(models, odoo_db, uid, odoo_pass, "pos.payment.method", "create", [vals]))
 
-    return [
+    result: list[int] = [
         _ensure_method("Cash", True),
         _ensure_method("Card", False),
         _ensure_method("Badge Wallet", False, {"split_transactions": True}),
     ]
+    return result
 
 
 def ensure_demo_products(
