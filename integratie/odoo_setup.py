@@ -128,14 +128,23 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         return False
 
     module_id = module_ids[0]
-    module_state = _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "read", [[module_id]], {"fields": ["state"]})
+    module_state = _rpc(
+        models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
+        [[module_id]], {"fields": ["state"]}
+    )
     if module_state and module_state[0].get("state") == "installed":
         return True
 
-    _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "button_immediate_install", [[module_id]])
+    _rpc(
+        models, odoo_db, uid, odoo_pass, "ir.module.module",
+        "button_immediate_install", [[module_id]]
+    )
     deadline = time.time() + 60
     while time.time() < deadline:
-        module_state = _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "read", [[module_id]], {"fields": ["state"]})
+        module_state = _rpc(
+            models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
+            [[module_id]], {"fields": ["state"]}
+        )
         if module_state and module_state[0].get("state") == "installed":
             return True
         time.sleep(2)
@@ -162,7 +171,10 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
         if not module_ids:
             continue
         module_id = module_ids[0]
-        module_state = _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "read", [[module_id]], {"fields": ["state"]})
+        module_state = _rpc(
+            models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
+            [[module_id]], {"fields": ["state"]}
+        )
         if not module_state or module_state[0].get("state") != "installed":
             _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "button_immediate_install", [[module_id]])
     return True
@@ -246,7 +258,14 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             odoo_pass,
             "account.tax",
             "search_read",
-            [[["amount", "=", rate], ["type_tax_use", "=", "sale"], ["amount_type", "=", "percent"], ["price_include", "=", False]]],
+            [
+                [
+                    ["amount", "=", rate],
+                    ["type_tax_use", "=", "sale"],
+                    ["amount_type", "=", "percent"],
+                    ["price_include", "=", False]
+                ]
+            ],
             {"fields": ["id"], "limit": 1},
         )
         if taxes:
@@ -270,7 +289,10 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
         )
 
     if company_id:
-        _rpc(models, odoo_db, uid, odoo_pass, "res.company", "write", [[company_id], {"tax_calculation_rounding_method": "round_per_line"}])
+        _rpc(
+            models, odoo_db, uid, odoo_pass, "res.company", "write",
+            [[company_id], {"tax_calculation_rounding_method": "round_per_line"}]
+        )
 
     return tax_map
 
@@ -397,7 +419,10 @@ def ensure_demo_products(
 def load_demo_data(odoo_db: str, uid: int, odoo_pass: str, models: OdooModelsProxy) -> bool:
     print("Loading demo data...", flush=True)
 
-    existing_partner = _rpc(models, odoo_db, uid, odoo_pass, "res.partner", "search", [[ ["x_user_id", "=", "demo-user-123"] ]])
+    existing_partner = _rpc(
+        models, odoo_db, uid, odoo_pass, "res.partner", "search",
+        [[["x_user_id", "=", "demo-user-123"]]]
+    )
     if not existing_partner:
         _rpc(models, odoo_db, uid, odoo_pass, "res.partner", "create", [{
             "name": "John Doe (Demo)",
@@ -418,8 +443,19 @@ def load_demo_data(odoo_db: str, uid: int, odoo_pass: str, models: OdooModelsPro
 
     for name, ref, price, tax in products:
         try:
-            existing = _rpc(models, odoo_db, uid, odoo_pass, "product.template", "search_read", [[ ["default_code", "=", ref] ]], {"fields": ["id"], "limit": 1})
-            tax_ids = _rpc(models, odoo_db, uid, odoo_pass, "account.tax", "search", [[ ["amount", "=", tax], ["type_tax_use", "=", "sale"], ["amount_type", "=", "percent"], ["price_include", "=", False] ]])
+            existing = _rpc(
+                models, odoo_db, uid, odoo_pass, "product.template", "search_read",
+                [[["default_code", "=", ref]]], {"fields": ["id"], "limit": 1}
+            )
+            tax_ids = _rpc(
+                models, odoo_db, uid, odoo_pass, "account.tax", "search",
+                [
+                    [["amount", "=", tax],
+                     ["type_tax_use", "=", "sale"],
+                     ["amount_type", "=", "percent"],
+                     ["price_include", "=", False]]
+                ]
+            )
             tax_id = tax_ids[0] if tax_ids else False
 
             if not existing:
@@ -432,7 +468,10 @@ def load_demo_data(odoo_db: str, uid: int, odoo_pass: str, models: OdooModelsPro
                     "available_in_pos": True,
                 }])
             else:
-                _rpc(models, odoo_db, uid, odoo_pass, "product.template", "write", [[existing[0]["id"]], {"list_price": price, "available_in_pos": True}])
+                _rpc(
+                    models, odoo_db, uid, odoo_pass, "product.template", "write",
+                    [[existing[0]["id"]]], {"list_price": price, "available_in_pos": True}
+                )
         except Exception as exc:
             print(f"Could not create/update product '{name}': {exc}", flush=True)
 
