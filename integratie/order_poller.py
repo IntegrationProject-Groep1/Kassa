@@ -40,6 +40,7 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+from config_utils import get_env
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -74,10 +75,10 @@ class OrderPoller:
         insertion order which makes the LRU eviction in process_order()
         deterministic (oldest entry removed first).
         """
-        self.odoo_url = os.environ.get("ODOO_URL")
-        self.odoo_db = os.environ.get("ODOO_DB")
-        self.odoo_user = os.environ.get("ODOO_USER")
-        self.odoo_pass = os.environ.get("ODOO_PASS")
+        self.odoo_url = get_env("ODOO_URL")
+        self.odoo_db = get_env("ODOO_DB")
+        self.odoo_user = get_env("ODOO_USER")
+        self.odoo_pass = get_env("ODOO_PASS")
 
         self.odoo_uid = None
         self.models = None

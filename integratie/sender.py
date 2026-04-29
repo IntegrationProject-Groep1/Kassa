@@ -241,8 +241,7 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        # type: ignore[attr-defined]
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
             global _connection, _channel
             _connection = None
             _channel = None

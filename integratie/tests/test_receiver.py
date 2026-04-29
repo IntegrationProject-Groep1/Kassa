@@ -434,9 +434,13 @@ class TestProcessMessage:
         mock_odoo.side_effect = ConnectionError("Odoo down")
         body = _xml_bytes("badge_scanned", "<badge_id>B1</badge_id><location>bar</location>")
         receiver.process_message(ch, method, None, body)
-        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
-        mock_send_error.assert_called_once()
-        assert mock_send_error.call_args[0][0] == "odoo_api_error"
+
+        # In the new robust receiver, we basic_publish to retry queue and basic_ack the original
+        ch.basic_publish.assert_called_once()
+        routing_key = ch.basic_publish.call_args[1]["routing_key"]
+        assert "retry" in routing_key
+        ch.basic_ack.assert_called_once_with(delivery_tag=42)
+        ch.basic_nack.assert_not_called()
 
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
@@ -451,9 +455,9 @@ class TestProcessMessage:
 
         receiver.process_message(ch, method, None, body)
 
-        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
+        # Should NOT be in seen_message_ids yet (only after successful Odoo write)
         assert "msg-fail-001" not in receiver.seen_message_ids
-        mock_send_error.assert_called_once()
+        ch.basic_ack.assert_called_once()
 
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")

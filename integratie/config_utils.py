@@ -13,29 +13,28 @@ Public API:
 import os
 
 
-def get_env(name: str, default: str | None = None) -> str | None:
-    """
-    Read a single environment variable, returning `default` if it is unset or blank.
+def _clean_env_value(value: str | None) -> str | None:
+    """Trim whitespace and remove matching wrapping quotes."""
+    if value is None:
+        return None
 
-    This is the lightweight variant of require_env() — it never raises, so it
-    is suitable for optional settings and tool scripts where a missing variable
-    should fall back gracefully rather than abort.
-    """
-    value = os.environ.get(name)
-    if value is None or not value.strip():
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1]
+    return cleaned
+
+
+def get_env(name: str, default: str | None = None) -> str | None:
+    """Read a single environment variable, returning default if it is unset or blank."""
+    value = _clean_env_value(os.environ.get(name))
+    if value is None or not value:
         return default
     return value
 
 
 def parse_rabbit_port(default: int = 5672) -> int:
-    """
-    Read RABBIT_PORT from the environment and return it as an integer.
-
-    Falls back to `default` (5672) if the variable is not set or contains
-    a value that cannot be converted to an integer (e.g. an empty string
-    or a typo like "amqp").
-    """
-    value = os.environ.get("RABBIT_PORT")
+    """Read RABBIT_PORT from the environment and return it as an integer."""
+    value = get_env("RABBIT_PORT")
     try:
         return int(value) if value else default
     except ValueError:
@@ -43,23 +42,13 @@ def parse_rabbit_port(default: int = 5672) -> int:
 
 
 def require_env(*names: str) -> dict[str, str]:
-    """
-    Return a dict of the requested environment variables.
-
-    Raises ValueError listing every variable that is either unset or blank,
-    so the caller gets one error with the full list rather than failing on
-    the first missing variable.
-
-    Example:
-        cfg = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
-        uid = common.authenticate(cfg["ODOO_DB"], ...)
-    """
+    """Return a dict of the requested environment variables."""
     values: dict[str, str] = {}
     missing: list[str] = []
 
     for name in names:
-        value = os.environ.get(name)
-        if value is None or not value.strip():
+        value = get_env(name)
+        if value is None:
             missing.append(name)
         else:
             values[name] = value
