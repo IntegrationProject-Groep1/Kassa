@@ -5,12 +5,11 @@
 # Execution is orchestrated by main.py.
 
 import time
-import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-from typing import Any, List, Dict, Optional, Tuple, Union
+from typing import Any
 
 import requests
-from typing_utils import OdooModelsProxy, OdooRecord
+from typing_utils import OdooModelsProxy
 
 defusedxml.xmlrpc.monkey_patch()
 
