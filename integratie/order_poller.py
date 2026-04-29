@@ -37,11 +37,9 @@ import time
 import logging
 from pathlib import Path
 import collections
-from typing import Any, List, Dict, Optional, Tuple, Union, OrderedDict as OrderedDictType
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
-from typing_utils import OdooModelsProxy, OdooRecord
 
 defusedxml.xmlrpc.monkey_patch()
 
