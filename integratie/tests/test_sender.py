@@ -80,6 +80,16 @@ class TestSenderBuffer:
         assert len(entries) == 1
         assert entries[0]["routing_key"] == "r.2"
 
+    @patch("sender._publish_or_raise")
+    def test_send_message_no_buffer_on_fail(self, mock_send, tmp_buffer):
+        mock_send.side_effect = Exception("Broker offline")
+
+        # Send with buffer_on_fail=False
+        result = sender.send_message("test.key", "<xml/>", buffer_on_fail=False)
+
+        assert result is False
+        assert not tmp_buffer.exists()  # Should NOT have been buffered
+
 
 class TestSenderXMLBuilders:
 
@@ -131,10 +141,10 @@ class TestSenderPublishing:
     def test_send_typed_message_routes_correctly(self, mock_send, mock_validate):
         # Known type => predefined routing key
         sender.send_typed_message("refund_processed", "<xml/>")
-        mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>", order_id=None)
+        mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>", order_id=None, buffer_on_fail=True)
 
         mock_send.reset_mock()
 
         # Unknown type => kassa.misc.{type}
         sender.send_typed_message("unknown_type", "<xml/>")
-        mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>", order_id=None)
+        mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>", order_id=None, buffer_on_fail=True)
