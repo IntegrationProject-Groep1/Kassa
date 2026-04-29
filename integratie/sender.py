@@ -375,7 +375,12 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
             f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
 
 
-def send_typed_message(msg_type: str, message_xml: str, order_id: int | None = None, buffer_on_fail: bool = True) -> bool:
+def send_typed_message(
+    msg_type: str,
+    message_xml: str,
+    order_id: int | None = None,
+    buffer_on_fail: bool = True
+) -> bool:
     """Validate against XSD then send with automatic routing key selection based on type."""
     try:
         _validate_outgoing(msg_type, message_xml)
