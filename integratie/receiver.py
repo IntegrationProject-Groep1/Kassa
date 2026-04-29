@@ -34,7 +34,7 @@ from collections import OrderedDict
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
-from sender import send_error_to_queue, flush_buffer, now_utc
+from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -549,6 +549,10 @@ def start_listening():
     """
     conn = connect_to_rabbitmq()
     channel = conn.channel()
+
+    # Ensure the main exchange exists and has the correct type (topic)
+    # The sender owns the declaration, so we reuse its setup logic.
+    setup_exchange(channel)
 
     # --- DLQ Setup ---
     try:
