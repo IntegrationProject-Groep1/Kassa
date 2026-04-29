@@ -576,9 +576,9 @@ def start_listening():
             }
         )
 
-        # 5. Bind the main queue to the topic exchange.
-        # This ensures messages published to EXCHANGE_NAME with QUEUE_NAME as routing key reach us.
-        channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=QUEUE_NAME)
+        # 5. Bind the main queue to the topic exchange using a wildcard.
+        # This ensures all sub-topics under QUEUE_NAME (e.g. kassa.incoming.new_registration) reach us.
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
     except pika.exceptions.ChannelClosedByBroker as exc:
         if getattr(exc, "reply_code", None) == 406:
