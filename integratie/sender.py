@@ -56,21 +56,12 @@ class BufferFullError(RuntimeError):
 logger = logging.getLogger(__name__)
 
 
-def _as_bool(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 # Configuration
 RABBIT_HOST = os.environ.get("RABBIT_HOST")
 RABBIT_PORT = parse_rabbit_port()
 RABBIT_USER = os.environ.get("RABBIT_USER")
 RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_AUTO_SETUP_TOPOLOGY = _as_bool(
-    os.environ.get("RABBIT_AUTO_SETUP_TOPOLOGY"), default=False
-)
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
 # Routing key mapping
@@ -87,24 +78,6 @@ ROUTING_KEYS = {
     "system_error": "kassa.errors",
 }
 
-# Optional queue topology auto-setup (useful when CRM consumers are not online yet)
-OUTBOUND_QUEUE_BINDINGS = {
-    "kassa.payments.consumption": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_CONSUMPTION", "kassa.out.payments.consumption"
-    ),
-    "kassa.payments.registration": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_REGISTRATION", "kassa.out.payments.registration"
-    ),
-    "kassa.payments.refund": os.environ.get(
-        "RABBIT_QUEUE_PAYMENTS_REFUND", "kassa.out.payments.refund"
-    ),
-    "kassa.payments.badge": os.environ.get("RABBIT_QUEUE_PAYMENTS_BADGE", "kassa.out.payments.badge"),
-    "kassa.payments.invoice": os.environ.get("RABBIT_QUEUE_PAYMENTS_INVOICE", "kassa.out.payments.invoice"),
-    "kassa.frontend.payment": os.environ.get("RABBIT_QUEUE_FRONTEND_PAYMENT", "kassa.out.frontend.payment"),
-    "kassa.frontend.wallet": os.environ.get("RABBIT_QUEUE_FRONTEND_WALLET", "kassa.out.frontend.wallet"),
-    "kassa.heartbeat": os.environ.get("RABBIT_QUEUE_HEARTBEAT", "kassa.out.heartbeat"),
-    "kassa.errors": os.environ.get("RABBIT_QUEUE_ERRORS", "kassa.out.errors"),
-}
 
 # Buffer configuration
 BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
@@ -278,37 +251,16 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
 
 def setup_exchange(channel):
     """
-    Declare the topic exchange and, optionally, the outbound queues.
+    Declare the topic exchange.
 
     The exchange declaration is idempotent — calling it when the exchange
-    already exists is harmless. Queue creation only runs when
-    RABBIT_AUTO_SETUP_TOPOLOGY=true, which is useful in local development
-    where no other team's consumer has pre-created the queues. In production
-    the infra team owns the topology.
+    already exists is harmless.
     """
     channel.exchange_declare(
         exchange=EXCHANGE_NAME,
         exchange_type="topic",
         durable=True
     )
-
-    if not RABBIT_AUTO_SETUP_TOPOLOGY:
-        return
-
-    for routing_key, queue_name in OUTBOUND_QUEUE_BINDINGS.items():
-        if not queue_name:
-            continue
-        try:
-            channel.queue_declare(queue=queue_name, durable=True)
-            channel.queue_bind(
-                exchange=EXCHANGE_NAME,
-                queue=queue_name,
-                routing_key=routing_key,
-            )
-        except Exception as exc:
-            logger.warning(
-                f"⚠️  Could not declare/bind queue '{queue_name}' for '{routing_key}': {exc}"
-            )
 
 
 def send_message(routing_key: str, message_xml: str, order_id: int | None = None, buffer_on_fail: bool = True) -> bool:
