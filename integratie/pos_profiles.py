@@ -11,10 +11,11 @@
 
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()
 from typing import Any, cast
 
 from odoo_setup import _extract_company_id
+
+defusedxml.xmlrpc.monkey_patch()
 
 # Each payment method entry is a dict with:
 #   "name"              – exact Odoo name to look up

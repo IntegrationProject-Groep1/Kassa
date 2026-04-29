@@ -16,10 +16,11 @@
 import time
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()
 from typing import Any
 
 import requests
+
+defusedxml.xmlrpc.monkey_patch()
 
 
 def _rpc(models: xmlrpc.client.ServerProxy, *args: Any, **kwargs: Any) -> Any:

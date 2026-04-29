@@ -32,7 +32,6 @@ Offline resilience:
 
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()
 import os
 import time
 import logging
@@ -41,6 +40,8 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+
+defusedxml.xmlrpc.monkey_patch()
 
 # Module-level logger — root logging is configured by the caller (main.py).
 # basicConfig() is only called when this module runs as __main__.

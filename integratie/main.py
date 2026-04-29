@@ -14,7 +14,6 @@ import threading
 import time
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()
 
 import receiver
 import sender
@@ -31,6 +30,8 @@ from odoo_setup import (
     ensure_payment_methods,
     ensure_demo_products,
 )
+
+defusedxml.xmlrpc.monkey_patch()
 
 
 def _run_receiver() -> None:

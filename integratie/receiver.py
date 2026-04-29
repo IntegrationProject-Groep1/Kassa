@@ -29,14 +29,14 @@ import logging
 import pika
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-defusedxml.xmlrpc.monkey_patch()
-
 import defusedxml.ElementTree as ET
 from collections import OrderedDict
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
 from sender import send_error_to_queue, flush_buffer, now_utc
+
+defusedxml.xmlrpc.monkey_patch()
 
 
 logger = logging.getLogger(__name__)
