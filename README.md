@@ -1,223 +1,181 @@
-# POS Integration — Odoo POS
+<div align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Odoo_logo.svg" alt="Odoo Logo" width="120" />
 
-> *Generic reusable event Point of Sale system built on Odoo POS.*
+  # Kassa (POS Integration)
+  
+  **A high-performance, resilient integration bridge between Odoo POS and RabbitMQ ecosystem.**
 
-![Odoo](https://img.shields.io/badge/Odoo_Point_Of_Sale-714B67?style=for-the-badge&logo=odoo&logoColor=white)
-![Python](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+  [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+  [![Odoo](https://img.shields.io/badge/Odoo-16%2F17-714B67?style=for-the-badge&logo=odoo&logoColor=white)](https://www.odoo.com/)
+  [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com/)
+  [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+  [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+</div>
 
-> Official repository of Team POS (Kassa) for the Integration Project Desideriushogeschool 2026.
-> This project manages the Point of Sale (POS) system and handles asynchronous communication with the CRM (Salesforce), Frontend (Drupal), Monitoring System (Elastic), and IoT Badge Scanners via RabbitMQ.
+---
+
+## 📖 Overview
+
+The **Kassa Integration** project serves as the central nervous system for Team POS at Desideriushogeschool 2026. It facilitates seamless, asynchronous communication between Odoo 16/17 and external entities like CRM (Salesforce), Frontend (Drupal), and IoT Badge Scanners.
+
+Built with a focus on **offline resilience** and **event-driven architecture**, this system ensures that retail operations continue uninterrupted even during network instability, buffering critical transaction data for later synchronization.
 
 ---
 
 ## 📋 Table of Contents
 
-- [System Architecture](#system-architecture)
-- [Message Flows & Routing](#message-flows--routing)
-- [Documentation & Data Mapping](#documentation--data-mapping)
-- [Local Development & Setup](#local-development--setup)
-- [Repository Structure](#repository-structure)
-- [CI/CD & Deployment](#cicd--deployment)
-- [Team Roles](#team-roles)
+- [✨ Features](#-features)
+- [🏗️ Architecture](#-architecture)
+- [🚀 Getting Started](#-getting-started)
+- [💻 Usage](#-usage)
+- [📁 Repository Structure](#-repository-structure)
+- [🤝 Contributing](#-contributing)
+- [📜 License](#-license)
 
 ---
 
-## 🏗️ System Architecture
+## ✨ Features
+
+- **🛡️ Offline Resilience**: Integrated `outbox.json` buffering system ensures no message is ever lost when RabbitMQ is unreachable.
+- **🆔 Badge Integration**: Automated customer selection and badge scanning through Odoo's `bus` service.
+- **🔞 Compliance Checks**: Automated age restriction pop-ups (e.g., for alcohol) directly in the POS frontend.
+- **🔄 Bidirectional Sync**: 
+  - **Receiver**: Real-time customer profile updates from CRM.
+  - **Poller**: Automated extraction of POS orders for external reporting.
+- **✅ Message Validation**: Strict XSD schema validation for all incoming and outgoing XML messages.
+
+---
+
+## 🏗️ Architecture
+
+The integration leverages a modular Python service that interfaces with Odoo via XML-RPC and connects to the broader ecosystem through a dedicated RabbitMQ exchange.
 
 ```mermaid
-flowchart LR
-    subgraph Incoming
+graph TD
+    subgraph "External Ecosystem"
         CRM[Salesforce CRM]
         IoT[IoT Badge Scanners]
+        Frontend[Drupal Frontend]
     end
 
-    RMQ{RabbitMQ\nkassa.exchange}
-
-    subgraph Team POS
-        PY[Python POS Integration\nsender · receiver · poller]
-        ODOO[(Odoo POS\n+ PostgreSQL)]
+    subgraph "Kassa Integration Service"
+        Receiver[Receiver Thread]
+        Poller[Order Poller]
+        Sender[Resilient Sender]
+        Outbox[(Local Outbox)]
     end
 
-    subgraph Outgoing
-        CRM2[Salesforce CRM]
-        DRUPAL[Drupal Frontend]
-        ELASTIC[Elastic Monitoring]
+    subgraph "Core POS"
+        Odoo[Odoo 16/17]
+        DB[(PostgreSQL)]
     end
 
-    CRM -- "new_registration\nprofile_update\ncancel_registration" --> RMQ
-    IoT -- "badge_scanned" --> RMQ
-    RMQ -- "kassa.incoming" --> PY
-    PY <-->|XML-RPC| ODOO
-    PY -- "consumption_order\npayment_registered\nbadge_assigned\ninvoice_request\nrefund_processed" --> RMQ
-    RMQ -- "kassa.payments.*" --> CRM2
-    RMQ -- "kassa.frontend.*" --> DRUPAL
-    RMQ -- "kassa.errors" --> ELASTIC
+    CRM -- "Profile Updates" --> RabbitMQ((RabbitMQ Exchange))
+    IoT -- "Badge Events" --> RabbitMQ
+    
+    RabbitMQ -- "Incoming XML" --> Receiver
+    Receiver -- "XML-RPC" --> Odoo
+    
+    Odoo -- "Orders" --> Poller
+    Poller -- "Buffering" --> Sender
+    Sender -. "Retry Logic" .-> Outbox
+    Sender -- "Outgoing XML" --> RabbitMQ
+    
+    RabbitMQ -- "Order Status" --> CRM
+    RabbitMQ -- "Wallet Updates" --> Frontend
+    
+    Odoo <--> DB
 ```
 
-The Python POS Integration container communicates with Odoo exclusively via the built-in XML-RPC API. Asynchronous communication with external systems operates strictly through structured XML messages over RabbitMQ.
-
-**Core Principles:**
-
-- **Loosely Coupled:** Systems do not communicate directly with each other — everything flows through `kassa.exchange` (topic exchange).
-- **Offline-first buffering:** If RabbitMQ is down, messages are stored locally in `outbox.json` (Docker named volume `outbox-data`) and automatically retried upon reconnection via `flush_buffer()`. The POS continues selling even without network connectivity.
-- **Local Odoo Cache:** When the CRM is unreachable, the POS continues operating on locally cached customer profiles in Odoo. Incoming messages are processed once the connection is restored.
-- **Error Handling:** Invalid messages are not retried but caught as `system_error` and routed to `kassa.errors`. The original message is then rejected with `basic_nack(requeue=false)` to safely land in the Dead Letter Queue (DLQ) for analysis.
-- **Heartbeats:** Managed by a separate monitoring sidecar container — not by the POS integration itself.
-
 ---
 
-## 📨 Message Flows & Routing
+## 🚀 Getting Started
 
-### Incoming (`kassa.incoming`)
+### Prerequisites
 
-| Type | From | Action |
-| :--- | :--- | :--- |
-| `new_registration` | CRM | Create or update customer profile in Odoo |
-| `profile_update` | CRM | Update customer profile in Odoo |
-| `cancel_registration` | CRM | Deactivate customer profile in Odoo |
-| `badge_scanned` | IoT | Look up badge, load customer profile in POS |
+- **Docker & Docker Compose**
+- **Python 3.12+** (for local development/testing)
+- **Git**
 
-### Outgoing (`kassa.exchange`)
+### Installation
 
-| Type | Routing key | To |
-| :--- | :--- | :--- |
-| `consumption_order` | `kassa.payments.consumption` | Salesforce CRM |
-| `payment_registered` | `kassa.payments.consumption` / `kassa.payments.registration` | Salesforce CRM |
-| `invoice_request` | `kassa.payments.invoice` | Salesforce CRM |
-| `badge_assigned` | `kassa.payments.badge` | Salesforce CRM |
-| `refund_processed` | `kassa.payments.refund` | Salesforce CRM |
-| `payment_status` | `kassa.frontend.payment` | Drupal |
-| `wallet_balance_update` | `kassa.frontend.wallet` | Drupal |
-| `system_error` | `kassa.errors` | Elastic |
-
-> The Controlroom team can passively monitor all POS messages via the wildcard binding `kassa.#`.
-
----
-
-## 📚 Documentation & Data Mapping
-
-Our complete architecture, data flows, and XML standards are documented in the `documentatie/` directory:
-
-| File | Contents |
-| :--- | :--- |
-| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all scripts with code examples, Docker setup, CI/CD |
-| [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologies, Python libraries, environment variables, architecture constraints |
-| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | Exact XML examples and XSD schemas per flow |
-| [Datamapping_Kassa.md](documentatie/Datamapping_Kassa.md) | Field mapping from Odoo to XML per message type, enum values |
-| [User_Stories_Kassa.md](documentatie/User_Stories_Kassa.md) | MVP features, BDD scenarios, acceptance criteria, Definition of Done |
-| [Vragen_Kassa.md](documentatie/Vragen_Kassa.md) | Decision log — all technical and functional choices explained |
-
-*(Note: The actual documentation files are currently written in Dutch).*
-
----
-
-## 💻 Local Development & Setup
-
-### Requirements
-
-- Docker & Docker Compose
-- Git
-
-### Startup
-
-1. **Configure Environment:** Copy `.env.example` to `.env` and fill in the credentials.
-
+1. **Clone the repository**:
    ```bash
-   cp .env.example .env
+   git clone https://github.com/JeremyLuyckfasseel/Kassa.git
+   cd Kassa
    ```
 
-2. **Start Stack:**
+2. **Configure Environment**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your local Odoo and RabbitMQ credentials
+   ```
 
+3. **Launch the stack**:
    ```bash
    docker-compose up -d
    ```
 
-3. **Connection Test:** Validate the XML-RPC connection to Odoo:
+---
 
-   ```bash
-   docker-compose exec kassa-integratie python tools/ping_odoo.py
-   ```
+## 💻 Usage
 
-   *Expected output:* `✅ Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.` *(Authentication successful! Scripts can safely write data.)*
-
-### Useful Commands
-
-| Command | What it does |
-| :--- | :--- |
-| `docker-compose up -d` | Start all containers in the background |
-| `docker-compose down` | Stop and remove all containers |
-| `docker-compose logs -f kassa-integratie` | Live logs from the integration container |
-| `docker-compose logs -f odoo` | Live logs from Odoo |
-| `docker-compose exec kassa-integratie bash` | Open a shell in the integration container |
-
-### Run Scripts
-
+### Connection Diagnostic
+Validate that the integration service can authenticate with Odoo:
 ```bash
-docker-compose exec kassa-integratie python integratie/tools/test_sender.py
+docker-compose exec kassa-integratie python tools/ping_odoo.py
 ```
 
-### ⚠️ Known Pitfall — Odoo webassets 500 after restart
-
-If Odoo POS throws a 500 error on `/web/assets/...` after a container restart, run:
-
+### Manual Buffer Flush
+If messages are stored in the outbox due to connection issues, trigger a manual flush:
 ```bash
-docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"
-docker-compose restart kassa-web
+docker-compose exec kassa-integratie python -c "import sender; sender.flush_buffer()"
 ```
 
-See §3.2.1 of the Technical Guide for a comprehensive explanation.
+### Testing the Flow
+Simulate an incoming badge scan or order creation using the built-in tools:
+```bash
+docker-compose exec kassa-integratie python tools/create_test_order.py
+```
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
-📦 Kassa-dev
- ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
- ┣ 📂 integratie/            # Python integration scripts
- ┃ ┣ 📂 schemas/             # XSD validation files
- ┃ ┣ 📂 tests/               # Pytest files
- ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
- ┃ ┣ 📜 main.py              # Entrypoint — starts receiver + poller
- ┃ ┣ 📜 receiver.py          # Processes incoming RabbitMQ messages
- ┃ ┣ 📜 sender.py            # Builds and dispatches outgoing XML messages
- ┃ ┗ 📜 poller.py            # Polls Odoo for new POS orders, triggers flows
- ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
- ┣ 📜 .env.example           # Example environment variables
- ┣ 📜 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
- ┗ 📜 README.md
+📦 Kassa
+ ┣ 📂 addons/                # Custom Odoo modules (kassa_pos_custom)
+ ┣ 📂 integratie/            # Python integration service
+ ┃ ┣ 📂 schemas/             # XML XSD validation schemas
+ ┃ ┣ 📂 tests/               # Unit and Integration tests
+ ┃ ┣ 📂 tools/               # Diagnostic and utility scripts
+ ┃ ┣ 📜 main.py              # Service entrypoint
+ ┃ ┣ 📜 receiver.py          # RabbitMQ message consumer
+ ┃ ┣ 📜 sender.py            # Resilient message publisher
+ ┃ ┗ 📜 order_poller.py      # Odoo order monitor
+ ┣ 📂 k8s/                   # Kubernetes deployment manifests
+ ┣ 📜 docker-compose.yml     # Local orchestration
+ ┗ 📜 README.md              # You are here!
 ```
 
 ---
 
-## 🔄 CI/CD & Deployment
+## 🤝 Contributing
 
-The GitHub Actions pipeline is triggered automatically upon a push to `dev` or `prod`:
+We welcome contributions from the team! 
 
-| Step | Trigger | Action |
-| :--- | :--- | :--- |
-| **Tests** | push to `dev` or `prod` | `pytest tests/ -v` |
-| **Deploy** | push to `prod` | SSH deploy to server via `docker-compose up -d --build` |
-
-### Branch Strategy
-
-| Branch | Purpose |
-| :--- | :--- |
-| `main` | Stable, approved code |
-| `prod` | Production code — triggers deployment |
-| `dev` | Active development |
-| `feature/...` | New features |
-| `fix/...` | Bug fixes |
+1. Create a `feature/` or `fix/` branch.
+2. Ensure all tests pass: `pytest integratie/tests/`.
+3. Submit a Pull Request for review.
 
 ---
 
-## 👥 Team
+## 📜 License
 
-| Role | Name |
-| :--- | :--- |
-| **Team Lead** | Jeremy Luyckfasseel |
-| **Developer** | Ahmed Takadoumi |
-| **Developer** | Zeno Van Neygen |
+This project is licensed under the **LGPL-3** License. See the [addons/kassa_pos_custom/__manifest__.py](addons/kassa_pos_custom/__manifest__.py) for details.
+
+---
+
+<div align="center">
+  Built with ❤️ by Team POS - Integration Project 2026
+</div>
