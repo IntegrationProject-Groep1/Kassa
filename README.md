@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:777777&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:ffffff&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
@@ -58,7 +58,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 ---
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:333333&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:ffffff&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
 The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
@@ -216,23 +216,23 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 <div align="center">
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:333333&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:ffffff&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
 </p>
 
 <br/>
 
 <p align="center">
   <a href="https://github.com/Jeremy-Luyckfasseel">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=TEAM%20LEAD&color=4B0082&height=200&fontSize=55&fontColor=ffffff&fontAlignY=65&desc=TEAM%20LEAD&descAlignY=35&descSize=20" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Jeremy%20Luyckfasseel&color=4B0082&height=200&fontSize=55&fontColor=ffffff&fontAlignY=65&desc=TEAM%20LEAD&descAlignY=35&descSize=20" />
   </a>
 </p>
 <p align="center">
   <a href="https://github.com/AhmedTakadoumi">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=CORE%20DEVELOPER&color=3776AB&height=160&fontSize=35&fontColor=ffffff&fontAlignY=65&desc=CORE%20DEVELOPER&descAlignY=35&descSize=15" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Ahmed%20Takadoumi&color=3776AB&height=160&fontSize=35&fontColor=ffffff&fontAlignY=65&desc=CORE%20DEVELOPER&descAlignY=35&descSize=15" />
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/zenovn">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=CORE%20DEVELOPER&color=00BFFF&height=160&fontSize=35&fontColor=ffffff&fontAlignY=65&desc=CORE%20DEVELOPER&descAlignY=35&descSize=15" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Zeno%20Van%20Neygen&color=00BFFF&height=160&fontSize=35&fontColor=ffffff&fontAlignY=65&desc=CORE%20DEVELOPER&descAlignY=35&descSize=15" />
   </a>
 </p>
 
@@ -247,5 +247,5 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 </div>
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:777777&height=150&section=footer" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:ffffff&height=150&section=footer" />
 </p>
