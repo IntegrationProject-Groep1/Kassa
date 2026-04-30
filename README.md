@@ -58,7 +58,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 ---
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=10,4B0082,100:00BFFF&height=80&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:875A7B,50:3776AB,100:FF6600&height=120&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
 The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
