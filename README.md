@@ -6,9 +6,9 @@
 <br/>
 
 <!-- Status & Tech Badges -->
+[![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
+[![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
 [![Version](https://img.shields.io/badge/Version-1.0.0-3b82f6?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa)
-[![Build Status](https://img.shields.io/badge/Build-Passing-22c55e?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/actions)
-[![License](https://img.shields.io/badge/License-LGPL--3-orange?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/blob/dev/addons/kassa_pos_custom/__manifest__.py)
 [![Odoo](https://img.shields.io/badge/Platform-Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
 [![RabbitMQ](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22)](https://www.rabbitmq.com)
 
@@ -31,18 +31,23 @@ Built on an event-driven architecture, it guarantees **100% message durability**
 
 ---
 
-## Core Capabilities
+## Core Capabilities & Resilience
 
-- **Resilience**: Integrated `outbox.json` buffering system handles RabbitMQ downtime gracefully, with automated recovery and re-delivery.
-- **IoT Integration**: Native Odoo 17 `bus` integration for real-time customer identification via physical badge scanners.
-- **Compliance**: Automated logic for age-restricted products and validation of anonymous Badge Wallet transactions.
-- **Performance Polling**: High-frequency order monitoring and immediate dispatching of consumption data to CRM systems.
+### Offline-First Design
+The integration service is built to handle RabbitMQ unavailability. Outgoing messages are automatically routed through the `sender.py` resilient publisher:
+- **Persistent Buffering**: If the broker is unreachable, messages are stored in `outbox/outbox.json` (mounted as a Docker volume).
+- **Ordered Replay**: The `flush_buffer()` mechanism ensures messages are re-delivered in the exact order they were created once connectivity is restored.
+
+### Technical Highlights
+- **IoT Badge Integration**: Uses Odoo 17's `bus` service to push real-time customer data to the POS UI upon physical badge scans.
+- **Compliance Engine**: Automated age-restriction validation (e.g., for alcohol) and blocking of anonymous wallet transactions.
+- **Idempotency**: A FIFO bounded cache (10,000 entries) in `receiver.py` prevents duplicate message processing.
 
 ---
 
 ## System Architecture
 
-The integration service acts as a decoupled orchestrator between Odoo's synchronous API and the ecosystem's asynchronous messaging bus.
+The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
 
 ```mermaid
 graph TD
@@ -83,26 +88,57 @@ graph TD
     Odoo <--> DB
 ```
 
-### Message Routing Details
-
-The following table details all supported message types and their respective routing within the system.
+### 📋 Message Routing Matrix
 
 | Message Type | Direction | Routing Key | Purpose |
 | :--- | :--- | :--- | :--- |
-| `new_registration` | **Incoming** (To POS) | `kassa.incoming` | Create or update customer profiles in Odoo from CRM. |
-| `profile_update` | **Incoming** (To POS) | `kassa.incoming` | Update existing customer details (name, email, age, etc.). |
-| `badge_scanned` | **Incoming** (To POS) | `kassa.incoming` | Trigger real-time profile loading in the POS UI via Odoo bus. |
-| `cancel_registration` | **Incoming** (To POS) | `kassa.incoming` | Deactivate customer profiles in Odoo (soft delete). |
-| `consumption_order` | **Outgoing** (From POS) | `kassa.payments.consumption` | Synchronize finalized transaction data with Salesforce. |
-| `payment_registered` (Cons.) | **Outgoing** (From POS) | `kassa.payments.consumption` | Confirm payment for consumption orders in Salesforce. |
-| `payment_registered` (Reg.) | **Outgoing** (From POS) | `kassa.payments.registration` | Confirm registration payment in Salesforce. |
-| `invoice_request` | **Outgoing** (From POS) | `kassa.payments.invoice` | Request formal invoice generation in Salesforce. |
-| `badge_assigned` | **Outgoing** (From POS) | `kassa.payments.badge` | Notify Salesforce of a new badge-to-customer link. |
-| `refund_processed` | **Outgoing** (From POS) | `kassa.payments.refund` | Synchronize refund transactions with Salesforce. |
-| `payment_status` | **Outgoing** (From POS) | `kassa.frontend.payment` | Update transaction status for the Drupal frontend. |
-| `wallet_balance_update` | **Outgoing** (From POS) | `kassa.frontend.wallet` | Push real-time wallet balance changes to Drupal. |
-| `heartbeat` | **Outgoing** (From POS) | `kassa.heartbeat` | System health pulse for monitoring. |
-| `system_error` | **Outgoing** (From POS) | `kassa.errors` | Log operational and integration failures to Elastic. |
+| `new_registration` | **Incoming** | `kassa.incoming` | Sync new customer profiles from CRM. |
+| `profile_update` | **Incoming** | `kassa.incoming` | Update existing customer details in Odoo. |
+| `badge_scanned` | **Incoming** | `kassa.incoming` | Trigger real-time UI profile loading. |
+| `cancel_registration`| **Incoming** | `kassa.incoming` | Deactivate customer profiles (soft delete). |
+| `consumption_order` | **Outgoing** | `kassa.payments.consumption` | Sync transaction data with Salesforce. |
+| `payment_registered` | **Outgoing** | `kassa.payments.*` | Confirm payments (Consumption/Registration). |
+| `invoice_request` | **Outgoing** | `kassa.payments.invoice` | Request invoice generation in Salesforce. |
+| `badge_assigned` | **Outgoing** | `kassa.payments.badge` | Link new badge to customer in Salesforce. |
+| `refund_processed` | **Outgoing** | `kassa.payments.refund` | Sync refunds with Salesforce. |
+| `payment_status` | **Outgoing** | `kassa.frontend.payment` | Update Drupal transaction status. |
+| `wallet_balance_update`| **Outgoing** | `kassa.frontend.wallet` | Push wallet changes to Drupal. |
+| `heartbeat` | **Outgoing** | `kassa.heartbeat` | System health pulse. |
+| `system_error` | **Outgoing** | `kassa.errors` | Log failures to Elastic/Monitoring. |
+
+---
+
+## CI/CD & Quality Assurance
+
+The project employs a robust multi-stage GitHub Actions pipeline:
+
+### ⚙️ CI Pipeline (`ci.yml`)
+Runs on every push/PR to `main`, `dev`, or `prod`:
+- **Linting**: Flake8 enforcement (max-length 120).
+- **Static Analysis**: MyPy type checking across the integration suite.
+- **Testing**: Exhaustive Pytest suite covering receivers, senders, and order polling logic.
+
+### 🛡️ Security Scanning (`security.yml`)
+- **SAST**: Bandit scans for Python-specific security vulnerabilities.
+- **Secrets**: TruffleHog scans the entire history for leaked credentials.
+- **Containers**: Trivy vulnerability scanning of the filesystem and dependencies.
+
+### 🚀 Deployment (`deploy.yml`)
+Automated Build & Push to **GitHub Container Registry (GHCR)** upon successful CI completion on version-tagged commits.
+
+---
+
+## 📚 Project Documentation
+
+Detailed technical and functional documentation can be found in the `documentatie/` directory:
+
+| Document | Description |
+| :--- | :--- |
+| [Technische Gids](documentatie/Technische_Gids_Kassa.md) | Full setup, architecture details, and script explanations. |
+| [Datamapping](documentatie/Datamapping_Kassa.md) | Odoo-to-XML field mappings and enum definitions. |
+| [XML Structuren](documentatie/XML_Structuren_Kassa.md) | Exhaustive examples of all message formats. |
+| [User Stories](documentatie/User_Stories_Kassa.md) | BDD scenarios and acceptance criteria for all features. |
+| [Decisions (Vragen)](documentatie/Vragen_Kassa.md) | Architectural decision log and technical Q&A. |
 
 ---
 
@@ -110,17 +146,19 @@ The following table details all supported message types and their respective rou
 
 ```text
 📦 Kassa
- ┣ 📂 addons/                # Custom Odoo 17 modules (badge scanning, UI logic)
+ ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
+ ┣ 📂 addons/                # Custom Odoo 17 modules
+ ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
- ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 definitions)
- ┃ ┣ 📂 tests/               # Pytest integration and unit suites
- ┃ ┣ 📂 tools/               # Diagnostic, simulation, and bootstrap tools
- ┃ ┣ 📜 main.py              # Service entrypoint — orchestrates threads
- ┃ ┣ 📜 receiver.py          # RabbitMQ consumer with idempotency logic
- ┃ ┣ 📜 sender.py            # Resilient message publisher with disk buffering
- ┃ ┗ 📜 order_poller.py      # Odoo 17 monitor for automated data extraction
- ┣ 📂 k8s/                   # Production Kubernetes deployment manifests
- ┣ 📜 docker-compose.yml     # Local development orchestration stack
+ ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
+ ┃ ┣ 📂 tests/               # Pytest integration/unit suites
+ ┃ ┣ 📂 tools/               # Diagnostic and bootstrap scripts
+ ┃ ┣ 📜 main.py              # Orchestration entrypoint
+ ┃ ┣ 📜 receiver.py          # RabbitMQ consumer (idempotent)
+ ┃ ┣ 📜 sender.py            # Resilient publisher (buffered)
+ ┃ ┗ 📜 order_poller.py      # Odoo 17 order extraction
+ ┣ 📂 k8s/                   # Kubernetes production manifests
+ ┣ 📜 docker-compose.yml     # Local dev orchestration stack
  ┗ 📜 README.md
 ```
 
