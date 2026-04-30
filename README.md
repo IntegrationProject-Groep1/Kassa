@@ -1,22 +1,21 @@
-<div align="left">
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0d1117&height=180&section=header&text=Kassa%20Integration&fontSize=70&fontAlign=10&fontAlignY=35&desc=Integration%20Platform%20%E2%80%94%20Desideriushogeschool%20%C2%B7%20Team%20POS&descAlign=10&descAlignY=65&descSize=20" />
-</div>
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=soft&color=161b22&height=200&section=header&text=Kassa%20Integration&fontSize=70&animation=fadeIn&fontColor=ffffff&desc=Integration%20Platform%20%E2%80%94%20Desideriushogeschool%20%C2%B7%20Team%20POS&descAlignY=65&descSize=20" />
+</p>
 
-<div align="left">
-  &nbsp;&nbsp;
-  <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
-  <img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
-  <img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
-  <img src="https://img.shields.io/badge/2025%20--%202026-4B275F?style=flat-square&labelColor=161b22" />
-</div>
+<div align="center">
+
+<img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
+<img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
+<img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
+<img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
+<img src="https://img.shields.io/badge/2025%20--%202026-4B275F?style=flat-square&labelColor=161b22" />
 
 <br/>
 
-<div align="left">
-  &nbsp;&nbsp;
-  [![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
-  [![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
+[![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
+[![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
+![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=3b82f6&style=flat-square)
+
 </div>
 
 ---
@@ -199,11 +198,11 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <div align="center">
 
-## Meet The Team
+## 👥 Meet The Team
 
 <br/>
 
-| Team Lead | Integration Architect | System Engineer |
+| **Team Lead** | **Integration Architect** | **System Engineer** |
 | :---: | :---: | :---: |
 | [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
 
