@@ -1,30 +1,22 @@
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=soft&color=0:ee0979,100:ff6a00&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=scaleIn&fontColor=fff&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=25" />
-</p>
+<div align="left">
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0d1117&height=180&section=header&text=Kassa%20Integration&fontSize=70&fontAlign=10&fontAlignY=35&desc=Integration%20Platform%20%E2%80%94%20Desideriushogeschool%20%C2%B7%20Team%20POS&descAlign=10&descAlignY=65&descSize=20" />
+</div>
 
-<div align="center">
-
-<br/>
-
-<!-- Status & Tech Badges -->
-[![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
-[![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
-[![Version](https://img.shields.io/badge/Version-1.0.0-3b82f6?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa)
-[![Odoo](https://img.shields.io/badge/Platform-Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
-[![RabbitMQ](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22)](https://www.rabbitmq.com)
+<div align="left">
+  &nbsp;&nbsp;
+  <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/2025%20--%202026-4B275F?style=flat-square&labelColor=161b22" />
+</div>
 
 <br/>
 
-<!-- Skill Icons Grid -->
-<a href="https://skillicons.dev">
-  <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
-</a>
-
-<br/>
-
-<!-- Visitor Counter -->
-![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=ff6a00&style=flat-square)
-
+<div align="left">
+  &nbsp;&nbsp;
+  [![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
+  [![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
 </div>
 
 ---
@@ -34,16 +26,6 @@
 The **Kassa Integration** is the mission-critical communication bridge for Team POS at Desideriushogeschool 2026. It orchestrates high-integrity data flows between **Odoo 17** and external enterprise platforms including Salesforce CRM, Drupal, and IoT infrastructure.
 
 Built on an event-driven architecture, it guarantees **100% message durability** through a sophisticated local buffering system, ensuring that retail operations never stop, even during network instability.
-
----
-
-## 📊 Project Health
-
-<p align="center">
-  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=ee0979&labelColor=161b22" />
-  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=ee0979&labelColor=161b22" />
-  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=ee0979&labelColor=161b22" />
-</p>
 
 ---
 
@@ -217,11 +199,11 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <div align="center">
 
-## 👥 Meet The Team
+## Meet The Team
 
 <br/>
 
-| **Team Lead** | **Integration Architect** | **System Engineer** |
+| Team Lead | Integration Architect | System Engineer |
 | :---: | :---: | :---: |
 | [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
 
