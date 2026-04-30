@@ -12,6 +12,13 @@
 [![Odoo](https://img.shields.io/badge/Platform-Odoo%2016%2F17-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
 [![RabbitMQ](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22)](https://www.rabbitmq.com)
 
+<br/>
+
+<!-- Skill Icons Grid -->
+<a href="https://skillicons.dev">
+  <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux,vscode" />
+</a>
+
 </div>
 
 ---
@@ -32,17 +39,6 @@ The **Kassa Integration** is a mission-critical bridge designed for the Desideri
 | **🆔 Smart Identity** | IoT Badge scanning via Odoo `bus` for instantaneous customer identification. | ✅ |
 | **🔞 Compliance** | Automated logic for age-restricted products and anonymous transaction blocking. | ✅ |
 | **🔄 Sync Engine** | High-frequency polling and real-time consumption order dispatching. | ✅ |
-
----
-
-## 🛠️ Technical Stack
-
-| Domain | Technologies |
-|---|---|
-| **Core Languages** | ![Python](https://img.shields.io/badge/Python-3670A0?style=flat-square&logo=python&logoColor=ffdd54) ![SQL](https://img.shields.io/badge/SQL-4479A1?style=flat-square&logo=postgresql&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-323330?style=flat-square&logo=javascript&logoColor=F7DF1E) |
-| **Frameworks** | ![Odoo](https://img.shields.io/badge/Odoo-875A7B?style=flat-square&logo=odoo&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi&logoColor=white) |
-| **Infrastructure** | ![Docker](https://img.shields.io/badge/Docker-0db7ed?style=flat-square&logo=docker&logoColor=white) ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/CI%2FCD-2088FF?style=flat-square&logo=github-actions&logoColor=white) |
-| **Architecture** | ![Event-Driven](https://img.shields.io/badge/Event--Driven-f97316?style=flat-square) ![XML-RPC](https://img.shields.io/badge/XML--RPC-6B7280?style=flat-square) |
 
 ---
 
