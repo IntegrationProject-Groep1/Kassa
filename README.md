@@ -1,32 +1,26 @@
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=egg&color=gradient&customColorList=10,875A7B,50:3776AB,100:00BFFF&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=scaleIn&fontColor=ffffff&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=70&descSize=25" />
-</p>
-
 <div align="center">
+  <img src="https://capsule-render.vercel.app/api?type=egg&color=gradient&customColorList=10,875A7B,50:3776AB,100:00BFFF&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=scaleIn&fontColor=ffffff&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=70&descSize=25" />
 
-<br/>
+  <!-- Tech Badges -->
+  <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
+  <img src="https://img.shields.io/badge/2025%20--%202026-161b22?style=flat-square&labelColor=161b22" />
 
-<!-- Tech Badges -->
-<img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
-<img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
-<img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
-<img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
-<img src="https://img.shields.io/badge/2025%20--%202026-161b22?style=flat-square&labelColor=161b22" />
+  <br/>
 
-<br/><br/>
+  <!-- CI/CD & Project Stats -->
+  [![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
+  [![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
+  ![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=00BFFF&style=flat-square)
 
-<!-- CI/CD & Project Stats -->
-[![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
-[![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
-![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=00BFFF&style=flat-square)
+  <br/>
 
-<br/><br/>
-
-<!-- Skill Icons Grid -->
-<a href="https://skillicons.dev">
-  <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
-</a>
-
+  <!-- Skill Icons Grid -->
+  <a href="https://skillicons.dev">
+    <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
+  </a>
 </div>
 
 ---
