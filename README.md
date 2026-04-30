@@ -40,7 +40,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 
 ### Technical Highlights
 - **IoT Badge Integration**: Uses Odoo 17's `bus` service to push real-time customer data to the POS UI upon physical badge scans.
-- **Compliance Engine**: Automated age-restriction validation (e.g., for alcohol) and blocking of anonymous wallet transactions.
+- **Compliance Engine**: Automated logic for age-restricted products and validation of anonymous wallet transactions.
 - **Idempotency**: A FIFO bounded cache (10,000 entries) in `receiver.py` prevents duplicate message processing.
 
 ---
@@ -123,9 +123,6 @@ Runs on every push/PR to `main`, `dev`, or `prod`:
 - **Secrets**: TruffleHog scans the entire history for leaked credentials.
 - **Containers**: Trivy vulnerability scanning of the filesystem and dependencies.
 
-### 🚀 Deployment (`deploy.yml`)
-Automated Build & Push to **GitHub Container Registry (GHCR)** upon successful CI completion on version-tagged commits.
-
 ---
 
 ## 📚 Project Documentation
@@ -147,18 +144,21 @@ Detailed technical and functional documentation can be found in the `documentati
 ```text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
- ┣ 📂 addons/                # Custom Odoo 17 modules
+ ┣ 📂 addons/                # Custom Odoo 17 modules (badge scanning, UI logic)
  ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
  ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
  ┃ ┣ 📂 tests/               # Pytest integration/unit suites
- ┃ ┣ 📂 tools/               # Diagnostic and bootstrap scripts
+ ┃ ┣ 📂 tools/               # Integration-specific diagnostic tools
  ┃ ┣ 📜 main.py              # Orchestration entrypoint
  ┃ ┣ 📜 receiver.py          # RabbitMQ consumer (idempotent)
  ┃ ┣ 📜 sender.py            # Resilient publisher (buffered)
  ┃ ┗ 📜 order_poller.py      # Odoo 17 order extraction
- ┣ 📂 k8s/                   # Kubernetes production manifests
+ ┣ 📂 outbox/                # Local buffer persistence (Docker volume)
+ ┣ 📂 tools/                 # Root utility and diagnostic scripts
  ┣ 📜 docker-compose.yml     # Local dev orchestration stack
+ ┣ 📜 Dockerfile             # Integration service container definition
+ ┣ 📜 GEMINI.md              # Project-specific AI context and instructions
  ┗ 📜 README.md
 ```
 
@@ -184,16 +184,22 @@ docker-compose exec kassa-integratie python tools/ping_odoo.py
 
 ---
 
-## Team
-
-| Role | Name |
-| :--- | :--- |
-| **Team Lead** | Jeremy Luyckfasseel |
-| **Developer** | Ahmed Takadoumi |
-| **Developer** | Zeno Van Neygen |
-
----
-
 <div align="center">
-  Official Repository - Team POS Integration Project 2026
+
+## 👥 Meet The Team
+
+<br/>
+
+| **Team Lead** | **Core Developer** | **Core Developer** |
+| :---: | :---: | :---: |
+| [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
+
+<br/>
+
+*"Turning complex business requirements into seamless technical solutions."*
+
+<br/>
+
+**Official Repository - Integration Project Desideriushogeschool 2026**
+
 </div>
