@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=slice&color=0:875A7B,100:3776AB&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=fadeIn&fontAlignY=35&desc=The%20Resilient%20Pulse%20of%20Event%20Retail&descAlignY=55&descSize=25" />
+  <img src="https://capsule-render.vercel.app/api?type=soft&color=0:ee0979,100:ff6a00&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=scaleIn&fontColor=fff&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=25" />
 </p>
 
 <div align="center">
@@ -22,8 +22,8 @@
 
 <br/>
 
-<!-- Fixed Visitor Counter -->
-![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=3b82f6&style=flat-square)
+<!-- Visitor Counter -->
+![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=ff6a00&style=flat-square)
 
 </div>
 
@@ -40,9 +40,9 @@ Built on an event-driven architecture, it guarantees **100% message durability**
 ## 📊 Project Health
 
 <p align="center">
-  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=3b82f6&labelColor=161b22" />
-  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=3b82f6&labelColor=161b22" />
-  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=3b82f6&labelColor=161b22" />
+  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=ee0979&labelColor=161b22" />
+  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=ee0979&labelColor=161b22" />
+  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=ee0979&labelColor=161b22" />
 </p>
 
 ---
