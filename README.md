@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=10,4B0082,100:00BFFF&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:777777&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
@@ -13,7 +13,7 @@
   <!-- CI/CD & Project Stats -->
   [![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
   [![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
-  ![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=00BFFF&style=flat-square)
+  ![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=777777&style=flat-square)
 
   <br/>
 
@@ -36,9 +36,9 @@ Built on an event-driven architecture, it guarantees **100% message durability**
 ## 📊 Project Health
 
 <p align="center">
-  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=00BFFF&labelColor=161b22" />
-  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=00BFFF&labelColor=161b22" />
-  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=00BFFF&labelColor=161b22" />
+  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=777777&labelColor=161b22" />
+  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=777777&labelColor=161b22" />
+  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=777777&labelColor=161b22" />
 </p>
 
 ---
@@ -58,7 +58,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 ---
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=000000&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:333333&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
 The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
@@ -158,7 +158,7 @@ Detailed technical and functional documentation can be found in the `documentati
 ```text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
- ┣ 📂 addons/                # Custom Odoo 17 modules (badge scanning, UI logic)
+ ┣ 📂 addons/                # Custom Odoo 17 modules
  ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
  ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
