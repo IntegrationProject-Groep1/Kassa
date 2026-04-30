@@ -245,3 +245,7 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 **Official Repository - Integration Project Desideriushogeschool 2026**
 
 </div>
+
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=10,4B0082,100:00BFFF&height=150&section=footer" />
+</p>
