@@ -1,7 +1,8 @@
-<div align="center">
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:58A6FF,100:22c55e&height=300&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontAlignY=35&desc=Resilient%20Event-Driven%20Odoo%2017%20Bridge&descAlignY=55&descSize=25" />
+</p>
 
-<!-- Typing SVG Header -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=58A6FF&center=true&vCenter=true&width=600&lines=Team+POS+%7C+Kassa+Integration;Resilient+Event-Driven+Architecture;Odoo+17+%2B+RabbitMQ+%2B+Salesforce" alt="Kassa Integration" />
+<div align="center">
 
 <br/>
 
