@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:58A6FF,100:22c55e&height=300&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontAlignY=35&desc=Resilient%20Event-Driven%20Odoo%2017%20Bridge&descAlignY=55&descSize=25" />
+  <img src="https://capsule-render.vercel.app/api?type=soft&color=0:875A7B,50:3776AB,100:22c55e&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=fadeIn&fontAlignY=40&desc=The%20Resilient%20Pulse%20of%20Event%20Retail&descAlignY=60&descSize=25" />
 </p>
 
 <div align="center">
@@ -19,6 +19,11 @@
 <a href="https://skillicons.dev">
   <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
 </a>
+
+<br/>
+
+<!-- Visitor Counter -->
+<img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FIntegrationProject-Groep1%2FKassa&count_bg=%2379C0FF&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=Project%20Views&edge_flat=false" />
 
 </div>
 
@@ -202,11 +207,11 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <div align="center">
 
-## Meet The Team
+## 👥 Meet The Team
 
 <br/>
 
-| Team Lead | Core Developer | Core Developer |
+| **Team Lead** | **Integration Architect** | **System Engineer** |
 | :---: | :---: | :---: |
 | [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
 
