@@ -223,16 +223,16 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <p align="center">
   <a href="https://github.com/Jeremy-Luyckfasseel">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=Jeremy%20Luyckfasseel&color=4B0082&height=140&fontSize=40&fontColor=ffffff&desc=TEAM%20LEAD&descAlignY=70&descSize=15" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=TEAM%20LEAD&color=4B0082&height=200&fontSize=50&fontColor=ffffff&desc=Jeremy%20Luyckfasseel&descAlignY=70&descSize=25" />
   </a>
 </p>
 <p align="center">
   <a href="https://github.com/AhmedTakadoumi">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=Ahmed%20Takadoumi&color=3776AB&height=120&fontSize=30&fontColor=ffffff&desc=CORE%20DEVELOPER&descAlignY=70&descSize=12" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=CORE%20DEVELOPER&color=3776AB&height=160&fontSize=35&fontColor=ffffff&desc=Ahmed%20Takadoumi&descAlignY=70&descSize=20" />
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/zenovn">
-    <img src="https://capsule-render.vercel.app/api?type=blur&text=Zeno%20Van%20Neygen&color=00BFFF&height=120&fontSize=30&fontColor=ffffff&desc=CORE%20DEVELOPER&descAlignY=70&descSize=12" />
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=CORE%20DEVELOPER&color=00BFFF&height=160&fontSize=35&fontColor=ffffff&desc=Zeno%20Van%20Neygen&descAlignY=70&descSize=20" />
   </a>
 </p>
 
