@@ -179,7 +179,6 @@ docker-compose up -d
 ```
 
 - **Odoo POS**: [http://localhost:8069](http://localhost:8069)
-- **Default Credentials**: admin / admin (unless changed in `.env`)
 
 ### 3. Local Python Setup (Development)
 If you wish to run the integration scripts or tests outside of Docker:
