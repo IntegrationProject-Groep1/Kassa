@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=egg&color=gradient&customColorList=10,875A7B,50:3776AB,100:00BFFF&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=scaleIn&fontColor=ffffff&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=70&descSize=25" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=10,4B0082,100:00BFFF&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
