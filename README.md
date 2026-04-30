@@ -112,13 +112,13 @@ graph TD
 
 The project employs a robust multi-stage GitHub Actions pipeline:
 
-### ⚙️ CI Pipeline (`ci.yml`)
+### CI Pipeline (`ci.yml`)
 Runs on every push/PR to `main`, `dev`, or `prod`:
 - **Linting**: Flake8 enforcement (max-length 120).
 - **Static Analysis**: MyPy type checking across the integration suite.
 - **Testing**: Exhaustive Pytest suite covering receivers, senders, and order polling logic.
 
-### 🛡️ Security Scanning (`security.yml`)
+### Security Scanning (`security.yml`)
 - **SAST**: Bandit scans for Python-specific security vulnerabilities.
 - **Secrets**: TruffleHog scans the entire history for leaked credentials.
 - **Containers**: Trivy vulnerability scanning of the filesystem and dependencies.
@@ -144,7 +144,7 @@ Detailed technical and functional documentation can be found in the `documentati
 ```text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
- ┣ 📂 addons/                # Custom Odoo 17 modules (badge scanning, UI logic)
+ ┣ 📂 addons/                # Custom Odoo 17 modules
  ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
  ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
@@ -158,7 +158,6 @@ Detailed technical and functional documentation can be found in the `documentati
  ┣ 📂 tools/                 # Root utility and diagnostic scripts
  ┣ 📜 docker-compose.yml     # Local dev orchestration stack
  ┣ 📜 Dockerfile             # Integration service container definition
- ┣ 📜 GEMINI.md              # Project-specific AI context and instructions
  ┗ 📜 README.md
 ```
 
@@ -186,11 +185,11 @@ docker-compose exec kassa-integratie python tools/ping_odoo.py
 
 <div align="center">
 
-## 👥 Meet The Team
+## Meet The Team
 
 <br/>
 
-| **Team Lead** | **Core Developer** | **Core Developer** |
+| Team Lead | Core Developer | Core Developer |
 | :---: | :---: | :---: |
 | [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
 
