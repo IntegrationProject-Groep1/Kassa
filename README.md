@@ -1,54 +1,54 @@
 <div align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Odoo_logo.svg" alt="Odoo Logo" width="120" />
 
-  # Kassa (POS Integration)
-  
-  **A high-performance, resilient integration bridge between Odoo POS and RabbitMQ ecosystem.**
+<!-- Typing SVG Header -->
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=58A6FF&center=true&vCenter=true&width=600&lines=Team+POS+%7C+Kassa+Integration;Resilient+Event-Driven+Architecture;Odoo+%2B+RabbitMQ+%2B+Salesforce" alt="Kassa Integration Typing SVG" />
 
-  [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-  [![Odoo](https://img.shields.io/badge/Odoo-16%2F17-714B67?style=for-the-badge&logo=odoo&logoColor=white)](https://www.odoo.com/)
-  [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com/)
-  [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-  [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+<br/>
+
+<!-- Status & Tech Badges -->
+[![Version](https://img.shields.io/badge/Version-1.0.0-3b82f6?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa)
+[![Build](https://img.shields.io/badge/Build-Passing-22c55e?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/actions)
+[![License](https://img.shields.io/badge/License-LGPL--3-orange?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/blob/dev/addons/kassa_pos_custom/__manifest__.py)
+[![Odoo](https://img.shields.io/badge/Platform-Odoo%2016%2F17-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
+[![RabbitMQ](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22)](https://www.rabbitmq.com)
+
 </div>
 
 ---
 
-## 📖 Overview
+## 📖 Project Overview
 
-The **Kassa Integration** project serves as the central nervous system for Team POS at Desideriushogeschool 2026. It facilitates seamless, asynchronous communication between Odoo 16/17 and external entities like CRM (Salesforce), Frontend (Drupal), and IoT Badge Scanners.
+The **Kassa Integration** is a mission-critical bridge designed for the Desideriushogeschool 2026 event ecosystem. It serves as the primary data conduit between the **Odoo Point of Sale** and external enterprise systems, ensuring high availability and transactional integrity.
 
-Built with a focus on **offline resilience** and **event-driven architecture**, this system ensures that retail operations continue uninterrupted even during network instability, buffering critical transaction data for later synchronization.
-
----
-
-## 📋 Table of Contents
-
-- [✨ Features](#-features)
-- [🏗️ Architecture](#-architecture)
-- [🚀 Getting Started](#-getting-started)
-- [💻 Usage](#-usage)
-- [📁 Repository Structure](#-repository-structure)
-- [🤝 Contributing](#-contributing)
-- [📜 License](#-license)
+> *"Bridging the gap between real-time retail operations and asynchronous enterprise data flows."*
 
 ---
 
-## ✨ Features
+## ✨ Core Capabilities
 
-- **🛡️ Offline Resilience**: Integrated `outbox.json` buffering system ensures no message is ever lost when RabbitMQ is unreachable.
-- **🆔 Badge Integration**: Automated customer selection and badge scanning through Odoo's `bus` service.
-- **🔞 Compliance Checks**: Automated age restriction pop-ups (e.g., for alcohol) directly in the POS frontend.
-- **🔄 Bidirectional Sync**: 
-  - **Receiver**: Real-time customer profile updates from CRM.
-  - **Poller**: Automated extraction of POS orders for external reporting.
-- **✅ Message Validation**: Strict XSD schema validation for all incoming and outgoing XML messages.
+| Feature | Description | Status |
+|---|---|---|
+| **🛡️ Resilience** | Local `outbox.json` buffering for 100% message delivery during network outages. | ✅ |
+| **🆔 Smart Identity** | IoT Badge scanning via Odoo `bus` for instantaneous customer identification. | ✅ |
+| **🔞 Compliance** | Automated logic for age-restricted products and anonymous transaction blocking. | ✅ |
+| **🔄 Sync Engine** | High-frequency polling and real-time consumption order dispatching. | ✅ |
 
 ---
 
-## 🏗️ Architecture
+## 🛠️ Technical Stack
 
-The integration leverages a modular Python service that interfaces with Odoo via XML-RPC and connects to the broader ecosystem through a dedicated RabbitMQ exchange.
+| Domain | Technologies |
+|---|---|
+| **Core Languages** | ![Python](https://img.shields.io/badge/Python-3670A0?style=flat-square&logo=python&logoColor=ffdd54) ![SQL](https://img.shields.io/badge/SQL-4479A1?style=flat-square&logo=postgresql&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-323330?style=flat-square&logo=javascript&logoColor=F7DF1E) |
+| **Frameworks** | ![Odoo](https://img.shields.io/badge/Odoo-875A7B?style=flat-square&logo=odoo&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi&logoColor=white) |
+| **Infrastructure** | ![Docker](https://img.shields.io/badge/Docker-0db7ed?style=flat-square&logo=docker&logoColor=white) ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/CI%2FCD-2088FF?style=flat-square&logo=github-actions&logoColor=white) |
+| **Architecture** | ![Event-Driven](https://img.shields.io/badge/Event--Driven-f97316?style=flat-square) ![XML-RPC](https://img.shields.io/badge/XML--RPC-6B7280?style=flat-square) |
+
+---
+
+## 🏗️ System Architecture
+
+Our architecture is strictly decoupled. The integration service acts as the orchestrator, managing state between Odoo's synchronous API and the ecosystem's asynchronous messaging.
 
 ```mermaid
 graph TD
@@ -56,6 +56,7 @@ graph TD
         CRM[Salesforce CRM]
         IoT[IoT Badge Scanners]
         Frontend[Drupal Frontend]
+        Monitor[Elastic Monitoring]
     end
 
     subgraph "Kassa Integration Service"
@@ -65,8 +66,8 @@ graph TD
         Outbox[(Local Outbox)]
     end
 
-    subgraph "Core POS"
-        Odoo[Odoo 16/17]
+    subgraph "Odoo Environment"
+        Odoo[Odoo POS]
         DB[(PostgreSQL)]
     end
 
@@ -78,104 +79,66 @@ graph TD
     
     Odoo -- "Orders" --> Poller
     Poller -- "Buffering" --> Sender
-    Sender -. "Retry Logic" .-> Outbox
+    Sender -. "Offline Persistence" .-> Outbox
     Sender -- "Outgoing XML" --> RabbitMQ
     
     RabbitMQ -- "Order Status" --> CRM
     RabbitMQ -- "Wallet Updates" --> Frontend
+    RabbitMQ -- "Errors" --> Monitor
     
     Odoo <--> DB
 ```
 
----
+### 📋 Message Routing Legend
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Docker & Docker Compose**
-- **Python 3.12+** (for local development/testing)
-- **Git**
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/JeremyLuyckfasseel/Kassa.git
-   cd Kassa
-   ```
-
-2. **Configure Environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your local Odoo and RabbitMQ credentials
-   ```
-
-3. **Launch the stack**:
-   ```bash
-   docker-compose up -d
-   ```
+| Type | Direction | Target | Purpose |
+| :--- | :---: | :--- | :--- |
+| `new_registration` | 📥 | Odoo | Onboarding new customers from CRM. |
+| `badge_scanned` | 📥 | POS | Instant UI profile loading. |
+| `consumption_order`| 📤 | Salesforce | Finalizing transaction billing. |
+| `system_error` | 📤 | Elastic | Real-time failure observability. |
 
 ---
 
-## 💻 Usage
+## 📈 Integration Activity
 
-### Connection Diagnostic
-Validate that the integration service can authenticate with Odoo:
+<p align="center">
+  <img height="180em" src="https://github-readme-stats.vercel.app/api?username=Jeremy-Luyckfasseel&show_icons=true&theme=github_dark&hide_border=true&count_private=true&include_all_commits=true" />
+  <img height="180em" src="https://github-readme-stats.vercel.app/api/top-langs/?username=Jeremy-Luyckfasseel&layout=compact&theme=github_dark&hide_border=true" />
+</p>
+
+<p align="center">
+  <img src="https://streak-stats.demolab.com/?user=Jeremy-Luyckfasseel&theme=github-dark-blue&hide_border=true" />
+</p>
+
+---
+
+## 🚀 Deployment & Usage
+
+### Rapid Setup
 ```bash
+cp .env.example .env
+docker-compose up -d
+```
+
+### Diagnostics
+```bash
+# Check Odoo Connectivity
 docker-compose exec kassa-integratie python tools/ping_odoo.py
-```
 
-### Manual Buffer Flush
-If messages are stored in the outbox due to connection issues, trigger a manual flush:
-```bash
-docker-compose exec kassa-integratie python -c "import sender; sender.flush_buffer()"
-```
-
-### Testing the Flow
-Simulate an incoming badge scan or order creation using the built-in tools:
-```bash
+# Simulate Integration Message
 docker-compose exec kassa-integratie python tools/create_test_order.py
 ```
 
 ---
 
-## 📁 Repository Structure
-
-```text
-📦 Kassa
- ┣ 📂 addons/                # Custom Odoo modules (kassa_pos_custom)
- ┣ 📂 integratie/            # Python integration service
- ┃ ┣ 📂 schemas/             # XML XSD validation schemas
- ┃ ┣ 📂 tests/               # Unit and Integration tests
- ┃ ┣ 📂 tools/               # Diagnostic and utility scripts
- ┃ ┣ 📜 main.py              # Service entrypoint
- ┃ ┣ 📜 receiver.py          # RabbitMQ message consumer
- ┃ ┣ 📜 sender.py            # Resilient message publisher
- ┃ ┗ 📜 order_poller.py      # Odoo order monitor
- ┣ 📂 k8s/                   # Kubernetes deployment manifests
- ┣ 📜 docker-compose.yml     # Local orchestration
- ┗ 📜 README.md              # You are here!
-```
-
----
-
-## 🤝 Contributing
-
-We welcome contributions from the team! 
-
-1. Create a `feature/` or `fix/` branch.
-2. Ensure all tests pass: `pytest integratie/tests/`.
-3. Submit a Pull Request for review.
-
----
-
-## 📜 License
-
-This project is licensed under the **LGPL-3** License. See the [addons/kassa_pos_custom/__manifest__.py](addons/kassa_pos_custom/__manifest__.py) for details.
-
----
-
 <div align="center">
-  Built with ❤️ by Team POS - Integration Project 2026
+
+*"Turning complex business requirements into seamless technical solutions."*
+
+<br/>
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jeremy-luyckfasseel-97244a32b)
+[![Gmail](https://img.shields.io/badge/Gmail-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:luyckfasseel.jeremy@gmail.com)
+
 </div>
