@@ -221,9 +221,17 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <br/>
 
-| **Team Lead** | **Integration Architect** | **System Engineer** |
-| :---: | :---: | :---: |
-| [![Jeremy](https://img.shields.io/badge/Jeremy_Luyckfasseel-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jeremy-Luyckfasseel) | [![Ahmed](https://img.shields.io/badge/Ahmed_Takadoumi-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/AhmedTakadoumi) | [![Zeno](https://img.shields.io/badge/Zeno_Van_Neygen-161b22?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zenovn) |
+<p align="center">
+  <a href="https://github.com/Jeremy-Luyckfasseel">
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Jeremy%20Luyckfasseel&color=4B0082&height=100&fontSize=35&fontColor=ffffff" />
+  </a>
+  <a href="https://github.com/AhmedTakadoumi">
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Ahmed%20Takadoumi&color=3776AB&height=100&fontSize=35&fontColor=ffffff" />
+  </a>
+  <a href="https://github.com/zenovn">
+    <img src="https://capsule-render.vercel.app/api?type=blur&text=Zeno%20Van%20Neygen&color=00BFFF&height=100&fontSize=35&fontColor=ffffff" />
+  </a>
+</p>
 
 <br/>
 
