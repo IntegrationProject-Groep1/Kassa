@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:ffffff&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
@@ -58,7 +58,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 ---
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:ffffff&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:ffffff&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
 The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
@@ -216,7 +216,7 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 <div align="center">
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=gradient&customColorList=0:000000,100:ffffff&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:ffffff&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
 </p>
 
 <br/>
@@ -247,5 +247,5 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 </div>
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=0:000000,100:ffffff&height=150&section=footer" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=150&section=footer" />
 </p>
