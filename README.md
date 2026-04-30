@@ -215,7 +215,9 @@ docker-compose exec kassa-integratie pytest integratie/tests/
 
 <div align="center">
 
-## 👥 Meet The Team
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=soft&color=gradient&customColorList=10,4B0082,100:00BFFF&height=120&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=40&animation=twinkle" />
+</p>
 
 <br/>
 
