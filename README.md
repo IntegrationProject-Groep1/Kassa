@@ -1,7 +1,7 @@
 <div align="center">
 
-<!-- Typing SVG Header - TEAM FOCUSED -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=58A6FF&center=true&vCenter=true&width=600&lines=Team+POS+%7C+Kassa+Integration;Resilient+Event-Driven+Architecture;Odoo+%2B+RabbitMQ+%2B+Salesforce" alt="Kassa Integration" />
+<!-- Typing SVG Header -->
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=58A6FF&center=true&vCenter=true&width=600&lines=Team+POS+%7C+Kassa+Integration;Resilient+Event-Driven+Architecture;Odoo+17+%2B+RabbitMQ+%2B+Salesforce" alt="Kassa Integration" />
 
 <br/>
 
@@ -9,12 +9,12 @@
 [![Version](https://img.shields.io/badge/Version-1.0.0-3b82f6?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa)
 [![Build Status](https://img.shields.io/badge/Build-Passing-22c55e?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/actions)
 [![License](https://img.shields.io/badge/License-LGPL--3-orange?style=flat-square&labelColor=161b22)](https://github.com/IntegrationProject-Groep1/Kassa/blob/dev/addons/kassa_pos_custom/__manifest__.py)
-[![Odoo](https://img.shields.io/badge/Platform-Odoo%2016%2F17-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
+[![Odoo](https://img.shields.io/badge/Platform-Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22)](https://www.odoo.com)
 [![RabbitMQ](https://img.shields.io/badge/Messaging-RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22)](https://www.rabbitmq.com)
 
 <br/>
 
-<!-- Skill Icons Grid - PROJECT RELEVANT -->
+<!-- Skill Icons Grid -->
 <a href="https://skillicons.dev">
   <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
 </a>
@@ -25,22 +25,24 @@
 
 ## Overview
 
-The **Kassa Integration** is the core communication layer for Team POS at Desideriushogeschool 2026. It manages the flow of data between the **Odoo Point of Sale** and external enterprise systems (Salesforce, Drupal, IoT) using a resilient, event-driven architecture.
+The **Kassa Integration** is the mission-critical communication bridge for Team POS at Desideriushogeschool 2026. It orchestrates high-integrity data flows between **Odoo 17** and external enterprise platforms including Salesforce CRM, Drupal, and IoT infrastructure.
+
+Built on an event-driven architecture, it guarantees **100% message durability** through a sophisticated local buffering system, ensuring that retail operations never stop, even during network instability.
 
 ---
 
 ## Core Capabilities
 
-- **Resilience**: Local `outbox.json` buffering ensures 100% message delivery during network outages.
-- **Smart Identity**: IoT Badge scanning via Odoo `bus` for instantaneous customer identification in the POS UI.
-- **Compliance**: Automated logic for age-restricted products and anonymous transaction blocking.
-- **Sync Engine**: High-frequency polling and real-time consumption order dispatching via RabbitMQ.
+- **🛡️ Resilience**: Integrated `outbox.json` buffering system handles RabbitMQ downtime gracefully, with automated recovery and re-delivery.
+- **🆔 IoT Integration**: Native Odoo 17 `bus` integration for real-time customer identification via physical badge scanners.
+- **🔞 Intelligent Compliance**: Automated logic for age-restricted products and validation of anonymous Badge Wallet transactions.
+- **🔄 Performance Polling**: High-frequency order monitoring and immediate dispatching of consumption data to CRM systems.
 
 ---
 
 ## System Architecture
 
-The integration service acts as a decoupled orchestrator between Odoo's synchronous API and the ecosystem's asynchronous messaging.
+The integration service acts as a decoupled orchestrator between Odoo's synchronous API and the ecosystem's asynchronous messaging bus.
 
 ```mermaid
 graph TD
@@ -58,7 +60,7 @@ graph TD
         Outbox[(Local Outbox)]
     end
 
-    subgraph "Odoo Environment"
+    subgraph "Odoo 17 Environment"
         Odoo[Odoo POS]
         DB[(PostgreSQL)]
     end
@@ -71,7 +73,7 @@ graph TD
     
     Odoo -- "Orders" --> Poller
     Poller -- "Buffering" --> Sender
-    Sender -. "Offline Persistence" .-> Outbox
+    Sender -. "Persistence" .-> Outbox
     Sender -- "Outgoing XML" --> RabbitMQ
     
     RabbitMQ -- "Order Status" --> CRM
@@ -81,14 +83,14 @@ graph TD
     Odoo <--> DB
 ```
 
-### Message Routing Details
+### 📋 Message Routing Details
 
 | Message Type | Direction | Routing Key | Purpose |
-| :--- | :---: | :--- | :--- |
-| `new_registration` | 📥 | `kassa.incoming` | Sync new customers from CRM to Odoo. |
-| `badge_scanned` | 📥 | `kassa.incoming` | Trigger UI profile load via Odoo bus. |
-| `consumption_order`| 📤 | `kassa.payments.consumption` | Finalize transaction billing in Salesforce. |
-| `system_error` | 📤 | `kassa.errors` | Real-time observability in Elastic. |
+| :--- | :--- | :--- | :--- |
+| `new_registration` | **Incoming** (To POS) | `kassa.incoming` | Sync new customer profiles from CRM to Odoo. |
+| `badge_scanned` | **Incoming** (To POS) | `kassa.incoming` | Trigger real-time profile loading in POS UI. |
+| `consumption_order`| **Outgoing** (From POS) | `kassa.payments.consumption` | Synchronize transaction billing with Salesforce. |
+| `system_error` | **Outgoing** (From POS) | `kassa.errors` | Log operational failures to Elastic Monitoring. |
 
 ---
 
@@ -96,17 +98,17 @@ graph TD
 
 ```text
 📦 Kassa
- ┣ 📂 addons/                # Custom Odoo modules (badge scanning, age restrictions)
+ ┣ 📂 addons/                # Custom Odoo 17 modules
  ┣ 📂 integratie/            # Python integration service
  ┃ ┣ 📂 schemas/             # XML XSD validation schemas
- ┃ ┣ 📂 tests/               # Pytest suites
- ┃ ┣ 📂 tools/               # Diagnostic and simulation scripts
- ┃ ┣ 📜 main.py              # Service entrypoint
+ ┃ ┣ 📂 tests/               # Pytest integration suites
+ ┃ ┣ 📂 tools/               # Diagnostic and simulation tools
+ ┃ ┣ 📜 main.py              # Entrypoint — starts receiver + poller
  ┃ ┣ 📜 receiver.py          # RabbitMQ message consumer
  ┃ ┣ 📜 sender.py            # Resilient message publisher
- ┃ ┗ 📜 order_poller.py      # Odoo order monitor
- ┣ 📂 k8s/                   # Kubernetes deployment manifests
- ┣ 📜 docker-compose.yml     # Local orchestration stack
+ ┃ ┗ 📜 order_poller.py      # Odoo 17 order monitor
+ ┣ 📂 k8s/                   # Production manifests
+ ┣ 📜 docker-compose.yml     # Local dev orchestration
  ┗ 📜 README.md
 ```
 
@@ -114,18 +116,18 @@ graph TD
 
 ## Getting Started
 
-### Prerequisites
-- Docker & Docker Compose
-- Python 3.12+ (for local testing)
+### 1. Prerequisites
+- **Docker & Docker Compose**
+- **Python 3.12+**
 
-### Launch Stack
+### 2. Launch Development Stack
 ```bash
 cp .env.example .env
 docker-compose up -d
 ```
 
-### Connectivity Check
-Validate the XML-RPC connection to Odoo:
+### 3. Verify Connection
+Ensure the Python service can communicate with Odoo 17:
 ```bash
 docker-compose exec kassa-integratie python tools/ping_odoo.py
 ```
