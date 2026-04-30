@@ -1,20 +1,31 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=soft&color=161b22&height=200&section=header&text=Kassa%20Integration&fontSize=70&animation=fadeIn&fontColor=ffffff&desc=Integration%20Platform%20%E2%80%94%20Desideriushogeschool%20%C2%B7%20Team%20POS&descAlignY=65&descSize=20" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=10,4B0082,100:00BFFF&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 </p>
 
 <div align="center">
 
+<br/>
+
+<!-- Tech Badges -->
 <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
 <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=161b22" />
 <img src="https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white&labelColor=161b22" />
 <img src="https://img.shields.io/badge/Odoo%2017-875A7B?style=flat-square&logo=odoo&logoColor=white&labelColor=161b22" />
-<img src="https://img.shields.io/badge/2025%20--%202026-4B275F?style=flat-square&labelColor=161b22" />
+<img src="https://img.shields.io/badge/2025%20--%202026-161b22?style=flat-square&labelColor=161b22" />
 
-<br/>
+<br/><br/>
 
+<!-- CI/CD & Project Stats -->
 [![CI Pipeline](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/ci.yml)
 [![Security Scanning](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml/badge.svg)](https://github.com/IntegrationProject-Groep1/Kassa/actions/workflows/security.yml)
-![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=3b82f6&style=flat-square)
+![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=00BFFF&style=flat-square)
+
+<br/><br/>
+
+<!-- Skill Icons Grid -->
+<a href="https://skillicons.dev">
+  <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
+</a>
 
 </div>
 
@@ -25,6 +36,16 @@
 The **Kassa Integration** is the mission-critical communication bridge for Team POS at Desideriushogeschool 2026. It orchestrates high-integrity data flows between **Odoo 17** and external enterprise platforms including Salesforce CRM, Drupal, and IoT infrastructure.
 
 Built on an event-driven architecture, it guarantees **100% message durability** through a sophisticated local buffering system, ensuring that retail operations never stop, even during network instability.
+
+---
+
+## 📊 Project Health
+
+<p align="center">
+  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=00BFFF&labelColor=161b22" />
+  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=00BFFF&labelColor=161b22" />
+  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=00BFFF&labelColor=161b22" />
+</p>
 
 ---
 
