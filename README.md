@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=soft&color=0:875A7B,50:3776AB,100:22c55e&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=fadeIn&fontAlignY=40&desc=The%20Resilient%20Pulse%20of%20Event%20Retail&descAlignY=60&descSize=25" />
+  <img src="https://capsule-render.vercel.app/api?type=slice&color=0:875A7B,100:3776AB&height=300&section=header&text=Kassa%20Integration&fontSize=90&animation=fadeIn&fontAlignY=35&desc=The%20Resilient%20Pulse%20of%20Event%20Retail&descAlignY=55&descSize=25" />
 </p>
 
 <div align="center">
@@ -22,8 +22,8 @@
 
 <br/>
 
-<!-- Visitor Counter -->
-<img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FIntegrationProject-Groep1%2FKassa&count_bg=%2379C0FF&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=Project%20Views&edge_flat=false" />
+<!-- Fixed Visitor Counter -->
+![Views](https://komarev.com/ghpvc/?username=IntegrationProject-Groep1-Kassa&label=REPOSITORY%20VIEWS&color=3b82f6&style=flat-square)
 
 </div>
 
@@ -34,6 +34,16 @@
 The **Kassa Integration** is the mission-critical communication bridge for Team POS at Desideriushogeschool 2026. It orchestrates high-integrity data flows between **Odoo 17** and external enterprise platforms including Salesforce CRM, Drupal, and IoT infrastructure.
 
 Built on an event-driven architecture, it guarantees **100% message durability** through a sophisticated local buffering system, ensuring that retail operations never stop, even during network instability.
+
+---
+
+## 📊 Project Health
+
+<p align="center">
+  <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=3b82f6&labelColor=161b22" />
+  <img src="https://img.shields.io/github/repo-size/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=3b82f6&labelColor=161b22" />
+  <img src="https://img.shields.io/github/languages/top/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=python&color=3b82f6&labelColor=161b22" />
+</p>
 
 ---
 
