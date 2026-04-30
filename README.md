@@ -144,7 +144,7 @@ Detailed technical and functional documentation can be found in the `documentati
 ```text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
- ┣ 📂 addons/                # Custom Odoo 17 modules
+ ┣ 📂 addons/                # Custom Odoo 17 modules (badge scanning, UI logic)
  ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
  ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
@@ -167,18 +167,35 @@ Detailed technical and functional documentation can be found in the `documentati
 
 ### 1. Prerequisites
 - **Docker & Docker Compose**
-- **Python 3.12+**
+- **Python 3.12+** (optional, for local development)
 
-### 2. Launch Development Stack
+### 2. Rapid Launch (Docker)
+The integration service automatically bootstraps the Odoo database, installs required modules, and configures custom fields on startup.
+
 ```bash
 cp .env.example .env
+# Edit .env and set ODOO_MASTER_PASS and other credentials
 docker-compose up -d
 ```
 
-### 3. Verify Connection
-Ensure the Python service can communicate with Odoo 17:
+- **Odoo POS**: [http://localhost:8069](http://localhost:8069)
+- **Default Credentials**: admin / admin (unless changed in `.env`)
+
+### 3. Local Python Setup (Development)
+If you wish to run the integration scripts or tests outside of Docker:
 ```bash
+python -m venv .venv
+source .venv/bin/activate  # Or .venv\Scripts\activate on Windows
+pip install -r integratie/requirements.txt
+```
+
+### 4. Diagnostics & Verification
+```bash
+# Verify XML-RPC connectivity to Odoo
 docker-compose exec kassa-integratie python tools/ping_odoo.py
+
+# Run full test suite
+docker-compose exec kassa-integratie pytest integratie/tests/
 ```
 
 ---
