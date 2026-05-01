@@ -327,7 +327,8 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         db, uid, pw,
         "res.partner", "search_read",
         [[["x_badge_id", "=", badge_id]]],
-        {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_date_of_birth", "is_company"], "limit": 1},
+        {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
+                    "x_date_of_birth", "is_company"], "limit": 1},
     )
 
     message_id = root.findtext("header/message_id")
@@ -511,7 +512,8 @@ def start_listening():
 
         channel.queue_declare(
             queue=QUEUE_NAME, durable=True,
-            arguments={"x-dead-letter-exchange": dead_letter_exchange, "x-dead-letter-routing-key": DLQ_ROUTING_KEY}
+            arguments={"x-dead-letter-exchange": dead_letter_exchange,
+                       "x-dead-letter-routing-key": DLQ_ROUTING_KEY}
         )
 
         channel.queue_declare(
@@ -522,7 +524,8 @@ def start_listening():
                 "x-dead-letter-routing-key": f"{QUEUE_NAME}.retry-recovery",
             }
         )
-        channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.retry-recovery")
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME,
+                           routing_key=f"{QUEUE_NAME}.retry-recovery")
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
     except pika.exceptions.ChannelClosedByBroker as exc:

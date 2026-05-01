@@ -176,7 +176,8 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             [[module_id]], {"fields": ["state"]}
         )
         if not module_state or module_state[0].get("state") != "installed":
-            _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module", "button_immediate_install", [[module_id]])
+            _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
+                 "button_immediate_install", [[module_id]])
     return True
 
 
@@ -253,7 +254,8 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
     if not uid:
         return {}
 
-    user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read", [[uid]], {"fields": ["company_id"]})
+    user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users",
+                     "read", [[uid]], {"fields": ["company_id"]})
     company_id = _extract_company_id(user_info)
 
     tax_map: dict[float, int] = {}
@@ -334,7 +336,8 @@ def ensure_payment_methods(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pas
     if not uid:
         return []
 
-    user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users", "read", [[uid]], {"fields": ["company_id"]})
+    user_info = _rpc(models, odoo_db, uid, odoo_pass, "res.users",
+                     "read", [[uid]], {"fields": ["company_id"]})
     company_id = _extract_company_id(user_info)
 
     def _ensure_method(name: str, is_cash_count: bool, extra_vals: dict[str, Any] | None = None) -> int:

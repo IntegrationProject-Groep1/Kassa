@@ -335,11 +335,12 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         if not _schema_cache[msg_type].validate(xml_doc):
             errors = str(_schema_cache[msg_type].error_log)
             raise ValueError(f"XSD Validation Error: {errors}")
-            
+
     except etree.XMLSyntaxError as e:
         raise ValueError(f"XML Syntax Error (Malformed XML): {str(e)}")
     except Exception as e:
-        if isinstance(e, ValueError): raise e
+        if isinstance(e, ValueError):
+            raise e
         raise ValueError(f"Unexpected Validation Failure: {str(e)}")
 
 
@@ -358,7 +359,7 @@ def send_typed_message(
     except ValueError as e:
         # BLOCK the message: Log the detailed XSD error and raise.
         # This prevents invalid XML from reaching RabbitMQ or the offline buffer.
-        
+
         # BEST PRACTICE: Attempt to extract message_id from the invalid XML for traceability
         related_id = None
         try:

@@ -141,10 +141,12 @@ class TestSenderPublishing:
     def test_send_typed_message_routes_correctly(self, mock_send, mock_validate):
         # Known type => predefined routing key
         sender.send_typed_message("refund_processed", "<xml/>")
-        mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>", order_id=None, buffer_on_fail=True)
+        mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>",
+                                          order_id=None, buffer_on_fail=True)
 
         mock_send.reset_mock()
 
         # Unknown type => kassa.misc.{type}
         sender.send_typed_message("unknown_type", "<xml/>")
-        mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>", order_id=None, buffer_on_fail=True)
+        mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>",
+                                          order_id=None, buffer_on_fail=True)
