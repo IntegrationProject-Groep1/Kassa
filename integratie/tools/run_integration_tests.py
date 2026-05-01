@@ -47,10 +47,12 @@ def publish(xml_text: str, label: str) -> None:
     )
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
-    ch.queue_declare(queue=QUEUE_NAME, durable=True)
+    # BEST PRACTICE: Publish to the exchange using the correct routing key
+    # instead of declaring the queue directly, which avoids 406 Precondition Failed
+    # errors if the test runner's queue args don't match the broker's.
     ch.basic_publish(
-        exchange="",
-        routing_key=QUEUE_NAME,
+        exchange="kassa.exchange",
+        routing_key="kassa.incoming.registration",  # Correct key for registration
         body=xml_text.encode("utf-8"),
         properties=pika.BasicProperties(delivery_mode=2),
     )
@@ -78,7 +80,7 @@ def odoo_get_partner(user_id: str) -> dict | None:
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
-        {"fields": ["id", "name", "email", "x_user_id", "x_date_of_birth", "is_company"], "limit": 1},
+        {"fields": ["id", "name", "email", "x_user_id", "x_date_of_birth", "is_company", "x_session_id"], "limit": 1},
     )
     return results[0] if results else None
 
@@ -108,16 +110,17 @@ def build_valid_registration(message_id: str, user_id: str) -> str:
   </header>
   <body>
     <customer>
+      <user_id>{user_id}</user_id>
       <email>kassa.testuser@test.be</email>
+      <date_of_birth>1996-01-01</date_of_birth>
       <contact>
         <first_name>Kassa</first_name>
         <last_name>TestUser</last_name>
       </contact>
       <type>private</type>
-      <user_id>{user_id}</user_id>
-      <date_of_birth>1996-01-01</date_of_birth>
+      <session_id>sess-test-001</session_id>
       <payment_due>
-        <amount>25.00</amount>
+        <amount currency="eur">25.00</amount>
         <status>unpaid</status>
       </payment_due>
     </customer>

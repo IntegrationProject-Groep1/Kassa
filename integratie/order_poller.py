@@ -449,7 +449,7 @@ class OrderPoller:
             invoice_xml = sender.build_invoice_request_xml(
                 user_id=customer_info.get('x_user_id'),
                 invoice_data=inv_data,
-                correlation_id=correlation_id
+                correlation_id=str(correlation_id) if correlation_id else ""
             )
             ok_invoice = sender.send_typed_message('invoice_request', invoice_xml, order_id=order_id)
 
