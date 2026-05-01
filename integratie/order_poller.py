@@ -547,15 +547,23 @@ class OrderPoller:
 
             country_code = customer_info.get('country_code', '')
 
+            # Attempt to split name into first/last if possible, or use defaults
+            name_parts = customer_info.get('name', '').split(' ', 1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else "."
+
             inv_data = {
-                'name': customer_info.get('name'),
+                'first_name': first_name,
+                'last_name': last_name,
                 'email': customer_info.get('email'),
                 'address': {
                     'street': customer_info.get('street', ''),
+                    'number': "", # Odoo street usually includes number; split if needed
                     'city': customer_info.get('city', ''),
-                    'zip': customer_info.get('zip', ''),
+                    'postal_code': customer_info.get('zip', ''),
                     'country': country_code
                 },
+                'company_name': customer_info.get('name') if customer_info.get('customer_type') == 'company' else "",
                 'vat_number': customer_info.get('vat', '')
             }
             invoice_xml = sender.build_invoice_request_xml(

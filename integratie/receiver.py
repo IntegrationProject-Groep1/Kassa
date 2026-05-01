@@ -272,7 +272,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         update_vals["x_outstanding_amount"] = amount
     if body.find("vat_number") is not None:
         update_vals["vat"] = vat_number if vat_number else False
-    if body.find("company_name") is not None and not name:
+    if company_name and not name:
         update_vals["name"] = company_name
     if body.find("date_of_birth") is not None:
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
