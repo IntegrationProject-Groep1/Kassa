@@ -1,5 +1,10 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=250&section=header&animation=fadeIn" />
+
+  <!-- Typing SVG -->
+  <a href="https://git.io/typing-svg">
+    <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=45&pause=1000&color=FFFFFF&center=true&vCenter=true&width=900&height=120&lines=Kassa+Integration;The+Resilient+Pulse+of+Event+Retail" alt="Typing SVG" />
+  </a>
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
@@ -25,7 +30,9 @@
 
 ---
 
-## Overview
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Overview&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 The **Kassa Integration** is the mission-critical communication bridge for Team POS at Desideriushogeschool 2026. It orchestrates high-integrity data flows between **Odoo 17** and external enterprise platforms including Salesforce CRM, Drupal, and IoT infrastructure.
 
@@ -33,7 +40,9 @@ Built on an event-driven architecture, it guarantees **100% message durability**
 
 ---
 
-## 📊 Project Health
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Project%20Health&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/github/last-commit/IntegrationProject-Groep1/Kassa?style=for-the-badge&logo=github&color=777777&labelColor=161b22" />
@@ -43,7 +52,9 @@ Built on an event-driven architecture, it guarantees **100% message durability**
 
 ---
 
-## Core Capabilities & Resilience
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Core%20Capabilities&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 ### Offline-First Design
 The integration service is built to handle RabbitMQ unavailability. Outgoing messages are automatically routed through the `sender.py` resilient publisher:
@@ -58,7 +69,7 @@ The integration service is built to handle RabbitMQ unavailability. Outgoing mes
 ---
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:ffffff&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=System%20Architecture&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
 The service acts as a decoupled orchestrator, managing state between Odoo's synchronous XML-RPC API and the asynchronous RabbitMQ bus.
@@ -122,7 +133,9 @@ graph TD
 
 ---
 
-## CI/CD & Quality Assurance
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Quality%20Assurance&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 The project employs a robust multi-stage GitHub Actions pipeline:
 
@@ -139,7 +152,9 @@ Runs on every push/PR to `main`, `dev`, or `prod`:
 
 ---
 
-## 📚 Project Documentation
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Documentation&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 Detailed technical and functional documentation can be found in the `documentatie/` directory:
 
@@ -153,9 +168,11 @@ Detailed technical and functional documentation can be found in the `documentati
 
 ---
 
-## Repository Structure
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Repo%20Structure&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
-```text
+\`\`\`text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
  ┣ 📂 addons/                # Custom Odoo 17 modules
@@ -173,11 +190,13 @@ Detailed technical and functional documentation can be found in the `documentati
  ┣ 📜 docker-compose.yml     # Local dev orchestration stack
  ┣ 📜 Dockerfile             # Integration service container definition
  ┗ 📜 README.md
-```
+\`\`\`
 
 ---
 
-## Getting Started
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Getting%20Started&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
+</p>
 
 ### 1. Prerequisites
 - **Docker & Docker Compose**
@@ -186,37 +205,37 @@ Detailed technical and functional documentation can be found in the `documentati
 ### 2. Rapid Launch (Docker)
 The integration service automatically bootstraps the Odoo database, installs required modules, and configures custom fields on startup.
 
-```bash
+\`\`\`bash
 cp .env.example .env
 # Edit .env and set ODOO_MASTER_PASS and other credentials
 docker-compose up -d
-```
+\`\`\`
 
 - **Odoo POS**: [http://localhost:8069](http://localhost:8069)
 
 ### 3. Local Python Setup (Development)
 If you wish to run the integration scripts or tests outside of Docker:
-```bash
+\`\`\`bash
 python -m venv .venv
 source .venv/bin/activate  # Or .venv\Scripts\activate on Windows
 pip install -r integratie/requirements.txt
-```
+\`\`\`
 
 ### 4. Diagnostics & Verification
-```bash
+\`\`\`bash
 # Verify XML-RPC connectivity to Odoo
 docker-compose exec kassa-integratie python tools/ping_odoo.py
 
 # Run full test suite
 docker-compose exec kassa-integratie pytest integratie/tests/
-```
+\`\`\`
 
 ---
 
 <div align="center">
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:ffffff&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
+  <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Meet%20The%20Team&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=twinkle" />
 </p>
 
 <br/>
