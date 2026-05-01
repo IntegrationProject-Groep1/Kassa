@@ -1,10 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=120&section=header&animation=fadeIn" />
-
-  <!-- Optimized Typing SVG -->
-  <a href="https://git.io/typing-svg">
-    <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=32&pause=1000&color=FFFFFF&center=true&vCenter=true&width=600&height=100&lines=Kassa+Integration;The+Resilient+Pulse+of+Event+Retail" alt="Typing SVG" />
-  </a>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=250&section=header&text=Kassa%20Integration&fontSize=80&animation=fadeIn&fontColor=ffffff&fontAlignY=35&desc=THE%20RESILIENT%20PULSE%20OF%20EVENT%20RETAIL&descAlignY=65&descSize=20" />
 
   <!-- Tech Badges -->
   <img src="https://img.shields.io/badge/Python%203.12-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=161b22" />
@@ -172,7 +167,7 @@ Detailed technical and functional documentation can be found in the `documentati
   <img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:000000,100:333333&height=100&section=header&text=Repo%20Structure&fontSize=40&fontColor=ffffff&fontAlignY=50&animation=fadeIn" />
 </p>
 
-\`\`\`text
+```text
 📦 Kassa
  ┣ 📂 .github/workflows      # CI, Deploy, and Security pipelines
  ┣ 📂 addons/                # Custom Odoo 17 modules
@@ -190,7 +185,7 @@ Detailed technical and functional documentation can be found in the `documentati
  ┣ 📜 docker-compose.yml     # Local dev orchestration stack
  ┣ 📜 Dockerfile             # Integration service container definition
  ┗ 📜 README.md
-\`\`\`
+```
 
 ---
 
@@ -205,11 +200,11 @@ Detailed technical and functional documentation can be found in the `documentati
 ### 2. Rapid Launch (Docker)
 The integration service automatically bootstraps the Odoo database, installs required modules, and configures custom fields on startup.
 
-\`\`\`bash
+```bash
 cp .env.example .env
 # Edit .env and set ODOO_MASTER_PASS and other credentials
 docker-compose up -d
-\`\`\`
+```
 
 - **Odoo POS**: [http://localhost:8069](http://localhost:8069)
 
