@@ -399,7 +399,7 @@ class OrderPoller:
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle regular sales orders."""
         items = []
-        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in order['lines']]
+        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
 
         if line_ids:
             line_details = self.models.execute_kw(
@@ -419,7 +419,7 @@ class OrderPoller:
                 )
                 product_info_map = {p['id']: p for p in products}
 
-            all_tax_ids = list(set([tid for line in line_details for tid in line.get('tax_ids', [])]))
+            all_tax_ids = list(set([tid for line in line_details for tid in (line.get('tax_ids') or [])]))
             tax_map = {}
             if all_tax_ids:
                 tax_details = self.models.execute_kw(
@@ -431,7 +431,7 @@ class OrderPoller:
 
             for line in line_details:
                 vat_rate = 0
-                amounts = [tax_map.get(t_id, 0) for t_id in line.get('tax_ids', [])]
+                amounts = [tax_map.get(t_id, 0) for t_id in (line.get('tax_ids') or [])]
                 if amounts:
                     vat_rate = int(max(amounts))
 

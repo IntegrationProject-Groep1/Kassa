@@ -174,6 +174,7 @@ def test_profile_update():
       <email>{new_email}</email>
       <date_of_birth>1990-01-01</date_of_birth>
       <contact><first_name>Test</first_name><last_name>Updated</last_name></contact>
+      <type>private</type>
     """
     publish(build_msg("profile_update", xml), "kassa.incoming.profile")
     wait(8, "receiver processing update")
@@ -259,11 +260,11 @@ def test_pos_order_sync():
     # 5. Check if x_rabbitmq_sent flag was updated
     order = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.order",
-        "read", [order_id, ["x_rabbitmq_sent"]]
+        "read", [order_id, ["x_rabbitmq_sent", "x_rabbitmq_error"]]
     )[0]
 
     ok = order["x_rabbitmq_sent"] is True
-    report_result("Sender: POS Order Polling", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+    report_result("Sender: POS Order Polling", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}, error = {order.get('x_rabbitmq_error')}")
 
 
 # ── TEST CATEGORY: SYSTEM (Validation & Resilience) ──────────────────────────
