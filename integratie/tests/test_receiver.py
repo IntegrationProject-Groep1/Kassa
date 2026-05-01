@@ -121,7 +121,8 @@ class TestValidateXml:
             "<timestamp>2026-03-28T12:00:00Z</timestamp>"
             "<version>2.0</version>"
             "</header>"
-            "<body><badge_id>BADGE-001</badge_id><location>bar</location><scanned_at>2026-03-28T12:00:00Z</scanned_at></body>"
+            "<body><badge_id>BADGE-001</badge_id><location>bar</location>"
+            "<scanned_at>2026-03-28T12:00:00Z</scanned_at></body>"
             "</message>"
         )
         receiver.validate_xml(xml, "badge_scanned")  # should not raise
@@ -515,8 +516,9 @@ class TestProcessMessage:
 
         ch.basic_ack.assert_called_once_with(delivery_tag=42)
         ch.basic_nack.assert_not_called()
+        expected_msg = "Badge BADGE-X not found in local Odoo cache."
         mock_send_error.assert_called_once_with(
             error_code="badge_not_found",
             related_message_id="test-msg-001",
-            error_description="Badge BADGE-X not found in local Odoo cache.",
+            error_description=expected_msg,
         )

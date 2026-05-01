@@ -13,7 +13,7 @@ Duplicate prevention:
 
 Feedback Loop (Best Practice):
     If a message fails strict XSD validation, the error is written back to Odoo
-    in the `x_rabbitmq_error` field. The poller skips orders with errors to 
+    in the `x_rabbitmq_error` field. The poller skips orders with errors to
     prevent infinite retry loops on broken data.
 
 Offline resilience:
@@ -98,7 +98,7 @@ class OrderPoller:
             order_ids = self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'pos.order', 'search',
-                [[['state', 'in', ['paid', 'done']], 
+                [[['state', 'in', ['paid', 'done']],
                   ['x_rabbitmq_sent', '=', False],
                   ['x_rabbitmq_error', '=', False]]]
             )
@@ -141,7 +141,7 @@ class OrderPoller:
                 partner_id = partner_id[0]
 
             base_fields = [
-                'id', 'name', 'email', 'phone', 'is_company', 'parent_id', 
+                'id', 'name', 'email', 'phone', 'is_company', 'parent_id',
                 'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
             ]
             try:
@@ -351,7 +351,8 @@ class OrderPoller:
             for line in line_details:
                 vat_rate = 0
                 amounts = [tax_map.get(t_id, 0) for t_id in line.get('tax_ids', [])]
-                if amounts: vat_rate = int(max(amounts))
+                if amounts:
+                    vat_rate = int(max(amounts))
 
                 # BEST PRACTICE: Use price_subtotal_incl to ensure the XML matches what the customer actually paid
                 total_incl = float(line.get('price_subtotal_incl', line['qty'] * line['price_unit']))
@@ -421,7 +422,7 @@ class OrderPoller:
         ok_invoice = True
         if order.get('account_move') and not is_anonymous and customer_info:
             logger.info(f"🧾 Order {order_id} is invoiced — triggering invoice_request")
-            
+
             # Fetch ISO country code (e.g., 'be') for the customer's country
             country_code = ""
             if customer_info.get('country_id'):
@@ -451,7 +452,7 @@ class OrderPoller:
                 correlation_id=correlation_id
             )
             ok_invoice = sender.send_typed_message('invoice_request', invoice_xml, order_id=order_id)
-        
+
         return (ok_consumption and ok_payment and ok_wallet and ok_invoice), payment_msg_id
 
     def poll_badge_assignments(self):
@@ -464,7 +465,7 @@ class OrderPoller:
             partner_ids = self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'res.partner', 'search',
-                [[['x_badge_id', '!=', False], 
+                [[['x_badge_id', '!=', False],
                   ['x_badge_sent', '=', False],
                   ['x_user_id', '!=', False]]]
             )
@@ -482,7 +483,7 @@ class OrderPoller:
                 badge_id = p['x_badge_id']
                 user_id = p['x_user_id']
                 logger.info(f"🏷️ Badge {badge_id} assigned to user {user_id} — sending badge_assigned")
-                
+
                 badge_xml = sender.build_badge_assigned_xml(badge_id, user_id)
                 if sender.send_typed_message('badge_assigned', badge_xml):
                     self.models.execute_kw(
@@ -505,7 +506,8 @@ class OrderPoller:
                 reconnect_counter += 1
                 if reconnect_counter >= reconnect_interval / interval:
                     flushed_ids = sender.flush_buffer()
-                    if flushed_ids: self._mark_orders_sent(flushed_ids)
+                    if flushed_ids:
+                        self._mark_orders_sent(flushed_ids)
                     reconnect_counter = 0
 
                 # Poll for orders
@@ -527,7 +529,8 @@ class OrderPoller:
     def _mark_orders_sent(self, order_ids: list) -> None:
         """Mark orders as sent after buffer flush."""
         unique_ids = list(set(order_ids))
-        if not unique_ids: return
+        if not unique_ids:
+            return
         try:
             self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
