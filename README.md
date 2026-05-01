@@ -250,16 +250,6 @@ docker-compose exec kassa-integratie pytest integratie/tests/
   </a>
 </p>
 
-<br/>
-
-*"Turning complex business requirements into seamless technical solutions."*
-
-<br/>
-
-**Official Repository - Integration Project Desideriushogeschool 2026**
-
-</div>
-
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=150&section=footer" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=200&section=footer&text=Turning%20complex%20business%20requirements%20into%20seamless%20technical%20solutions.&fontSize=25&animation=fadeIn&fontColor=ffffff&fontAlignY=55&desc=OFFICIAL%20REPOSITORY%20-%20INTEGRATION%20PROJECT%20DESIDERIUSHOGESCHOOL%202026&descAlignY=80&descSize=15" />
 </p>
