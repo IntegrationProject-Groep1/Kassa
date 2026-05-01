@@ -230,7 +230,7 @@ class OrderPoller:
 
         return False
 
-    def process_order(self, order):
+    def process_order(self, order, country_map=None):
         """Process a single POS order and send as consumption_order."""
         order_id = order['id']
 
