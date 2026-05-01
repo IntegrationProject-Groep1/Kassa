@@ -33,7 +33,7 @@ from collections import OrderedDict
 from typing import Any, List, Dict, Tuple, cast
 from lxml import etree
 
-from config_utils import get_env, parse_rabbit_port, require_env
+from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
 from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
 from typing_utils import OdooModelsProxy, OdooRecord
 
@@ -172,13 +172,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         raise ValueError("new_registration: <payment_due> missing in <customer>")
 
     status = (payment_due_el.findtext("status") or "unpaid").strip()
-    amount = 0.0
-    amount_el = payment_due_el.find("amount")
-    if amount_el is not None and amount_el.text:
-        try:
-            amount = float(amount_el.text)
-        except ValueError:
-            amount = 0.0
+    amount = parse_xml_float(payment_due_el.find("amount"))
 
     if not user_id:
         raise ValueError("new_registration: user_id missing in <customer>")
@@ -273,13 +267,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         update_vals["x_company_id"] = company_id
     if payment_due_el is not None:
         status = (payment_due_el.findtext("status") or "pending").strip()
-        amount = 0.0
-        amount_el = payment_due_el.find("amount")
-        if amount_el is not None and amount_el.text:
-            try:
-                amount = float(amount_el.text)
-            except ValueError:
-                amount = 0.0
+        amount = parse_xml_float(payment_due_el.find("amount"))
         update_vals["x_payment_status"] = status
         update_vals["x_outstanding_amount"] = amount
     if body.find("vat_number") is not None:

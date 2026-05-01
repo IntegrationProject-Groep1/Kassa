@@ -211,13 +211,16 @@ class OrderPoller:
             return True
 
         except sender.XSDValidationError as e:
-            # BEST PRACTICE: Log the error and mark it in Odoo to stop the loop
+            # BEST PRACTICE: Log the full error internally, but write a sanitized message to Odoo
+            # to avoid exposing technical details or stack traces to end-users.
             logger.error(f"❌ Contract violation in order {order_id}: {e}")
             try:
                 self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'write',
-                    [[order_id], {'x_rabbitmq_error': str(e)}]
+                    [[order_id], {
+                        'x_rabbitmq_error': "Data validation failed (XSD). Check integration logs for details."
+                    }]
                 )
             except Exception as rpc_err:
                 logger.error(f"Could not write error back to Odoo: {rpc_err}")
