@@ -190,13 +190,20 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
     fields_to_check = [
         ("res.partner", "x_user_id", "External CRM User ID", "char", {"index": True}),
         ("res.partner", "x_badge_id", "IoT Badge ID", "char", {"index": True}),
+        ("res.partner", "x_badge_sent", "Badge Assignment Sent to CRM", "boolean", {}),
         ("res.partner", "x_wallet_balance", "Visitor Wallet Balance", "float", {}),
         ("res.partner", "x_date_of_birth", "Date of Birth", "date", {}),
+        ("res.partner", "x_session_id", "Session ID", "char", {}),
+        ("res.partner", "x_session_title", "Session Title", "char", {}),
+        ("res.partner", "x_company_id", "Company ID", "char", {}),
+        ("res.partner", "x_outstanding_amount", "Outstanding Amount", "float", {}),
+        ("res.partner", "x_payment_status", "Payment Status", "char", {}),
         ("product.template", "x_is_topup", "Top-up Product", "boolean", {}),
         ("product.template", "x_age_restricted", "Age Restricted", "boolean", {}),
         ("pos.order", "x_rabbitmq_sent", "Sent to CRM via RabbitMQ", "boolean", {}),
         ("pos.order", "x_wallet_updated", "Wallet Balance Adjusted", "boolean", {}),
         ("pos.order", "x_payment_message_id", "CRM Payment Correlation ID", "char", {}),
+        ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
     ]
 
     for model, name, field_description, field_type, field_kwargs in fields_to_check:
@@ -263,7 +270,7 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                     ["amount", "=", rate],
                     ["type_tax_use", "=", "sale"],
                     ["amount_type", "=", "percent"],
-                    ["price_include", "=", False]
+                    ["price_include", "=", True]
                 ]
             ],
             {"fields": ["id"], "limit": 1},
@@ -280,11 +287,11 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             "account.tax",
             "create",
             [{
-                "name": f"{int(rate)}% Sales Tax",
+                "name": f"{int(rate)}% Sales Tax (Incl.)",
                 "amount": rate,
                 "amount_type": "percent",
                 "type_tax_use": "sale",
-                "price_include": False,
+                "price_include": True,
             }],
         )
 
@@ -386,7 +393,7 @@ def ensure_demo_products(
         ("Beer", "DRINK-004", 3.00, drinks_cat_id, 21.0, {"x_age_restricted": True}),
     ]
 
-    for name, ref, price, categ_id, tax_rate, extra_vals in products:
+    for name, ref, price, pos_cat_id, tax_rate, extra_vals in products:
         existing = _rpc(
             models,
             odoo_db,
@@ -404,7 +411,7 @@ def ensure_demo_products(
             "default_code": ref,
             "list_price": price,
             "type": "consu",
-            "categ_id": categ_id,
+            "pos_categ_ids": [(6, 0, [pos_cat_id])],
             "available_in_pos": True,
         }
         if tax_id:

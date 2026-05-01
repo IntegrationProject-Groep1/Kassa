@@ -55,10 +55,10 @@ ODOO_DB = get_env("ODOO_DB")
 ODOO_USER = get_env("ODOO_USER")
 ODOO_PASS = get_env("ODOO_PASS")
 
-QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
-DLX_NAME = os.environ.get("RABBIT_DLX", EXCHANGE_NAME)
-DLQ_NAME = os.environ.get("RABBIT_DLQ", "kassa.incoming.dlq")
-DLQ_ROUTING_KEY = os.environ.get("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
+QUEUE_NAME = get_env("RABBIT_INCOMING_QUEUE", "kassa.incoming")
+DLX_NAME = get_env("RABBIT_DLX", EXCHANGE_NAME)
+DLQ_NAME = get_env("RABBIT_DLQ", "kassa.incoming.dlq")
+DLQ_ROUTING_KEY = get_env("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
 
 RETRY_QUEUE = f"{QUEUE_NAME}.retry"
 RETRY_DELAY_MS = 5000  # 5 seconds
@@ -162,12 +162,23 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     ctype = (customer.findtext("type") or "private").strip().lower()
     vat_number = (customer.findtext("vat_number") or "").strip()
     dob_str = (customer.findtext("date_of_birth") or "").strip()
+    company_id = (customer.findtext("company_id") or "").strip()
+    badge_id = (customer.findtext("badge_id") or "").strip()
+    session_id = (customer.findtext("session_id") or "").strip()
+    session_title = (customer.findtext("session_title") or "").strip()
 
-    payment_due_el = body.find("payment_due")
+    payment_due_el = customer.find("payment_due")
     if payment_due_el is None:
-        raise ValueError("new_registration: <payment_due> missing in <body>")
+        raise ValueError("new_registration: <payment_due> missing in <customer>")
 
     status = (payment_due_el.findtext("status") or "unpaid").strip()
+    amount = 0.0
+    amount_el = payment_due_el.find("amount")
+    if amount_el is not None and amount_el.text:
+        try:
+            amount = float(amount_el.text)
+        except ValueError:
+            amount = 0.0
 
     if not user_id:
         raise ValueError("new_registration: user_id missing in <customer>")
@@ -184,7 +195,16 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         "email": email,
         "x_user_id": user_id,
         "is_company": ctype == "company",
+        "x_session_id": session_id,
+        "x_payment_status": status,
+        "x_outstanding_amount": amount,
     }
+    if session_title:
+        partner_vals["x_session_title"] = session_title
+    if badge_id:
+        partner_vals["x_badge_id"] = badge_id
+    if company_id:
+        partner_vals["x_company_id"] = company_id
     if dob_str:
         partner_vals["x_date_of_birth"] = dob_str
     if vat_number:
@@ -229,6 +249,10 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     ctype = (body.findtext("type") or "private").strip().lower()
     vat_number = (body.findtext("vat_number") or "").strip()
     dob_str = (body.findtext("date_of_birth") or "").strip()
+    company_id = (body.findtext("company_id") or "").strip()
+    company_name = (body.findtext("company_name") or "").strip()
+
+    payment_due_el = body.find("payment_due")
 
     if not user_id:
         raise ValueError("profile_update: user_id missing in <body>")
@@ -245,8 +269,23 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         "is_company": ctype == "company",
         "name": name or company_name or "Unknown",
     }
+    if company_id:
+        update_vals["x_company_id"] = company_id
+    if payment_due_el is not None:
+        status = (payment_due_el.findtext("status") or "pending").strip()
+        amount = 0.0
+        amount_el = payment_due_el.find("amount")
+        if amount_el is not None and amount_el.text:
+            try:
+                amount = float(amount_el.text)
+            except ValueError:
+                amount = 0.0
+        update_vals["x_payment_status"] = status
+        update_vals["x_outstanding_amount"] = amount
     if body.find("vat_number") is not None:
         update_vals["vat"] = vat_number if vat_number else False
+    if body.find("company_name") is not None and not name:
+        update_vals["name"] = company_name
     if body.find("date_of_birth") is not None:
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
@@ -277,9 +316,12 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
 
     badge_id = (body.findtext("badge_id") or "").strip()
     location = (body.findtext("location") or "unknown").strip()
+    scanned_at = (body.findtext("scanned_at") or "").strip()
 
     if not badge_id:
         raise ValueError("badge_scanned: badge_id missing in <body>")
+
+    logger.info("[BADGE_SCANNED] Processing scan from %s at %s", location, scanned_at)
 
     existing: List[OdooRecord] = models.execute_kw(
         db, uid, pw,
@@ -315,6 +357,7 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
 
     user_id = (body.findtext("user_id") or "").strip()
     session_id = (body.findtext("session_id") or "").strip()
+    reason = (body.findtext("reason") or "").strip()
 
     if not user_id:
         raise ValueError("cancel_registration: user_id missing in <body>")
@@ -334,9 +377,10 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
             [[partner_id], {"active": False}],
         )
         logger.info(
-            "[CANCEL_REGISTRATION] ✓ Profile deactivated: Odoo ID=%s | session_id=%s",
+            "[CANCEL_REGISTRATION] ✓ Profile deactivated: Odoo ID=%s | session_id=%s | reason=%s",
             partner_id,
             session_id,
+            reason,
         )
     else:
         logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
@@ -517,3 +561,4 @@ def start_listening():
 
 if __name__ == "__main__":
     start_listening()
+

@@ -303,6 +303,11 @@ _OUTGOING_SCHEMA_MAP = {
     "payment_registered_consumption": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
+    "invoice_request": _SCHEMA_DIR / "schema_invoice_request.xsd",
+    "badge_assigned": _SCHEMA_DIR / "schema_badge_assigned.xsd",
+    "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
+    "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
+    "system_error": _SCHEMA_DIR / "schema_error.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -312,21 +317,26 @@ _schema_cache: dict[str, etree.XMLSchema] = {}
 def _validate_outgoing(msg_type: str, message_xml: str) -> None:
     """
     Validate outgoing XML against the corresponding XSD schema.
-    Raises ValueError if validation fails. Skips silently if no schema is mapped.
+    Strictly catches both XSD violations and structural XML syntax errors.
     """
     schema_path = _OUTGOING_SCHEMA_MAP.get(msg_type)
     if not schema_path or not schema_path.exists():
         return
 
-    if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(
-            etree.parse(str(schema_path)))
+    try:
+        if msg_type not in _schema_cache:
+            _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
 
-    xml_doc = etree.fromstring(message_xml.encode("utf-8"))
-    if not _schema_cache[msg_type].validate(xml_doc):
-        errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(
-            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        xml_doc = etree.fromstring(message_xml.encode("utf-8"))
+        if not _schema_cache[msg_type].validate(xml_doc):
+            errors = str(_schema_cache[msg_type].error_log)
+            raise ValueError(f"XSD Validation Error: {errors}")
+            
+    except etree.XMLSyntaxError as e:
+        raise ValueError(f"XML Syntax Error (Malformed XML): {str(e)}")
+    except Exception as e:
+        if isinstance(e, ValueError): raise e
+        raise ValueError(f"Unexpected Validation Failure: {str(e)}")
 
 
 def send_typed_message(
@@ -335,32 +345,26 @@ def send_typed_message(
     order_id: int | None = None,
     buffer_on_fail: bool = True
 ) -> bool:
-    """Validate against XSD then send with automatic routing key selection based on type."""
+    """
+    Validate against XSD and send the message.
+    Strictly blocks the message if XSD validation fails to ensure contract compliance.
+    """
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(
-            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        # BLOCK the message: Log the detailed XSD error and raise.
+        # This prevents invalid XML from reaching RabbitMQ or the offline buffer.
+        error_msg = f"XSD validation failed for '{msg_type}': {str(e)}"
+        logger.error(
+            f"❌ MESSAGE BLOCKED: {error_msg}\n"
+            f"Message content (first 500 chars): {message_xml[:500]}..."
+        )
+        # Send a system_error to notify monitoring
+        send_error_to_queue("invalid_xml_format", None, error_msg[:500])
+        raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
     return send_message(routing_key, message_xml, order_id=order_id, buffer_on_fail=buffer_on_fail)
-
-
-def send_heartbeat() -> None:
-    """
-    Send a heartbeat message to kassa.heartbeat — without buffering.
-    Heartbeats are diagnostic signals used for monitoring; they are discarded
-    if the broker is unreachable to avoid filling the buffer with stale pings.
-    """
-    root = ET.Element("message")
-    _make_header(root, "heartbeat")
-    body = ET.SubElement(root, "body")
-    ET.SubElement(body, "status").text = "up"
-    uptime = int(time.monotonic() - _APP_START_TIME)
-    ET.SubElement(body, "uptime_seconds").text = str(uptime)
-
-    heartbeat_xml = _to_xml(root)
-    send_typed_message("heartbeat", heartbeat_xml, buffer_on_fail=False)
 
 
 def get_buffered_order_ids() -> set:
@@ -512,7 +516,7 @@ def build_payment_registered_xml(
 
 
 def build_invoice_request_xml(
-    user_id: str, invoice_data: dict, correlation_id=None
+    user_id: str, invoice_data: dict, correlation_id: str
 ) -> str:
     """
     Build an invoice_request message asking the CRM to generate a formal invoice.
@@ -523,6 +527,9 @@ def build_invoice_request_xml(
                        optionally vat_number for B2B invoices.
         correlation_id: message_id of the original sale this invoice covers.
     """
+    if not correlation_id:
+        raise ValueError("correlation_id is required for invoice_request")
+
     root = ET.Element("message")
     _make_header(root, "invoice_request", correlation_id)
     body = ET.SubElement(root, "body")
@@ -549,6 +556,9 @@ def build_invoice_request_xml(
     addr = ET.SubElement(inv, "address")
     for k, v in invoice_data.get("address", {}).items():
         ET.SubElement(addr, k).text = str(v) if v is not None else ""
+
+    if invoice_data.get("company_name"):
+        ET.SubElement(inv, "company_name").text = invoice_data["company_name"]
 
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
@@ -602,22 +612,22 @@ def build_refund_processed_xml(
         original_payment_msg_id: message_id of the payment_registered message
                                  being refunded — sent as correlation_id so the
                                  CRM can locate the original transaction.
-        refund_type:             'full' or 'partial'.
+        refund_type:             'consumption_item' or 'partial'.
         refund_amount:           Amount refunded in EUR.
-        refund_method:           How the refund was returned, e.g. 'cash',
-                                 'card', 'wallet'.
-        refund_reason:           Short human-readable reason for the refund.
+        refund_method:           How the refund was returned: 'badge_wallet',
+                                 'cash', or 'card_reversal'.
+        refund_reason:           Canonical reason: 'duplicate_payment',
+                                 'customer_request', or 'system_error'.
         original_transaction_id: Terminal transaction ID from the original sale.
         user_id:                 CRM x_user_id if the customer is known.
         description:             Optional longer description of the refund.
         new_wallet_balance:      Updated wallet balance after the refund, if the
-                                 refund method was 'wallet'. Included in the XML
+                                 refund method was 'badge_wallet'. Included in the XML
                                  so the CRM can update its own balance record.
     """
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
     if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id
