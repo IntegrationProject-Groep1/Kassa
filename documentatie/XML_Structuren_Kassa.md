@@ -399,7 +399,7 @@ afgedwongen in code, niet door XSD. -->
 <!-- sku: fysiek product-ID uit Odoo (voorheen de waarde van <id>). -->
 <xs:element name="sku" type="xs:string"/>
 <xs:element name="description" type="xs:string"/>
-<xs:element name="quantity" type="xs:positiveInteger"/>
+<xs:element name="quantity" type="xs:integer"/>
 <xs:element name="unit_price">
 <xs:complexType><xs:simpleContent>
 <xs:extension base="xs:decimal">
@@ -863,8 +863,8 @@ XSD Schema (schema_badge_assigned.xsd):
 <xs:element name="message"><xs:complexType><xs:sequence>
 <xs:element name="header" type="HeaderType"/>
 <xs:element name="body"><xs:complexType><xs:sequence>
-<xs:element name="badge_id" type="xs:string"/>
 <xs:element name="user_id" type="xs:string"/>
+<xs:element name="badge_id" type="xs:string"/>
 <xs:element name="assigned_at" type="xs:dateTime"/>
 </xs:sequence></xs:complexType></xs:element>
 </xs:sequence></xs:complexType></xs:element>
@@ -1019,11 +1019,15 @@ XSD Schema (schema_refund_processed.xsd):
 <xs:element name="message"><xs:complexType><xs:sequence>
 <xs:element name="header" type="HeaderType"/>
 <xs:element name="body"><xs:complexType><xs:sequence>
-<xs:element name="refund_type"><xs:simpleType><xs:restriction base="xs:string">
+<xs:element name="user_id" type="xs:string" minOccurs="0"/>
+<xs:element name="refund_type">
+<xs:simpleType>
+<xs:restriction base="xs:string">
 <xs:enumeration value="consumption_item"/>
 <xs:enumeration value="partial"/>
-</xs:restriction></xs:simpleType></xs:element>
-<xs:element name="user_id" type="xs:string" minOccurs="0"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:element>
 <xs:element name="refund"><xs:complexType><xs:sequence>
 <xs:element name="amount" type="CurrencyAmountType"/>
 <xs:element name="method"><xs:simpleType><xs:restriction base="xs:string">

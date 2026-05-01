@@ -100,7 +100,7 @@ class OrderPoller:
                 'pos.order', 'search',
                 [[['state', 'in', ['paid', 'done']],
                   ['x_rabbitmq_sent', '=', False],
-                  ['x_rabbitmq_error', '=', False]]]
+                  ['x_rabbitmq_error', 'in', [False, '']]]]
             )
 
             if buffered_ids:
