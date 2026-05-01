@@ -131,7 +131,7 @@ class OrderPoller:
             logger.error(f"❌ Error fetching orders: {e}")
             return []
 
-    def get_customer_info(self, partner_id):
+    def get_customer_info(self, partner_id, country_map=None):
         """Fetch customer data from Odoo, including parent company info if needed."""
         if not partner_id:
             return None
@@ -162,18 +162,20 @@ class OrderPoller:
             # Determine customer type (private vs company)
             # A partner is 'company' if is_company=True OR if they have a parent that is a company
             if info.get('country_id'):
-                try:
-                    country_id = info['country_id'][0]
-                    country_data = self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.country', 'read',
-                        [[country_id], ['code']]
-                    )
-                    if country_data:
-                        info['country_code'] = country_data[0].get('code', '').lower()
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not fetch country code: {str(e)}")
-                    info['country_code'] = ""
+                country_id = info['country_id'][0]
+                if country_map and country_id in country_map:
+                    info['country_code'] = country_map[country_id]
+                else:
+                    try:
+                        country_data = self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.country', 'read',
+                            [[country_id], ['code']]
+                        )
+                        info['country_code'] = country_data[0].get('code', '').lower() if country_data else ""
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not fetch country code: {str(e)}")
+                        info['country_code'] = ""
             else:
                 info['country_code'] = ""
 
@@ -182,7 +184,7 @@ class OrderPoller:
                 info['customer_type'] = "company"
             elif info.get('parent_id'):
                 # REUSE existing method for parent lookup to keep logic consistent
-                parent_data = self.get_customer_info(info['parent_id'])
+                parent_data = self.get_customer_info(info['parent_id'], country_map=country_map)
                 if parent_data and parent_data.get('is_company'):
                     info['customer_type'] = "company"
                     # Use parent's country if child has none
@@ -409,9 +411,10 @@ class OrderPoller:
                 [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids', 'price_subtotal_incl']]
             )
 
-            # Bulk fetch product details (x_is_topup and pos_categ_ids) for top-up identification
+            # Bulk fetch product details
             product_ids = list(set([line['product_id'][0] for line in line_details]))
             product_info_map = {}
+            all_cat_ids = set()
             if product_ids:
                 products = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -419,6 +422,18 @@ class OrderPoller:
                     [product_ids, ['id', 'x_is_topup', 'pos_categ_ids']]
                 )
                 product_info_map = {p['id']: p for p in products}
+                for p in products:
+                    all_cat_ids.update(p.get('pos_categ_ids', []))
+
+            # Pre-fetch category names
+            cat_map = {}
+            if all_cat_ids:
+                categories = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.category', 'read',
+                    [list(all_cat_ids), ['id', 'name']]
+                )
+                cat_map = {c['id']: c['name'] for c in categories}
 
             all_tax_ids = list(set([tid for line in line_details for tid in (line.get('tax_ids') or [])]))
             tax_map = {}
@@ -431,14 +446,23 @@ class OrderPoller:
                 tax_map = {t['id']: t['amount'] for t in tax_details}
 
             for line in line_details:
+                prod_info = product_info_map.get(line['product_id'][0], {})
+                
+                # Check top-up status using pre-fetched data
+                is_topup = prod_info.get('x_is_topup')
+                if not is_topup:
+                    for cid in prod_info.get('pos_categ_ids', []):
+                        if cat_map.get(cid) == 'Top-ups':
+                            is_topup = True
+                            break
+                            
                 vat_rate = 0
                 amounts = [tax_map.get(t_id, 0) for t_id in (line.get('tax_ids') or [])]
                 if amounts:
                     vat_rate = int(max(amounts))
 
-                # BEST PRACTICE: Force vat_rate=0 for top-up products to comply with fiscal requirements
-                prod_info = product_info_map.get(line['product_id'][0], {})
-                if prod_info.get('x_is_topup'):
+                # Force vat_rate=0 for top-up products
+                if is_topup:
                     vat_rate = 0
 
                 # BEST PRACTICE: Use price_subtotal_incl to ensure the XML matches what the customer actually paid
@@ -454,7 +478,7 @@ class OrderPoller:
                     'total_amount': total_incl,
                     'vat_rate': vat_rate,
                     'currency': 'eur',
-                    'item_type': 'wallet_topup' if prod_info.get('x_is_topup') else None
+                    'item_type': 'wallet_topup' if is_topup else None
                 })
 
         customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
@@ -558,6 +582,7 @@ class OrderPoller:
                 [partner_ids, ['id', 'x_badge_id', 'x_user_id']]
             )
 
+            success_ids = []
             for p in partners:
                 try:
                     badge_id = p['x_badge_id']
@@ -566,11 +591,7 @@ class OrderPoller:
 
                     badge_xml = sender.build_badge_assigned_xml(badge_id, user_id)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'res.partner', 'write',
-                            [[p['id']], {'x_badge_sent': True}]
-                        )
+                        success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
                     try:
@@ -586,6 +607,13 @@ class OrderPoller:
                         pass
                 except Exception as e:
                     logger.error(f"❌ Error processing badge assignment for partner {p['id']}: {e}")
+            
+            if success_ids:
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.partner', 'write',
+                    [success_ids, {'x_badge_sent': True}]
+                )
 
         except Exception as e:
             logger.error(f"❌ Error in poll_badge_assignments: {e}")
@@ -608,8 +636,27 @@ class OrderPoller:
 
                 # Poll for orders
                 orders = self.get_pending_orders()
+                
+                # Pre-fetch country data for all partners in the fetched orders
+                partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
+                country_map = {}
+                if partner_ids:
+                    partners = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'read',
+                        [partner_ids, ['country_id']]
+                    )
+                    country_ids = list(set([p['country_id'][0] for p in partners if p.get('country_id')]))
+                    if country_ids:
+                        countries = self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.country', 'read',
+                            [country_ids, ['id', 'code']]
+                        )
+                        country_map = {c['id']: c.get('code', '').lower() for c in countries}
+
                 for order in orders:
-                    self.process_order(order)
+                    self.process_order(order, country_map=country_map)
 
                 # Poll for badge assignments
                 self.poll_badge_assignments()
