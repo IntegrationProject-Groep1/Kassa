@@ -273,7 +273,7 @@ class OrderPoller:
                 user_id=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
-            ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
+            ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
 
         original_msg_id = str(uuid.uuid4())
         line_ids = [item[0] if isinstance(
@@ -324,7 +324,7 @@ class OrderPoller:
             user_id=customer_info.get('x_user_id') if customer_info else None,
             is_anonymous=is_anonymous
         )
-        ok_refund = sender.send_typed_message('refund_processed', refund_xml, order_id=order_id)
+        ok_refund = sender.send_typed_message('refund_processed', refund_xml, record_id=order_id)
         return ok_wallet and ok_refund
 
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
@@ -388,7 +388,7 @@ class OrderPoller:
             is_anonymous=is_anonymous)
 
         order_id = order['id']
-        ok_consumption = sender.send_typed_message('consumption_order', xml_message, order_id=order_id)
+        ok_consumption = sender.send_typed_message('consumption_order', xml_message, record_id=order_id)
         correlation_id = ET.fromstring(xml_message).findtext('.//message_id')
 
         payment_ids = order.get('payment_ids', [])
@@ -404,7 +404,7 @@ class OrderPoller:
                     [order_id, customer_info['id'], wallet_paid_amount]
                 )
                 wallet_xml = sender.build_wallet_balance_update_xml(customer_info.get('x_user_id'), new_balance)
-                ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
+                ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
                 ok_wallet = False
@@ -419,7 +419,7 @@ class OrderPoller:
             user_id=customer_info.get('x_user_id') if customer_info else None,
             correlation_id=correlation_id
         )
-        ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, order_id=order_id)
+        ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
 
         # NEW: Trigger invoice_request if order is invoiced in Odoo
@@ -455,7 +455,7 @@ class OrderPoller:
                 invoice_data=inv_data,
                 correlation_id=str(correlation_id) if correlation_id else ""
             )
-            ok_invoice = sender.send_typed_message('invoice_request', invoice_xml, order_id=order_id)
+            ok_invoice = sender.send_typed_message('invoice_request', invoice_xml, record_id=order_id)
 
         return (ok_consumption and ok_payment and ok_wallet and ok_invoice), payment_msg_id
 

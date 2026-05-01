@@ -253,7 +253,13 @@ def setup_exchange(channel):
     )
 
 
-def send_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order", buffer_on_fail: bool = True) -> bool:
+def send_message(
+    routing_key: str,
+    message_xml: str,
+    record_id: int | None = None,
+    model: str = "pos.order",
+    buffer_on_fail: bool = True
+) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
@@ -359,18 +365,21 @@ def send_typed_message(
         raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml, record_id=record_id, model=model, buffer_on_fail=buffer_on_fail)
+    return send_message(
+        routing_key,
+        message_xml,
+        record_id=record_id,
+        model=model,
+        buffer_on_fail=buffer_on_fail
+    )
 
 
 def get_buffered_record_ids(model: str = "pos.order") -> set[int]:
     """Return the set of record IDs currently waiting in the outbox buffer for a given model."""
-    global _last_buffer_mtime, _cached_buffer_ids
-    # Note: caching logic needs to be model-aware if we want to be strictly correct,
-    # but for now we just re-read if mtime changed.
     with _buffer_lock:
         if not BUFFER_FILE.exists():
             return set()
-        
+
         # Simple implementation: read all and filter
         entries = _read_buffer()
         return {e["record_id"] for e in entries if e.get("model") == model and "record_id" in e}
