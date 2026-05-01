@@ -450,7 +450,7 @@ class OrderPoller:
 
             for line in line_details:
                 prod_info = product_info_map.get(line['product_id'][0], {})
-           
+   
                 # Check top-up status using pre-fetched data
                 is_topup = prod_info.get('x_is_topup')
                 if not is_topup:
@@ -458,7 +458,7 @@ class OrderPoller:
                         if cat_map.get(cid) == 'Top-ups':
                             is_topup = True
                             break
-                       
+               
                 vat_rate = 0
                 amounts = [tax_map.get(t_id, 0) for t_id in (line.get('tax_ids') or [])]
                 if amounts:
@@ -610,7 +610,7 @@ class OrderPoller:
                         pass
                 except Exception as e:
                     logger.error(f"❌ Error processing badge assignment for partner {p['id']}: {e}")
-       
+   
             if success_ids:
                 self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -639,7 +639,7 @@ class OrderPoller:
 
                 # Poll for orders
                 orders = self.get_pending_orders()
-           
+   
                 # Pre-fetch country data for all partners in the fetched orders
                 partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
                 country_map = {}
