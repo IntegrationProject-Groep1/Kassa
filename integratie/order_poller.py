@@ -527,7 +527,8 @@ class OrderPoller:
 
 def main():
     poller = OrderPoller()
-    if not poller.connect_odoo(): return
+    if not poller.connect_odoo():
+        return
     poller.poll(interval=5)
 
 

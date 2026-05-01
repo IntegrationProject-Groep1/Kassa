@@ -53,6 +53,10 @@ class BufferFullError(RuntimeError):
     """Raised when the outbox buffer has reached its maximum capacity."""
 
 
+class XSDValidationError(ValueError):
+    """Raised when an outgoing message fails strict XSD validation."""
+
+
 logger = logging.getLogger(__name__)
 
 

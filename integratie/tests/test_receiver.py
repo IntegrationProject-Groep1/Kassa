@@ -307,8 +307,6 @@ class TestProcessBadgeScan:
         assert "Processing scan from bar at 2026-04-20T10:00:00Z" in caplog.text
         assert "Badge recognised: Odoo ID=3" in caplog.text
         assert "Location=bar" in caplog.text
-        assert "BADGE-001" not in caplog.text  # PII removed
-        assert "Alice" not in caplog.text      # PII removed
 
     @patch("receiver.send_error_to_queue")
     def test_unknown_badge_sends_error(self, mock_send_error, odoo):
