@@ -199,10 +199,10 @@ class OrderPoller:
             logger.error(f"❌ Error fetching customer info: {e}")
             return None
 
-    def is_topup_product(self, product_id: int, product_info_map: dict) -> bool:
+    def is_topup_product(self, product_id: int, product_info_map: dict, cat_map: dict = None) -> bool:
         """
         Identify if a product is a Top-up based on the x_is_topup flag or POS category.
-        Reuses the pre-fetched product_info_map for efficiency.
+        Uses the pre-fetched product_info_map and optional cat_map for efficiency.
         """
         if not product_id:
             return False
@@ -212,21 +212,26 @@ class OrderPoller:
         if p.get('x_is_topup'):
             return True
 
-        # Fallback: POS category check (if 'Top-ups' is in the category IDs)
-        # Note: In production we'd lookup the actual name, but x_is_topup is the preferred method.
+        # Fallback: POS category check
         pos_categ_ids = p.get('pos_categ_ids', [])
         if pos_categ_ids:
-            try:
-                categories = self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'pos.category', 'read',
-                    [pos_categ_ids, ['name']]
-                )
-                for cat in categories:
-                    if cat.get('name') == 'Top-ups':
+            if cat_map:
+                for cid in pos_categ_ids:
+                    if cat_map.get(cid) == 'Top-ups':
                         return True
-            except Exception as e:
-                logger.warning(f"⚠️ Could not fetch POS category names for product {product_id}: {e}")
+            else:
+                # Legacy fallback if no cat_map is provided (should be avoided)
+                try:
+                    categories = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.category', 'read',
+                        [pos_categ_ids, ['name']]
+                    )
+                    for cat in categories:
+                        if cat.get('name') == 'Top-ups':
+                            return True
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not fetch POS category names for product {product_id}: {e}")
 
         return False
 
@@ -455,12 +460,7 @@ class OrderPoller:
                 prod_info = product_info_map.get(line['product_id'][0], {})
 
                 # Check top-up status using pre-fetched data
-                is_topup = prod_info.get('x_is_topup')
-                if not is_topup:
-                    for cid in prod_info.get('pos_categ_ids', []):
-                        if cat_map.get(cid) == 'Top-ups':
-                            is_topup = True
-                            break
+                is_topup = self.is_topup_product(line['product_id'][0], product_info_map, cat_map=cat_map)
 
                 vat_rate = 0
                 amounts = [tax_map.get(t_id, 0) for t_id in (line.get('tax_ids') or [])]
