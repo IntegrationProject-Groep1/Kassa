@@ -93,6 +93,7 @@ class OrderPoller:
         """Fetch orders in state 'paid'/'done' that haven't been sent or errored."""
         try:
             buffered_ids = sender.get_buffered_record_ids(model="pos.order")
+            logger.info(f"🔍 Polling for orders. Buffered IDs: {buffered_ids}")
 
             # Search for completed orders not yet sent and not marked with errors
             order_ids = self.models.execute_kw(
@@ -102,9 +103,11 @@ class OrderPoller:
                   ['x_rabbitmq_sent', '=', False],
                   ['x_rabbitmq_error', 'in', [False, '']]]]
             )
+            logger.info(f"🔍 Found raw order IDs: {order_ids}")
 
             if buffered_ids:
                 order_ids = [oid for oid in order_ids if oid not in buffered_ids]
+                logger.info(f"🔍 Filtered order IDs: {order_ids}")
 
             if not order_ids:
                 return []
