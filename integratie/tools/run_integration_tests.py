@@ -96,7 +96,10 @@ def ensure_opened_session(uid, models):
         ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
         [{"config_id": config_id, "user_id": uid}]
     )
-    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.session", "action_pos_session_open", [[session_id]])
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session",
+        "action_pos_session_open", [[session_id]]
+    )
     print(f"  [ODOO] Opened new POS session: {session_id}")
     return session_id
 
@@ -139,7 +142,7 @@ def test_registration_and_idempotency():
 
     # Send first time
     publish(full_xml, "kassa.incoming.registration")
-    wait(6, "receiver processing creation")
+    wait(8, "receiver processing creation")
 
     uid, models = get_rpc()
     partners = models.execute_kw(
@@ -169,10 +172,11 @@ def test_profile_update():
     xml = f"""
       <user_id>{TEST_USER_ID}</user_id>
       <email>{new_email}</email>
+      <date_of_birth>1990-01-01</date_of_birth>
       <contact><first_name>Test</first_name><last_name>Updated</last_name></contact>
     """
     publish(build_msg("profile_update", xml), "kassa.incoming.profile")
-    wait(6, "receiver processing update")
+    wait(8, "receiver processing update")
 
     uid, models = get_rpc()
     partner = models.execute_kw(
@@ -181,14 +185,17 @@ def test_profile_update():
     )[0]
 
     ok = partner["email"] == new_email and partner["name"] == "Test Updated"
-    report_result("Receiver: profile_update", ok, f"Email: {partner['email']}, Name: {partner['name']}")
+    report_result(
+        "Receiver: profile_update", ok,
+        f"Email: {partner['email']}, Name: {partner['name']}"
+    )
 
 
 def test_cancellation():
     section("TEST 4: cancel_registration")
     xml = f"<user_id>{TEST_USER_ID}</user_id><session_id>s1</session_id><reason>Testing</reason>"
     publish(build_msg("cancel_registration", xml), "kassa.incoming.cancel")
-    wait(6, "receiver processing cancellation")
+    wait(8, "receiver processing cancellation")
 
     uid, models = get_rpc()
     # Fix E501: wrap the long line
@@ -202,7 +209,10 @@ def test_cancellation():
     report_result("Receiver: cancel_registration (soft delete)", ok, f"Active: {partner['active']}")
 
     # Reactivate for further tests
-    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write", [[partner["id"]], {"active": True}])
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner",
+        "write", [[partner["id"]], {"active": True}]
+    )
 
 
 # ── TEST CATEGORY: SENDER (Outbound) ──────────────────────────────────────────
@@ -215,7 +225,10 @@ def test_pos_order_sync():
     session_id = ensure_opened_session(uid, models)
 
     # 2. Setup minimal order
-    partner_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "search", [[["x_user_id", "=", TEST_USER_ID]]])
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -235,13 +248,19 @@ def test_pos_order_sync():
     print(f"  [ODOO] Created Order ID: {order_id}")
 
     # 3. Mark as paid to trigger poller
-    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order",
+        "write", [[order_id], {"state": "paid"}]
+    )
 
     # 4. Wait for poller (interval is 3-5s)
     wait(12, "order poller to pick up order")
 
     # 5. Check if x_rabbitmq_sent flag was updated
-    order = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]])[0]
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order",
+        "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
 
     ok = order["x_rabbitmq_sent"] is True
     report_result("Sender: POS Order Polling", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
@@ -288,8 +307,7 @@ def main():
         section("SUMMARY")
         all_pass = True
         for name, res, reason in RESULTS:
-            icon = "✅" if res == "PASS" else "❌"
-            print(f"  {icon} {res.ljust(5)} | {name.ljust(35)} | {reason}")
+            print(f"  {'✅' if res == 'PASS' else '❌'} {res.ljust(5)} | {name.ljust(35)} | {reason}")
             if res != "PASS":
                 all_pass = False
 
