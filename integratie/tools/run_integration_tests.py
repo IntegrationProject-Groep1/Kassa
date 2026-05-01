@@ -165,11 +165,11 @@ def test_registration_and_idempotency():
 def test_profile_update():
     section("TEST 3: profile_update")
     new_email = f"updated-{TEST_ID}@test.be"
+    # Profile update XSD does NOT include <type>, it must be removed to pass validation
     xml = f"""
       <user_id>{TEST_USER_ID}</user_id>
       <email>{new_email}</email>
       <contact><first_name>Test</first_name><last_name>Updated</last_name></contact>
-      <type>private</type>
     """
     publish(build_msg("profile_update", xml), "kassa.incoming.profile")
     wait(6, "receiver processing update")
@@ -191,9 +191,11 @@ def test_cancellation():
     wait(6, "receiver processing cancellation")
 
     uid, models = get_rpc()
+    # Fix E501: wrap the long line
+    domain = [["x_user_id", "=", TEST_USER_ID], ["active", "in", [True, False]]]
     partner = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
-        [[["x_user_id", "=", TEST_USER_ID], ["active", "in", [True, False]]]], {"fields": ["active"]}
+        [domain], {"fields": ["active"]}
     )[0]
 
     ok = partner["active"] is False
