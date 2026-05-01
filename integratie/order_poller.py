@@ -28,6 +28,7 @@ import os
 import time
 import logging
 from pathlib import Path
+from typing import Optional
 import collections
 import defusedxml.ElementTree as ET
 import uuid
@@ -206,7 +207,7 @@ class OrderPoller:
             logger.error(f"❌ Error fetching customer info: {e}")
             return None
 
-    def is_topup_product(self, product_id: int, product_info_map: dict, cat_map: dict = None) -> bool:
+    def is_topup_product(self, product_id: int, product_info_map: dict, cat_map: Optional[dict] = None) -> bool:
         """
         Identify if a product is a Top-up based on the x_is_topup flag or POS category.
         Uses the pre-fetched product_info_map and optional cat_map for efficiency.
