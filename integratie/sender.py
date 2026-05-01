@@ -358,13 +358,23 @@ def send_typed_message(
     except ValueError as e:
         # BLOCK the message: Log the detailed XSD error and raise.
         # This prevents invalid XML from reaching RabbitMQ or the offline buffer.
+        
+        # BEST PRACTICE: Attempt to extract message_id from the invalid XML for traceability
+        related_id = None
+        try:
+            # We use a non-validating parse just to get the header ID
+            blocked_root = ET.fromstring(message_xml)
+            related_id = blocked_root.findtext(".//message_id")
+        except Exception:
+            pass
+
         error_msg = f"XSD validation failed for '{msg_type}': {str(e)}"
         logger.error(
             f"❌ MESSAGE BLOCKED: {error_msg}\n"
             f"Message content (first 500 chars): {message_xml[:500]}..."
         )
-        # Send a system_error to notify monitoring
-        send_error_to_queue("invalid_xml_format", None, error_msg[:500])
+        # Send a system_error with the extracted related_id
+        send_error_to_queue("invalid_xml_format", related_id, error_msg[:500])
         raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")

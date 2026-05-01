@@ -194,8 +194,8 @@ class OrderPoller:
                         'pos.order', 'write',
                         [[order_id], {'x_payment_message_id': payment_msg_id}]
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not set x_payment_message_id on order: {e}")
 
             if all_sent:
                 self.models.execute_kw(
@@ -369,8 +369,9 @@ class OrderPoller:
                 })
 
         customer_type = "private"
-        if customer_info and customer_info.get('is_company'):
-            customer_type = "company"
+        if customer_info:
+            if customer_info.get('is_company') or customer_info.get('parent_id'):
+                customer_type = "company"
 
         xml_message = sender.build_consumption_order_xml(
             items=items,
@@ -420,6 +421,19 @@ class OrderPoller:
         ok_invoice = True
         if order.get('account_move') and not is_anonymous and customer_info:
             logger.info(f"🧾 Order {order_id} is invoiced — triggering invoice_request")
+            
+            # Fetch ISO country code (e.g., 'be') for the customer's country
+            country_code = ""
+            if customer_info.get('country_id'):
+                country_id = customer_info['country_id'][0]
+                country_data = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.country', 'read',
+                    [[country_id], ['code']]
+                )
+                if country_data:
+                    country_code = country_data[0].get('code', '').lower()
+
             inv_data = {
                 'name': customer_info.get('name'),
                 'email': customer_info.get('email'),
@@ -427,7 +441,7 @@ class OrderPoller:
                     'street': customer_info.get('street', ''),
                     'city': customer_info.get('city', ''),
                     'zip': customer_info.get('zip', ''),
-                    'country': customer_info.get('country_id')[1] if isinstance(customer_info.get('country_id'), (list, tuple)) else ''
+                    'country': country_code
                 },
                 'vat_number': customer_info.get('vat', '')
             }
