@@ -43,3 +43,44 @@ jobs:
 
       - name: Unit Tests
         run: pytest integratie/tests/ -v
+
+  integration:
+    name: Integration Tests (Docker Compose)
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: ${{ secrets.CI_POSTGRES_USER || 'odoo_test' }}
+      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'odoo_test_pwd' }}
+      ODOO_MASTER_PASS: ${{ secrets.CI_ODOO_MASTER_PASS || 'admin_test' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Odoo Config
+        run: |
+          sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
+
+      - name: Start Services
+        run: docker-compose up -d
+
+      - name: Wait for Integration Service (Healthcheck)
+        run: |
+          echo "Waiting for kassa_integratie to become healthy..."
+          for i in {1..30}; do
+            HEALTH=$(docker inspect --format='{{.State.Health.Status}}' kassa_integratie)
+            if [ "$HEALTH" == "healthy" ]; then
+              echo "✓ Service is healthy!"
+              exit 0
+            fi
+            echo "...current status: $HEALTH (waiting 10s)"
+            sleep 10
+          done
+          echo "❌ Service did not become healthy in time."
+          docker-compose logs
+          exit 1
+
+      - name: Run Integration Tests
+        run: docker exec kassa_integratie python tools/run_integration_tests.py
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose down
