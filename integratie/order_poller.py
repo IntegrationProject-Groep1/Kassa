@@ -312,7 +312,7 @@ class OrderPoller:
                             break
             except Exception as e:
                 logger.warning(
-                    f"⚠️ Could not fetch original order ID for refund: {e}")
+                    f"⚠️ Could not fetch original order ID for refund (Traceability failed): {e}")
 
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
@@ -391,19 +391,18 @@ class OrderPoller:
         ok_wallet = True
 
         if is_badge_wallet and customer_info and not order.get('x_wallet_updated'):
-            new_balance = round(float(customer_info.get('x_wallet_balance', 0.0)) - wallet_paid_amount, 2)
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'res.partner', 'write',
-                [[customer_info['id']], {'x_wallet_balance': new_balance}]
-            )
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.order', 'write',
-                [[order_id], {'x_wallet_updated': True}]
-            )
-            wallet_xml = sender.build_wallet_balance_update_xml(customer_info.get('x_user_id'), new_balance)
-            ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
+            # BEST PRACTICE: Use action_process_wallet_payment for atomic balance updates
+            try:
+                new_balance = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'action_process_wallet_payment',
+                    [order_id, customer_info['id'], wallet_paid_amount]
+                )
+                wallet_xml = sender.build_wallet_balance_update_xml(customer_info.get('x_user_id'), new_balance)
+                ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, order_id=order_id)
+            except Exception as e:
+                logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
+                ok_wallet = False
 
         payment_xml = sender.build_payment_registered_xml(
             payment_context="consumption",

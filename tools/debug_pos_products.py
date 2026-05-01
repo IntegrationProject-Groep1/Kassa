@@ -5,14 +5,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ODOO_URL = "http://localhost:8069"
-ODOO_DB = "odoo_kassa"
-ODOO_USER = "desiderius"
-ODOO_PASS = "xT7#mK9vR2pL5nQ"
+ODOO_URL = os.environ.get("ODOO_URL", "http://localhost:8069")
+ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
+ODOO_USER = os.environ.get("ODOO_USER", "odoo")
+ODOO_PASS = os.environ.get("ODOO_PASS")
+
+if not ODOO_PASS:
+    print("Error: ODOO_PASS environment variable is not set.")
+    exit(1)
 
 def debug():
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    if not uid:
+        print("Error: Odoo authentication failed.")
+        exit(1)
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
     print(f"--- POS Categories ---")

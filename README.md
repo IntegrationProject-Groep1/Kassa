@@ -123,7 +123,6 @@ graph TD
 | `refund_processed` | **Outgoing** | `kassa.payments.refund` | Sync refunds with Salesforce. |
 | `payment_status` | **Outgoing** | `kassa.frontend.payment` | Update Drupal transaction status. |
 | `wallet_balance_update`| **Outgoing** | `kassa.frontend.wallet` | Push wallet changes to Drupal. |
-| `heartbeat` | **Outgoing** | `kassa.heartbeat` | System health pulse. |
 | `system_error` | **Outgoing** | `kassa.errors` | Log failures to Elastic/Monitoring. |
 
 ---
@@ -224,6 +223,15 @@ docker-compose exec kassa-integratie python tools/ping_odoo.py
 # Run full test suite
 docker-compose exec kassa-integratie pytest integratie/tests/
 ```
+
+---
+
+### 🆘 Troubleshooting
+
+*   **Odoo Assets 500:** If the POS UI fails to load after a restart, clear the attachment cache:
+    `docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"`
+*   **Buffer Issues:** If messages are stuck, check `outbox/outbox.json` permissions or run the `flush_buffer()` tool.
+*   **RabbitMQ Topology Conflicts:** If the receiver crashes with a `406 Precondition Failed`, it means the production broker already has a queue with different arguments. The service will log this as a `CRITICAL` error.
 
 ---
 

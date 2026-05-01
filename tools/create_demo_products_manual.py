@@ -1,9 +1,9 @@
 import xmlrpc.client
 import os
 
-ODOO_URL = os.environ.get('ODOO_URL','http://localhost:8069')
-ODOO_DB = os.environ.get('ODOO_DB','odoo_kassa')
-ODOO_USER = os.environ.get('ODOO_USER','desiderius')
+ODOO_URL = os.environ.get('ODOO_URL', 'http://localhost:8069')
+ODOO_DB = os.environ.get('ODOO_DB', 'odoo_kassa')
+ODOO_USER = os.environ.get('ODOO_USER', 'odoo')
 ODOO_PASS = os.environ.get('ODOO_PASS')
 
 if ODOO_PASS is None:
@@ -20,8 +20,9 @@ models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object", allow_none=Tru
 
 # Ensure categories
 print('Ensuring POS categories Top-ups and Drinks')
-for name in ['Top-ups','Drinks']:
-    recs = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.category', 'search_read', [[['name','=',name]]], {'fields':['id'], 'limit':1})
+for name in ['Top-ups', 'Drinks']:
+    recs = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.category', 'search_read', [
+                             [['name', '=', name]]], {'fields': ['id'], 'limit': 1})
     if recs:
         print(f'Category {name} exists, id={recs[0]["id"]}')
     else:
@@ -31,7 +32,8 @@ for name in ['Top-ups','Drinks']:
 # Ensure payment methods
 print('\nEnsuring payment methods Cash, Card, Badge Wallet')
 for method, is_cash, extra in [('Cash', True, {}), ('Card', False, {}), ('Badge Wallet', False, {'split_transactions': True})]:
-    recs = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.payment.method', 'search_read', [[['name','=',method]]], {'fields':['id'], 'limit':1})
+    recs = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.payment.method', 'search_read', [
+                             [['name', '=', method]]], {'fields': ['id'], 'limit': 1})
     if recs:
         print(f'Payment method {method} exists, id={recs[0]["id"]}')
     else:
@@ -52,21 +54,24 @@ products = [
 ]
 
 for name, ref, price, cat_name, tax_rate, extra in products:
-    cat = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.category', 'search_read', [[['name','=',cat_name]]], {'fields':['id'], 'limit':1})
-    categ_id = cat[0]['id'] if cat else False
-    tax_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'account.tax', 'search', [[['amount','=',tax_rate], ['type_tax_use','=','sale'], ['amount_type','=','percent'], ['price_include','=',False]]])
+    cat = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'pos.category', 'search_read', [
+                            [['name', '=', cat_name]]], {'fields': ['id'], 'limit': 1})
+    pos_categ_id = cat[0]['id'] if cat else False
+    tax_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'account.tax', 'search', [
+                                [['amount', '=', tax_rate], ['type_tax_use', '=', 'sale'], ['amount_type', '=', 'percent'], ['price_include', '=', True]]])
     tax_id = tax_ids[0] if tax_ids else False
-    existing = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'product.template', 'search_read', [[['default_code','=',ref]]], {'fields':['id'], 'limit':1})
+    existing = models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'product.template', 'search_read', [
+                                 [['default_code', '=', ref]]], {'fields': ['id'], 'limit': 1})
     vals = {
         'name': name,
         'default_code': ref,
         'list_price': price,
         'type': 'consu',
-        'categ_id': categ_id,
+        'pos_categ_ids': [[6, 0, [pos_categ_id]]] if pos_categ_id else False,
         'available_in_pos': True
     }
     if tax_id:
-        vals['taxes_id'] = [[6,0,[tax_id]]]
+        vals['taxes_id'] = [[6, 0, [tax_id]]]
     vals.update(extra)
     if existing:
         models.execute_kw(ODOO_DB, uid, ODOO_PASS, 'product.template', 'write', [[existing[0]['id']], vals])

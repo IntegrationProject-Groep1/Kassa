@@ -81,7 +81,6 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
-    "heartbeat": "kassa.heartbeat",
     "system_error": "kassa.errors",
 }
 
