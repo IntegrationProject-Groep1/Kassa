@@ -242,7 +242,7 @@ class OrderPoller:
             is_anonymous = False
 
             if order['partner_id']:
-                customer_info = self.get_customer_info(order['partner_id'])
+                customer_info = self.get_customer_info(order['partner_id'], country_map=country_map)
                 if not customer_info:
                     is_anonymous = True
             else:
