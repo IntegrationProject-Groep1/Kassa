@@ -237,6 +237,9 @@ class OrderPoller:
         if order_id in self.processed_orders:
             return False
 
+        # Local cache for this polling cycle to optimize parent partner lookups
+        self._customer_cache = {}
+
         try:
             customer_info = None
             is_anonymous = False
@@ -282,8 +285,6 @@ class OrderPoller:
             return True
 
         except sender.XSDValidationError as e:
-            # BEST PRACTICE: Log the full error internally, but write a sanitized message to Odoo
-            # to avoid exposing technical details or stack traces to end-users.
             logger.error(f"❌ Contract violation in order {order_id}: {e}")
             try:
                 self.models.execute_kw(
@@ -300,6 +301,8 @@ class OrderPoller:
         except Exception as e:
             logger.error(f"❌ Error processing order {order_id}: {e}")
             return False
+        finally:
+            self._customer_cache = {}
 
     def _get_wallet_payment_amount(self, payment_ids) -> tuple[bool, float]:
         """Determine if a wallet was used and the amount."""
