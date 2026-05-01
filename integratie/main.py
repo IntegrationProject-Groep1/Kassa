@@ -144,6 +144,14 @@ def main():
     poller_thread.start()
     print("✅ Poller thread started", flush=True)
 
+    # Create marker file for healthcheck to indicate the service is fully ready
+    try:
+        with open("/tmp/service_ready", "w") as f:
+            f.write("ready")
+        print("✅ Service ready marker created", flush=True)
+    except Exception as e:
+        print(f"⚠️ Could not create ready marker: {e}", flush=True)
+
     print("✅ All services running. Press Ctrl+C to stop.", flush=True)
 
     # Keep main thread alive

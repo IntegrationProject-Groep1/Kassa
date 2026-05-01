@@ -60,18 +60,19 @@ jobs:
           sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
 
       - name: Start Services
-        run: docker compose up -d
+        run: docker compose up -d --build
 
       - name: Wait for Integration Service (Healthcheck)
         run: |
           echo "Waiting for kassa_integratie to become healthy..."
-          for i in {1..30}; do
+          # Increased timeout to 10 minutes (60 * 10s) as Odoo setup can be slow in CI
+          for i in {1..60}; do
             HEALTH=$(docker inspect --format='{{.State.Health.Status}}' kassa_integratie)
             if [ "$HEALTH" == "healthy" ]; then
               echo "✓ Service is healthy!"
               exit 0
             fi
-            echo "...current status: $HEALTH (waiting 10s)"
+            echo "...current status: $HEALTH (waiting 10s, attempt $i/60)"
             sleep 10
           done
           echo "❌ Service did not become healthy in time."
