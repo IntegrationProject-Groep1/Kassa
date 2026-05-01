@@ -7,7 +7,7 @@ import sender
 def test_is_topup_product_fallback():
     poller = OrderPoller()
     poller.models = MagicMock()
-    poller.models.execute_kw.return_value = [{'id': 99, 'name': 'Drinks & Top-ups'}]
+    poller.models.execute_kw.return_value = [{'id': 99, 'name': 'Top-ups'}]
 
     product_info = {'pos_categ_ids': [99]}
 
