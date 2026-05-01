@@ -1,6 +1,6 @@
 # Datamapping Documentatie — Team Kassa (Odoo POS)
 
-Versie 2.5 — Conform XML_naamgeving standaard (snake_case) | Geintegreerd document
+Versie 2.8 (Strikte Harmonistatie v2.3 — XSD WET) — Conform XML_naamgeving standaard (snake_case) | Geintegreerd document
 
 Integratieproject Desideriushogeschool 2026
 
@@ -59,8 +59,12 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Customer | &lt;customer&gt;&lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
 | Customer | &lt;customer&gt;&lt;date_of_birth&gt; | Date (xs:date) | Ja  | Geboortedatum (YYYY-MM-DD). Gebruikt voor leeftijdsberekening bij alcoholcontrole. Vervangt age. |
-| Betaling | &lt;payment_due&gt;&lt;amount&gt; | Decimal | Ja  | Te betalen inschrijvingsbedrag. Opgeslagen in Odoo als `res.partner.x_outstanding_amount`. |
-| Betaling | &lt;payment_due&gt;&lt;status&gt; | Enum | Ja  | Status inschrijvingsbetaling: `unpaid` of `paid`. Opgeslagen in Odoo als `res.partner.x_payment_status`. |
+| Customer | &lt;customer&gt;&lt;session_id&gt; | String | Ja | Uniek ID van de sessie/event (sess-xxx). |
+| Customer | &lt;customer&gt;&lt;session_title&gt; | String | Nee | Naam van de sessie voor weergave op het kassascherm. |
+| Customer | &lt;customer&gt;&lt;badge_id&gt; | String | Nee | Uniek ID van de toegewezen badge (indien reeds gekoppeld). |
+| Customer | &lt;customer&gt;&lt;company_id&gt; | String | Nee | Extern ID van de firma in het CRM. |
+| Betaling | &lt;customer&gt;&lt;amount_due&gt;&lt;amount&gt; | Decimal | Ja  | Te betalen inschrijvingsbedrag. Opgeslagen in Odoo als `res.partner.x_outstanding_amount`. |
+| Betaling | &lt;customer&gt;&lt;amount_due&gt;&lt;status&gt; | Enum | Ja  | Status inschrijvingsbetaling: `unpaid` of `paid`. Opgeslagen in Odoo als `res.partner.x_payment_status`. |
 
 | |     | |     | |
 | --- | --- | --- | --- | --- |
@@ -69,11 +73,12 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | **Object** | **XML-Veld** | **Datatype** | **Verplicht** | **Toelichting / Validatieregel** |
 | Header | &lt;header&gt;&lt;message_id&gt; | String | Ja  | Opslaan voor tracing. Gebruikt als related_message_id bij badge_not_found error. |
 | Header | &lt;header&gt;&lt;type&gt; | Enum | Ja  | Altijd: badge_scanned |
-| Header | &lt;header&gt;&lt;source&gt; | String | Ja  | ID van scanner, bv. iot_scanner_bar |
+| Header | &lt;header&gt;&lt;source&gt; | String | Ja  | Altijd: kassa |
 | Header | &lt;header&gt;&lt;timestamp&gt; | ISO-8601 UTC | Ja  | Formaat: YYYY-MM-DDTHH:MM:SSZ |
 | Header | &lt;header&gt;&lt;version&gt; | String | Ja  | Altijd: 2.0 |
 | Body | &lt;badge_id&gt; | String | Ja  | Uniek ID van de gescande badge/QR-code. Opzoeken in lokale Odoo-cache (x_badge_id). |
-| Body | &lt;location&gt; | String | Ja  | Locatie van de scanner, bv. hoofdbar, inkom, bar2 |
+| Body | &lt;location&gt; | Enum | Ja  | Locatie: entrance, bar of session. |
+| Body | &lt;scanned_at&gt; | ISO-8601 | Ja | Tijdstip waarop de scan fysiek plaatsvond. |
 
 | |     | |     | |
 | --- | --- | --- | --- | --- |
@@ -93,6 +98,9 @@ Elk dataveld dat uitgewisseld wordt, met bron, bestemming, XML-veld en validatie
 | Body | &lt;company_name&gt; | String | Cond. | Verplicht als type = company |
 | Body | &lt;vat_number&gt; | String | Cond. | Verplicht als type = company |
 | Body | &lt;date_of_birth&gt; | Date (xs:date) | Ja  | Geboortedatum (YYYY-MM-DD). Bijgewerkte waarde. Vervangt age. |
+| Body | &lt;company_id&gt; | String | Nee | Extern ID van de firma in het CRM. |
+| Betaling | &lt;amount_due&gt;&lt;amount&gt; | Decimal | Nee | Bijgewerkt inschrijvingsbedrag (indien gewijzigd). |
+| Betaling | &lt;amount_due&gt;&lt;status&gt; | Enum | Nee | Bijgewerkte status (paid/pending). |
 
 | |     | |     | |
 | --- | --- | --- | --- | --- |
@@ -287,4 +295,4 @@ Gebruik uitsluitend de onderstaande waarden. Geen hoofdletters, geen spaties, ge
 | &lt;payment_context&gt; | registration, consumption | Onderscheidt inschrijvings- van consumptiebetaling in payment_registered |
 | &lt;vat_rate&gt; | 0, 6, 12, 21 | 0 voor Top-up producten. De poller identificeert deze producten via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product`, niet enkel op het BTW-tarief. `vat_rate=0` wordt altijd geforceerd in de XML-export voor deze producten door `poller.py`. BTW-percentage voor overige producten opgehaald via `account.tax`. |
 
-Team Kassa | Datamapping v2.5 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+Team Kassa | Datamapping v2.8 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
