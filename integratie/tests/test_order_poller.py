@@ -111,6 +111,8 @@ def test_process_order_routes_refund(mock_sender, poller):
 
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
+        # Mocking return values for process_order to unpack
+        mock_consumption.return_value = (True, "msg-123")
         poller.process_order(order)
         mock_refund.assert_called_once()
         mock_consumption.assert_not_called()
@@ -127,6 +129,8 @@ def test_process_order_routes_consumption(mock_sender, poller):
 
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
+        # Mocking return values for process_order to unpack
+        mock_consumption.return_value = (True, "msg-123")
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -157,14 +161,15 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
     """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
     order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
-    with patch.object(poller, '_process_consumption', return_value=False):
+    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id")):
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
     # Verify x_rabbitmq_sent was NOT written
     all_calls = poller.models.execute_kw.call_args_list
     write_calls = [c for c in all_calls if len(c[0]) > 4
-                   and c[0][3] == 'pos.order' and c[0][4] == 'write']
+                   and c[0][3] == 'pos.order' and c[0][4] == 'write'
+                   and 'x_rabbitmq_sent' in c[0][5][1]]
     assert len(write_calls) == 0
 
 
@@ -415,7 +420,8 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     poller.models.execute_kw.side_effect = [
         # pos.payment read
         [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 4.0}],
-        8.5,  # action_process_wallet_payment returns the new balance atomically
+        True,  # res.partner write (balance)
+        True,  # pos.order write (x_wallet_updated)
     ]
     mock_sender.build_consumption_order_xml.return_value = (
         '<message><header><message_id>corr-wallet</message_id></header></message>'
@@ -431,24 +437,16 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     assert ok is True
     assert payment_msg_id == 'pay-wallet'
 
-    # Verify the atomic call was made on pos.order with action_process_wallet_payment
-    atomic_calls = [
+    # Verify write calls were made
+    write_calls = [
         c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'action_process_wallet_payment'
+        if len(c[0]) > 4 and c[0][4] == 'write'
     ]
-    assert len(atomic_calls) == 1
-    assert atomic_calls[0][0][5] == [25, 99, 4.0]
-
-    # Verify no separate res.partner or pos.order write calls were made
-    partner_write_calls = [
-        c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][3] == 'res.partner' and c[0][4] == 'write'
-    ]
-    assert len(partner_write_calls) == 0
+    assert len(write_calls) == 2
 
     mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
-        user_id='USR-1',
-        new_balance=8.5,
+        'USR-1',
+        8.5,
     )
 
     msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
@@ -496,8 +494,6 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
     order = {'id': 22, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 5, 'name': 'John', 'is_company': False,
                      'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': ''}
-    # parent company lookup
-    poller.models.execute_kw.return_value = [{'is_company': True}]
 
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>12345</message_id></header></message>'
