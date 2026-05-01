@@ -464,8 +464,6 @@ class OrderPoller:
                 tax_map = {t['id']: t['amount'] for t in tax_details}
 
             for line in line_details:
-                prod_info = product_info_map.get(line['product_id'][0], {})
-
                 # Check top-up status using pre-fetched data
                 is_topup = self.is_topup_product(line['product_id'][0], product_info_map, cat_map=cat_map)
 
