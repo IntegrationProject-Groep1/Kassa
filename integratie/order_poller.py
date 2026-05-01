@@ -139,6 +139,10 @@ class OrderPoller:
         if not partner_id:
             return None
 
+        # Return cached result if available
+        if hasattr(self, '_customer_cache') and partner_id in self._customer_cache:
+            return self._customer_cache[partner_id]
+
         try:
             if isinstance(partner_id, (list, tuple)):
                 partner_id = partner_id[0]
@@ -194,6 +198,9 @@ class OrderPoller:
                     if not info.get('country_code') and parent_data.get('country_code'):
                         info['country_code'] = parent_data['country_code']
 
+            # Populate cache
+            if hasattr(self, '_customer_cache'):
+                self._customer_cache[partner_id] = info
             return info
         except Exception as e:
             logger.error(f"❌ Error fetching customer info: {e}")
