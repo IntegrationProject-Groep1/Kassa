@@ -955,7 +955,7 @@ poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden 
 
 • Top-up identificatie: `is_topup_product()` helperfunctie toegevoegd. Identificeert Top-up producten via POS-categorie 'Top-ups' of custom veld `x_is_topup` op `product.product`. De eerdere detectie puur via `vat_rate=0` is vervangen — `vat_rate=0` wordt nu geforceerd ín de XML-export als gevolg van de categorie-check, niet meer als trigger ervoor.
 
-• `pos.order.line` query uitgebreid met `categ_id` in de fields-lijst voor categorie-lookup.
+• `pos.order.line` query uitgebreid met `pos_categ_ids` in de fields-lijst voor categorie-lookup.
 
 **Wijzigingen t.o.v. v1.1:**
 
@@ -986,7 +986,7 @@ Hoe het werkt:
 | **Stap** | **Actie** |
 | 1   | Kassamedewerker bevestigt betaling in Odoo POS → order krijgt state='done' |
 | 2   | poller.py detecteert de order via search_read op state='done' EN x_rabbitmq_sent=False |
-| 3   | poller.py haalt orderregels op met `tax_ids` en `categ_id`; roept `get_tax_rate()` aan per regel voor het BTW-percentage; roept `is_topup_product()` aan per regel voor Top-up identificatie |
+| 3   | poller.py haalt orderregels op met `tax_ids` en `pos_categ_ids`; roept `get_tax_rate()` aan per regel voor het BTW-percentage; roept `is_topup_product()` aan per regel voor Top-up identificatie |
 | 4   | poller.py detecteert betaalmethode via pos.payment → payment_method_id.name |
 | 5   | poller.py bouwt consumption_order XML via sender.py |
 | 6   | poller.py bouwt payment_registered XML (context: consumption) via sender.py |

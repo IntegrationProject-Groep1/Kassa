@@ -346,6 +346,11 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
             {'id': 11, 'product_id': (
                 2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
         ],
+        # product.product bulk read (for top-up identification)
+        [
+            {'id': 1, 'x_is_topup': False, 'pos_categ_ids': []},
+            {'id': 2, 'x_is_topup': False, 'pos_categ_ids': []},
+        ],
         # account.tax bulk read
         [{'id': 5, 'amount': 6.0}],
     ]
@@ -408,6 +413,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
         'is_company': False,
         'parent_id': False,
         'email': '',
+        'customer_type': 'private'
     }
     order = {
         'id': 25,
@@ -470,6 +476,11 @@ def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
             {'id': 11, 'product_id': (2, 'B'), 'qty': 1,
              'price_unit': 2.0, 'tax_ids': [3]},
         ],
+        # product.product bulk read (for top-up identification)
+        [
+            {'id': 1, 'x_is_topup': False, 'pos_categ_ids': []},
+            {'id': 2, 'x_is_topup': False, 'pos_categ_ids': []},
+        ],
         [{'id': 3, 'amount': 21.0}],  # single bulk tax call
     ]
 
@@ -492,7 +503,8 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
     )
     order = {'id': 22, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 5, 'name': 'John', 'is_company': False,
-                     'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': ''}
+                     'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': '',
+                     'customer_type': 'company'}
 
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>12345</message_id></header></message>'
@@ -512,7 +524,8 @@ def test_process_consumption_private_customer_type(mock_sender, poller):
     )
     order = {'id': 23, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 6, 'name': 'Jane', 'is_company': False,
-                     'parent_id': False, 'x_user_id': None, 'email': ''}
+                     'parent_id': False, 'x_user_id': None, 'email': '',
+                     'customer_type': 'private'}
 
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>12345</message_id></header></message>'

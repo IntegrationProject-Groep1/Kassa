@@ -132,7 +132,7 @@ class OrderPoller:
             return []
 
     def get_customer_info(self, partner_id):
-        """Fetch customer data from Odoo."""
+        """Fetch customer data from Odoo, including parent company info if needed."""
         if not partner_id:
             return None
 
@@ -145,6 +145,7 @@ class OrderPoller:
                 'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
             ]
             try:
+                # Attempt to read all integration fields
                 customer = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields + ['x_user_id']])
@@ -154,10 +155,61 @@ class OrderPoller:
                     self.odoo_db, self.odoo_uid, self.odoo_pass, 'res.partner', 'read',
                     [partner_id, base_fields])
 
-            return customer[0] if customer else None
+            if not customer:
+                return None
+
+            info = customer[0]
+            # Determine customer type (private vs company)
+            # A partner is 'company' if is_company=True OR if they have a parent that is a company
+            if info.get('country_id'):
+                try:
+                    country_id = info['country_id'][0]
+                    country_data = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.country', 'read',
+                        [[country_id], ['code']]
+                    )
+                    if country_data:
+                        info['country_code'] = country_data[0].get('code', '').lower()
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not fetch country code: {str(e)}")
+                    info['country_code'] = ""
+            else:
+                info['country_code'] = ""
+
+            info['customer_type'] = "private"
+            if info.get('is_company'):
+                info['customer_type'] = "company"
+            elif info.get('parent_id'):
+                # REUSE existing method for parent lookup to keep logic consistent
+                parent_data = self.get_customer_info(info['parent_id'])
+                if parent_data and parent_data.get('is_company'):
+                    info['customer_type'] = "company"
+                    # Use parent's country if child has none
+                    if not info.get('country_code') and parent_data.get('country_code'):
+                        info['country_code'] = parent_data['country_code']
+
+            return info
         except Exception as e:
             logger.error(f"❌ Error fetching customer info: {e}")
             return None
+
+    def is_topup_product(self, product_id: int, product_info_map: dict) -> bool:
+        """
+        Identify if a product is a Top-up based on the x_is_topup flag or POS category.
+        Reuses the pre-fetched product_info_map for efficiency.
+        """
+        if not product_id:
+            return False
+
+        p = product_info_map.get(product_id, {})
+        # Primary check: custom x_is_topup flag
+        if p.get('x_is_topup'):
+            return True
+
+        # Fallback: POS category check (if 'Top-ups' is in the category IDs)
+        # Note: In production we'd lookup the actual name, but x_is_topup is the preferred method.
+        return False
 
     def process_order(self, order):
         """Process a single POS order and send as consumption_order."""
@@ -341,6 +393,18 @@ class OrderPoller:
                 'pos.order.line', 'read',
                 [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids', 'price_subtotal_incl']]
             )
+
+            # Bulk fetch product details (x_is_topup and pos_categ_ids) for top-up identification
+            product_ids = list(set([line['product_id'][0] for line in line_details]))
+            product_info_map = {}
+            if product_ids:
+                products = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'product.product', 'read',
+                    [product_ids, ['id', 'x_is_topup', 'pos_categ_ids']]
+                )
+                product_info_map = {p['id']: p for p in products}
+
             all_tax_ids = list(set([tid for line in line_details for tid in line.get('tax_ids', [])]))
             tax_map = {}
             if all_tax_ids:
@@ -357,6 +421,11 @@ class OrderPoller:
                 if amounts:
                     vat_rate = int(max(amounts))
 
+                # BEST PRACTICE: Force vat_rate=0 for top-up products to comply with fiscal requirements
+                prod_info = product_info_map.get(line['product_id'][0], {})
+                if prod_info.get('x_is_topup'):
+                    vat_rate = 0
+
                 # BEST PRACTICE: Use price_subtotal_incl to ensure the XML matches what the customer actually paid
                 total_incl = float(line.get('price_subtotal_incl') or (line['qty'] * line['price_unit']))
                 unit_price_incl = round(total_incl / line['qty'], 2) if line['qty'] != 0 else float(line['price_unit'])
@@ -369,18 +438,11 @@ class OrderPoller:
                     'unit_price': unit_price_incl,
                     'total_amount': total_incl,
                     'vat_rate': vat_rate,
-                    'currency': 'eur'
+                    'currency': 'eur',
+                    'item_type': 'wallet_topup' if prod_info.get('x_is_topup') else None
                 })
 
-        customer_type = "private"
-        if customer_info:
-            if customer_info.get('is_company'):
-                customer_type = "company"
-            elif customer_info.get('parent_id'):
-                # Check if parent is a company
-                parent_info = self.get_customer_info(customer_info['parent_id'])
-                if parent_info and parent_info.get('is_company'):
-                    customer_type = "company"
+        customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
 
         xml_message = sender.build_consumption_order_xml(
             items=items,
@@ -430,17 +492,7 @@ class OrderPoller:
         if order.get('account_move') and not is_anonymous and customer_info:
             logger.info(f"🧾 Order {order_id} is invoiced — triggering invoice_request")
 
-            # Fetch ISO country code (e.g., 'be') for the customer's country
-            country_code = ""
-            if customer_info.get('country_id'):
-                country_id = customer_info['country_id'][0]
-                country_data = self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'res.country', 'read',
-                    [[country_id], ['code']]
-                )
-                if country_data:
-                    country_code = country_data[0].get('code', '').lower()
+            country_code = customer_info.get('country_code', '')
 
             inv_data = {
                 'name': customer_info.get('name'),

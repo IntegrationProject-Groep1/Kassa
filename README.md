@@ -19,7 +19,7 @@
 
   <!-- Skill Icons Grid -->
   <a href="https://skillicons.dev">
-    <img src="https://skillicons.dev/icons?i=python,js,postgres,docker,rabbitmq,githubactions,linux" />
+    <img src="https://skillicons.dev/icons?i=python,postgres,docker,rabbitmq,githubactions,linux" />
   </a>
 </div>
 
@@ -172,7 +172,7 @@ Detailed technical and functional documentation can be found in the `documentati
  ┣ 📂 addons/                # Custom Odoo 17 modules
  ┣ 📂 documentatie/          # Technical and functional documentation
  ┣ 📂 integratie/            # Python integration service
- ┃ ┣ 📂 schemas/             # XML XSD validation schemas (14 types)
+ ┃ ┣ 📂 schemas/             # XML XSD validation schemas (12 types)
  ┃ ┣ 📂 tests/               # Pytest integration/unit suites
  ┃ ┣ 📂 tools/               # Integration-specific diagnostic tools
  ┃ ┣ 📜 main.py              # Orchestration entrypoint
