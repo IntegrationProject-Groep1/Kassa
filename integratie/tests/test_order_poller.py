@@ -420,8 +420,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     poller.models.execute_kw.side_effect = [
         # pos.payment read
         [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 4.0}],
-        True,  # res.partner write (balance)
-        True,  # pos.order write (x_wallet_updated)
+        8.5,  # action_process_wallet_payment returns the new balance atomically
     ]
     mock_sender.build_consumption_order_xml.return_value = (
         '<message><header><message_id>corr-wallet</message_id></header></message>'
@@ -437,12 +436,12 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     assert ok is True
     assert payment_msg_id == 'pay-wallet'
 
-    # Verify write calls were made
-    write_calls = [
+    # Verify atomic update call was made
+    atomic_calls = [
         c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][4] == 'write'
+        if len(c[0]) > 4 and c[0][4] == 'action_process_wallet_payment'
     ]
-    assert len(write_calls) == 2
+    assert len(atomic_calls) == 1
 
     mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
         'USR-1',

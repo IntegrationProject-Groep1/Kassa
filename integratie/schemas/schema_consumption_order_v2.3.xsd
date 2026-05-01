@@ -43,13 +43,7 @@ afgedwongen in code, niet door XSD. -->
 <!-- sku: fysiek product-ID uit Odoo (voorheen de waarde van <id>). -->
 <xs:element name="sku" type="xs:string"/>
 <xs:element name="description" type="xs:string"/>
-<xs:element name="quantity">
-  <xs:simpleType>
-    <xs:restriction base="xs:integer">
-      <xs:pattern value="[^-0].*"/>
-    </xs:restriction>
-  </xs:simpleType>
-</xs:element><xs:element name="unit_price">
+<xs:element name="quantity" type="xs:integer"/><xs:element name="unit_price">
 <xs:complexType><xs:simpleContent>
 <xs:extension base="xs:decimal">
 <xs:attribute name="currency" type="xs:string" use="required"/>
