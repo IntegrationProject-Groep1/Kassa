@@ -210,20 +210,20 @@ docker-compose up -d
 
 ### 3. Local Python Setup (Development)
 If you wish to run the integration scripts or tests outside of Docker:
-\`\`\`bash
+```bash
 python -m venv .venv
 source .venv/bin/activate  # Or .venv\Scripts\activate on Windows
 pip install -r integratie/requirements.txt
-\`\`\`
+```
 
 ### 4. Diagnostics & Verification
-\`\`\`bash
+```bash
 # Verify XML-RPC connectivity to Odoo
 docker-compose exec kassa-integratie python tools/ping_odoo.py
 
 # Run full test suite
 docker-compose exec kassa-integratie pytest integratie/tests/
-\`\`\`
+```
 
 ---
 
