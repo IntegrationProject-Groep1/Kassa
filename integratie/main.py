@@ -146,7 +146,7 @@ def main():
 
     # Create marker file for healthcheck to indicate the service is fully ready
     try:
-        with open("/tmp/service_ready", "w") as f:
+        with open("/tmp/service_ready", "w") as f:  # nosec B108
             f.write("ready")
         print("✅ Service ready marker created", flush=True)
     except Exception as e:
