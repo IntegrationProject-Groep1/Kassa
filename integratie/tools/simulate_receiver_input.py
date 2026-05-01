@@ -79,17 +79,15 @@ def build_new_registration(company: bool = False) -> str:
   <body>
     <customer>
       <email>info@techbedrijf.be</email>
-      <name>Jan Peeters</name>
-      <company_name>TechCompany NV</company_name>
       <type>company</type>
+      <company_name>TechCompany NV</company_name>
       <vat_number>BE0123456789</vat_number>
       <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
-      <age>35</age>
+      <payment_due>
+        <amount>50.00</amount>
+        <status>paid</status>
+      </payment_due>
     </customer>
-    <payment_due>
-      <amount>50.00</amount>
-      <status>unpaid</status>
-    </payment_due>
   </body>
 </message>"""
     else:
@@ -105,15 +103,18 @@ def build_new_registration(company: bool = False) -> str:
   <body>
     <customer>
       <email>sophie@gmail.com</email>
-      <name>Sophie Martens</name>
+      <contact>
+        <first_name>Sophie</first_name>
+        <last_name>Martens</last_name>
+      </contact>
       <type>private</type>
       <user_id>a1b2c3d4-1111-2222-3333-444455556666</user_id>
-      <age>28</age>
+      <date_of_birth>1998-05-15</date_of_birth>
+      <payment_due>
+        <amount>25.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
-    <payment_due>
-      <amount>25.00</amount>
-      <status>unpaid</status>
-    </payment_due>
   </body>
 </message>"""
 
@@ -132,11 +133,18 @@ def build_profile_update() -> str:
   <body>
     <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
     <email>nieuw@techbedrijf.be</email>
-    <name>Jan Peeters</name>
+    <contact>
+      <first_name>Jan</first_name>
+      <last_name>Peeters</last_name>
+    </contact>
     <company_name>TechCompany NV (Hernoemd)</company_name>
-    <age>36</age>
+    <date_of_birth>1985-05-15</date_of_birth>
     <type>company</type>
     <vat_number>BE0123456789</vat_number>
+    <payment_due>
+      <amount>0.00</amount>
+      <status>paid</status>
+    </payment_due>
   </body>
 </message>"""
 
@@ -149,13 +157,14 @@ def build_badge_scanned(known: bool = True) -> str:
   <header>
     <message_id>{msg_id}</message_id>
     <type>badge_scanned</type>
-    <source>iot_scanner_bar</source>
+    <source>iot_gateway</source>
     <timestamp>{now_utc()}</timestamp>
     <version>2.0</version>
   </header>
   <body>
     <badge_id>{badge}</badge_id>
-    <location>hoofdbar</location>
+    <location>bar</location>
+    <scanned_at>{now_utc()}</scanned_at>
   </body>
 </message>"""
 

@@ -50,13 +50,14 @@ def method():
 
 def _xml_bytes(msg_type: str, body_xml: str, message_id: str = "test-msg-001") -> bytes:
     """Build a minimal valid message XML for tests."""
+    source = "kassa" if msg_type == "badge_scanned" else "test"
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<message>"
         "<header>"
         f"<message_id>{message_id}</message_id>"
         f"<type>{msg_type}</type>"
-        "<source>test</source>"
+        f"<source>{source}</source>"
         "<timestamp>2026-03-28T12:00:00Z</timestamp>"
         "<version>2.0</version>"
         "</header>"
@@ -114,13 +115,13 @@ class TestValidateXml:
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<message>"
             "<header>"
-            "<message_id>x</message_id>"
+            "<message_id>550e8400-e29b-41d4-a716-446655440000</message_id>"
             "<type>badge_scanned</type>"
-            "<source>s</source>"
+            "<source>kassa</source>"
             "<timestamp>2026-03-28T12:00:00Z</timestamp>"
             "<version>2.0</version>"
             "</header>"
-            "<body><badge_id>BADGE-001</badge_id><location>bar</location></body>"
+            "<body><badge_id>BADGE-001</badge_id><location>bar</location><scanned_at>2026-03-28T12:00:00Z</scanned_at></body>"
             "</message>"
         )
         receiver.validate_xml(xml, "badge_scanned")  # should not raise
@@ -154,8 +155,9 @@ class TestProcessNewRegistration:
         "<type>private</type>"
         "<user_id>uid-001</user_id>"
         "<date_of_birth>1996-01-01</date_of_birth>"
-        "</customer>"
+        "<session_id>sess-001</session_id>"
         "<payment_due><amount>25.00</amount><status>unpaid</status></payment_due>"
+        "</customer>"
     )
 
     def _root(self):
@@ -194,8 +196,10 @@ class TestProcessNewRegistration:
         uid, models = odoo
         root = ET.fromstring(
             "<message><header/><body>"
-            "<customer><email>a@b.com</email><name>X</name><type>private</type></customer>"
+            "<customer>"
+            "<email>a@b.com</email><name>X</name><type>private</type>"
             "<payment_due><amount>0</amount><status>unpaid</status></payment_due>"
+            "</customer>"
             "</body></message>"
         )
         with pytest.raises(ValueError, match="user_id missing"):
@@ -209,8 +213,8 @@ class TestProcessNewRegistration:
             "<customer>"
             "<email>info@corp.be</email><name>Corp</name><company_name>Corp NV</company_name>"
             "<type>company</type><vat_number>BE0123</vat_number><user_id>uid-002</user_id>"
-            "</customer>"
             "<payment_due><amount>100</amount><status>paid</status></payment_due>"
+            "</customer>"
             "</body></message>"
         )
         receiver.process_new_registration(root, uid, models)
@@ -258,13 +262,21 @@ class TestProcessProfileUpdate:
         vals = create_call[0][5][0]
         assert vals["x_user_id"] == "uid-003"
 
-    def test_raises_when_user_id_missing(self, odoo):
+    def test_updates_payment_info(self, odoo):
         uid, models = odoo
-        root = ET.fromstring(
-            "<message><header/><body><email>a@b.com</email></body></message>"
+        models.execute_kw.side_effect = [[{"id": 7}], True]
+        xml = (
+            "<message><header/><body>"
+            "<user_id>uid-003</user_id>"
+            "<email>x@x.com</email>"
+            "<payment_due><amount>50.0</amount><status>paid</status></payment_due>"
+            "</body></message>"
         )
-        with pytest.raises(ValueError, match="user_id missing"):
-            receiver.process_profile_update(root, uid, models)
+        receiver.process_profile_update(ET.fromstring(xml), uid, models)
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_payment_status"] == "paid"
+        assert vals["x_outstanding_amount"] == 50.0
 
 
 # ── process_badge_scan ─────────────────────────────────────────────────────────
@@ -277,6 +289,7 @@ class TestProcessBadgeScan:
             "<body>"
             f"<badge_id>{badge_id}</badge_id>"
             "<location>bar</location>"
+            "<scanned_at>2026-04-20T10:00:00Z</scanned_at>"
             "</body>"
             "</message>"
         )
@@ -291,6 +304,7 @@ class TestProcessBadgeScan:
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
 
+        assert "Processing scan from bar at 2026-04-20T10:00:00Z" in caplog.text
         assert "Badge recognised: Odoo ID=3" in caplog.text
         assert "Location=bar" in caplog.text
         assert "BADGE-001" not in caplog.text  # PII removed
@@ -375,8 +389,8 @@ class TestProcessMessage:
             "<customer>"
             "<email>x@x.com</email><name>X</name><type>private</type>"
             "<user_id>uid-999</user_id><date_of_birth>2006-01-01</date_of_birth>"
-            "</customer>"
-            "<payment_due><amount>10</amount><status>unpaid</status></payment_due>",
+            "<payment_due><amount>10</amount><status>unpaid</status></payment_due>"
+            "</customer>",
         )
         receiver.process_message(ch, method, None, body)
         ch.basic_ack.assert_called_once_with(delivery_tag=42)
@@ -395,8 +409,8 @@ class TestProcessMessage:
             "<customer>"
             "<email>x@x.com</email><name>X</name><type>private</type>"
             "<user_id>uid-999</user_id><date_of_birth>2006-01-01</date_of_birth>"
-            "</customer>"
-            "<payment_due><amount>10</amount><status>unpaid</status></payment_due>",
+            "<payment_due><amount>10</amount><status>unpaid</status></payment_due>"
+            "</customer>",
             message_id="msg-ok-001",
         )
 

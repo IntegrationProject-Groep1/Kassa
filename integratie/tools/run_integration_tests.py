@@ -24,7 +24,7 @@ RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
 QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
 # ── Odoo config ────────────────────────────────────────────────────────────────
-ODOO_URL = os.environ.get("ODOO_URL", "http://web:8069")
+ODOO_URL = os.environ.get("ODOO_URL", "http://kassa-web:8069")
 ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
 ODOO_USER = os.environ.get("ODOO_USER", "odoo")
 ODOO_PASS = os.environ.get("ODOO_PASS", "myodoo")
@@ -116,11 +116,11 @@ def build_valid_registration(message_id: str, user_id: str) -> str:
       <type>private</type>
       <user_id>{user_id}</user_id>
       <date_of_birth>1996-01-01</date_of_birth>
+      <payment_due>
+        <amount>25.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
-    <payment_due>
-      <amount>25.00</amount>
-      <status>unpaid</status>
-    </payment_due>
   </body>
 </message>"""
 
