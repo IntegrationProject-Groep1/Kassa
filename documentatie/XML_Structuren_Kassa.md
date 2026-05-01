@@ -332,7 +332,7 @@ Voorbeeld XML:
 <id>12345</id>
 <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
 <type>company</type>
-<email>\info@bedrijf.be\)</email>
+<email>info@bedrijf.be</email>
 <address><street>Kiekenmarkt</street><number>42</number>
 <postal_code>1000</postal_code><city>Brussel</city><country>be</country></address>
 </customer>

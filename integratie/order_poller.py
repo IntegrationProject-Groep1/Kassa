@@ -380,8 +380,9 @@ class OrderPoller:
                                 original_msg_id = orig_order_full[0]['x_payment_message_id']
                             break
             except Exception as e:
-                logger.warning(
-                    f"⚠️ Could not fetch original order ID for refund (Traceability failed): {e}")
+                logger.error(
+                    f"❌ CRITICAL: Could not trace refund to original order for traceability (Order {order_id}): {e}"
+                )
 
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
