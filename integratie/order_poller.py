@@ -218,7 +218,7 @@ class OrderPoller:
                     [pos_categ_ids, ['name']]
                 )
                 for cat in categories:
-                    if cat.get('name') and 'Top-up' in cat['name']:
+                    if cat.get('name') == 'Top-ups':
                         return True
             except Exception as e:
                 logger.warning(f"⚠️ Could not fetch POS category names for product {product_id}: {e}")

@@ -313,16 +313,16 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     try:
+        from defusedxml.lxml import fromstring
         if msg_type not in _schema_cache:
-            _schema_cache[msg_type] = etree.XMLSchema(etree.parse(str(schema_path)))
+            parser = etree.XMLParser(resolve_entities=False)
+            schema_doc = etree.parse(str(schema_path), parser)
+            _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
 
-        xml_doc = etree.fromstring(message_xml.encode("utf-8"))
+        xml_doc = fromstring(message_xml.encode("utf-8"))
         if not _schema_cache[msg_type].validate(xml_doc):
             errors = str(_schema_cache[msg_type].error_log)
             raise ValueError(f"XSD Validation Error: {errors}")
-
-    except etree.XMLSyntaxError as e:
-        raise ValueError(f"XML Syntax Error (Malformed XML): {str(e)}")
     except Exception as e:
         if isinstance(e, ValueError):
             raise e
