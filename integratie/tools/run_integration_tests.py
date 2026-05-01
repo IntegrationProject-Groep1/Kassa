@@ -264,7 +264,10 @@ def test_pos_order_sync():
     )[0]
 
     ok = order["x_rabbitmq_sent"] is True
-    report_result("Sender: POS Order Polling", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}, error = {order.get('x_rabbitmq_error')}")
+    report_result(
+        "Sender: POS Order Polling", ok,
+        f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}, error = {order.get('x_rabbitmq_error')}"
+    )
 
 
 # ── TEST CATEGORY: SYSTEM (Validation & Resilience) ──────────────────────────

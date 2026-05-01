@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 from order_poller import OrderPoller
 import sender
-from defusedxml.common import EntitiesForbidden
 
 
 def test_is_topup_product_fallback():
