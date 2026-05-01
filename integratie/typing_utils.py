@@ -41,7 +41,8 @@ class OdooModelsProxy(Protocol):
         method: str,
         args: List[Any],
         kwargs: Dict[str, Any] = ...,
-    ) -> Any: ...
+    ) -> Any:
+        ...
 
 
 class OdooCommonProxy(Protocol):
@@ -51,4 +52,5 @@ class OdooCommonProxy(Protocol):
         user: str,
         password: str,
         user_agent_env: Dict[str, Any],
-    ) -> int: ...
+    ) -> int:
+        ...

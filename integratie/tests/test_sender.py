@@ -24,11 +24,11 @@ class TestSenderBuffer:
 
     def test_buffer_message_appends(self, tmp_buffer):
         # Buffer first message
-        sender._buffer_message("test.routing", "<xml/>", order_id=123)
+        sender._buffer_message("test.routing", "<xml/>", record_id=123)
         entries = json.loads(tmp_buffer.read_text())
         assert len(entries) == 1
         assert entries[0]["routing_key"] == "test.routing"
-        assert entries[0]["order_id"] == 123
+        assert entries[0]["record_id"] == 123
 
         # Buffer second
         sender._buffer_message("test.routing.2", "<xml><two/></xml>")
@@ -54,26 +54,26 @@ class TestSenderBuffer:
 
     @patch("sender._publish_or_raise")
     def test_flush_buffer_success(self, mock_send, tmp_buffer):
-        sender._buffer_message("r.1", "<1/>", order_id=10)
-        sender._buffer_message("r.2", "<2/>", order_id=20)
+        sender._buffer_message("r.1", "<1/>", record_id=10)
+        sender._buffer_message("r.2", "<2/>", record_id=20)
 
         mock_send.return_value = None
 
         success_ids = sender.flush_buffer()
-        assert success_ids == [10, 20]
+        assert success_ids == [("pos.order", 10), ("pos.order", 20)]
         assert not tmp_buffer.exists()
         assert mock_send.call_count == 2
 
     @patch("sender._publish_or_raise")
     def test_flush_buffer_stops_on_failure(self, mock_send, tmp_buffer):
-        sender._buffer_message("r.1", "<1/>", order_id=10)
-        sender._buffer_message("r.2", "<2/>", order_id=20)
+        sender._buffer_message("r.1", "<1/>", record_id=10)
+        sender._buffer_message("r.2", "<2/>", record_id=20)
 
         # First succeeds, second raises exception
         mock_send.side_effect = [None, Exception("Broker offline")]
 
         success_ids = sender.flush_buffer()
-        assert success_ids == [10]
+        assert success_ids == [("pos.order", 10)]
 
         # Buffer should still exist and contain the un-flushed item
         entries = json.loads(tmp_buffer.read_text())
@@ -142,11 +142,11 @@ class TestSenderPublishing:
         # Known type => predefined routing key
         sender.send_typed_message("refund_processed", "<xml/>")
         mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>",
-                                          order_id=None, buffer_on_fail=True)
+                                          record_id=None, model='pos.order', buffer_on_fail=True)
 
         mock_send.reset_mock()
 
         # Unknown type => kassa.misc.{type}
         sender.send_typed_message("unknown_type", "<xml/>")
         mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>",
-                                          order_id=None, buffer_on_fail=True)
+                                          record_id=None, model='pos.order', buffer_on_fail=True)

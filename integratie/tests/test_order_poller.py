@@ -174,10 +174,10 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
 
 
 def test_mark_orders_sent_writes_bulk_to_odoo(poller):
-    """_mark_orders_sent executes a bulk write using a list of unique IDs."""
-    order_ids = [11, 22, 11, 33]  # includes a duplicate
+    """_mark_records_sent executes a bulk write using a list of unique IDs."""
+    records = [('pos.order', 11), ('pos.order', 22), ('pos.order', 11), ('pos.order', 33)]
 
-    poller._mark_orders_sent(order_ids)
+    poller._mark_records_sent(records)
 
     # Verify bulk write was called exactly once with unique IDs [11, 22, 33]
     poller.models.execute_kw.assert_called_once()
@@ -211,7 +211,7 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
     poller._process_refund(order, 10, None, is_anonymous=True)
 
     mock_sender.send_typed_message.assert_called_once_with(
-        'refund_processed', mock_sender.build_refund_processed_xml.return_value, order_id=10
+        'refund_processed', mock_sender.build_refund_processed_xml.return_value, record_id=10
     )
     # Wallet write should NOT have been called
     write_calls = [c for c in poller.models.execute_kw.call_args_list
