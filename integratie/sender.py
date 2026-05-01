@@ -53,7 +53,7 @@ class BufferFullError(RuntimeError):
     """Raised when the outbox buffer has reached its maximum capacity."""
 
 
-class XSDValidationError(ValueError):
+class XSDValidationError(Exception):
     """Raised when an outgoing message fails strict XSD validation."""
 
 
