@@ -205,6 +205,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("pos.order", "x_wallet_updated", "Wallet Balance Adjusted", "boolean", {}),
         ("pos.order", "x_payment_message_id", "CRM Payment Correlation ID", "char", {}),
         ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
+        ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
     ]
 
     for model, name, field_description, field_type, field_kwargs in fields_to_check:

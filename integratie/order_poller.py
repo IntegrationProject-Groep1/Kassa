@@ -209,6 +209,20 @@ class OrderPoller:
 
         # Fallback: POS category check (if 'Top-ups' is in the category IDs)
         # Note: In production we'd lookup the actual name, but x_is_topup is the preferred method.
+        pos_categ_ids = p.get('pos_categ_ids', [])
+        if pos_categ_ids:
+            try:
+                categories = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.category', 'read',
+                    [pos_categ_ids, ['name']]
+                )
+                for cat in categories:
+                    if cat.get('name') and 'Top-up' in cat['name']:
+                        return True
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch POS category names for product {product_id}: {e}")
+
         return False
 
     def process_order(self, order):
@@ -427,7 +441,7 @@ class OrderPoller:
                     vat_rate = 0
 
                 # BEST PRACTICE: Use price_subtotal_incl to ensure the XML matches what the customer actually paid
-                total_incl = float(line.get('price_subtotal_incl') or (line['qty'] * line['price_unit']))
+                total_incl = float(line.get('price_subtotal_incl', line['qty'] * line['price_unit']))
                 unit_price_incl = round(total_incl / line['qty'], 2) if line['qty'] != 0 else float(line['price_unit'])
 
                 items.append({
@@ -558,12 +572,14 @@ class OrderPoller:
                         )
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
-                    # We mark it as sent to stop the loop, but log it as an error
                     try:
                         self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'res.partner', 'write',
-                            [[p['id']], {'x_badge_sent': True}]
+                            [[p['id']], {
+                                'x_badge_sent': True,
+                                'x_rabbitmq_error': f"Validation failed: {ve}"
+                            }]
                         )
                     except Exception:
                         pass

@@ -22,6 +22,7 @@
           <xs:element name="last_name" type="xs:string"/>
         </xs:sequence></xs:complexType>
       </xs:element>
+      <xs:element name="phone" type="xs:string" minOccurs="0"/>
       <xs:element name="type">
         <xs:simpleType><xs:restriction base="xs:string">
           <xs:enumeration value="private"/>

@@ -17,7 +17,16 @@
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="error_code"          type="xs:string"/>
+              <xs:element name="error_code">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="invalid_xml_format"/>
+                  <xs:enumeration value="unknown_message_type"/>
+                  <xs:enumeration value="profile_not_found"/>
+                  <xs:enumeration value="odoo_api_error"/>
+                  <xs:enumeration value="offline_queue_full"/>
+                  <xs:enumeration value="badge_not_found"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
               <xs:element name="error_description"   type="xs:string"/>
               <xs:element name="related_message_id"  type="xs:string" minOccurs="0"/>
             </xs:sequence>

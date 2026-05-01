@@ -350,7 +350,8 @@ def send_typed_message(
         related_id = None
         try:
             # We use a non-validating parse just to get the header ID
-            blocked_root = ET.fromstring(message_xml)  # nosec B314
+            from defusedxml import ElementTree as DET
+            blocked_root = DET.fromstring(message_xml)
             related_id = blocked_root.findtext(".//message_id")
         except Exception:
             pass
