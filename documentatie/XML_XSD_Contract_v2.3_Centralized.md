@@ -2,7 +2,7 @@
 
 > **Dit document is het officiële en GECENTRALISEERDE berichtencontract voor alle teams.**  
 > Elk bericht dat over RabbitMQ gaat, moet voldoen aan de structuur en XSD's in dit document. Dit is de enige 'Source of Truth' voor alle XML en XSD schema's in het project.
-> Versie: **2.3** — Gecentraliseerd na volledige repo-audit (April 2026).
+> Versie: **2.3** — Gesynchroniseerd met Kassa Team v2.5 implementatie (April 2026).
 >
 >  **Dit is het ENIGE geldige contract.** Alle teams moeten hun code hieraan aanpassen — afwijkingen die nog in code zitten zijn een **contractbreuk** en moeten dringend worden weggewerkt. Zie sectie 0.5 voor de exacte audit-bevindingen per team.
 
@@ -14,14 +14,19 @@
 
 ##  QUICK REFERENCE — Per Team: Wat ontvang jij? Wat verstuur je?
 
+> ### 🛑 PROJECT-WIDE RULE: THE SIDECAR PRINCIPLE
+> **Geen enkel applicatie-team (CRM, Frontend, Kassa, etc.) mag zelf heartbeat-code implementeren OF de sidecar beheren.** 
+> Heartbeats worden EXCLUSIEF afgehandeld door de project-sidecar (`heartbeat/sidecar.py`). Deze wordt **automatisch gestart en beheerd door het Monitoring/Infrastructuur-team** op de VM zodra jouw containers gedeployed zijn. Applicatie-teams hebben hier 0% omkijken naar.
+
 Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groen ()** = conform, geen actie. **Rood ()** = kritieke wijzigingen nodig.
 
 ###  **Team Kassa** — Betalingen & Kassamachine (CONFORM )
-**Audit Status:** Volledig conform — geen wijzigingen nodig
+**Audit Status:** Volledig conform (v2.3 sync) — gesynchroniseerd met productie v2.5
 
 | Richting | Berichttype | Van/Naar | Sectie |
 |----------|---|---|---|
 |  **ONTVANGT** | `new_registration`, `profile_update`, `cancel_registration` | ← CRM | [10. CRM → Kassa](#10-crm--kassa) |
+|  **ONTVANGT** | `badge_scanned` | ← IoT (Raspberry Pi) | [6.3](#63-badge_scanned) |
 |  **VERZENDT** | `payment_registered` | → CRM | [6.6 Kassa → CRM](#66-payment_registered-kassa--rabbitmq) |
 |  **VERZENDT** | `payment_status`, `wallet_balance_update` | → Frontend | [16](#16-rabbitmq-queue--exchange-overzicht) |
 |  **BROADCAST** | `heartbeat` | → Monitoring | [3. Heartbeat](#3-heartbeat--alle-teams--monitoring) |
@@ -39,10 +44,11 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 | Richting | Berichttype | Van/Naar | Huidi-Status | Sectie |
 |----------|---|---|---|---|
 |  **ONTVANGT** | `new_registration` | ← Frontend | v2.0  | [5.1](#51-new_registration-frontend--crm) |
-|  **ONTVANGT** | `user_created`, `user_updated`, `user_deleted` | ← Frontend |  dotted type | [5.2-5.4](#52-user_created-frontend--crm) |
+|  **ONTVANGT** | `user_registered` | ← Frontend |  v1.0 header + verkeerde queue | [5.5](#55-user_registered) |
+|  **ONTVANGT** | `user_created`, `user_updated`, `user_deleted` | ← Frontend |  dotted type | [5.2-5.4](#52-user_created) |
 |  **ONTVANGT** | `session_created`, `session_updated` | ← Planning |  `session_update` (fout) | [7.1-7.2](#71-session_created-planning--crm) |
-|  **ONTVANGT** | `payment_registered` | ← Kassa |  | [6.1](#61-payment_registered-kassa--crm) |
-|  **ONTVANGT** | `invoice_created_notification` | ← Facturatie |  | [8.1](#81-invoice_created_notification-facturatie--crm) |
+|  **ONTVANGT** | `payment_registered` | ← Kassa |  | [6.6](#66-payment_registered-kassa--rabbitmq) |
+|  **ONTVANGT** | `invoice_created_notification` | ← Facturatie |  | [8.1](#81-invoice_status) |
 |  **ONTVANGT** | `mailing_status` | ← Mailing |  (moet `send_mailing` zijn) | [9.1](#91-mailing_status-mailing--crm) |
 |  **VERZENDT** | `new_registration` | → Kassa |  bevat `<age>` | [10.1](#101-new_registration-crm--kassa) |
 |  **VERZENDT** | `profile_update` | → Kassa |  bevat `<age>` | [10.2](#102-profile_update-crm--kassa) |
@@ -50,7 +56,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `invoice_request` | → Facturatie |  bevat `<items>`, queue fout | [11.1](#111-invoice_request-crm--facturatie) |
 |  **VERZENDT** | `send_mailing` | → Mailing |  type is `mailing_status` | [12.1](#121-send_mailing-crm--mailing) |
 |  **VERZENDT** | `payment_registered` | → Frontend |  | [13.1](#131-payment_registered-crm--frontend) |
-|  **BROADCAST** | `heartbeat` | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
 
 **Kritieke fixes (src/sender.js + src/receiver.js):**
 1.  Regel line 20: `session_update` → `session_updated`
@@ -68,20 +74,21 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 | Richting | Berichttype | Van/Naar | Huidi-Status | Sectie |
 |----------|---|---|---|---|
 |  **VERZENDT** | `new_registration` | → CRM |  bevat `<master_uuid>`, `<age>` | [5.1](#51-new_registration-frontend--crm) |
-|  **VERZENDT** | `user_created` | → CRM |  v1.0 header + dotted type | _(XSD nog te documenteren — zie audit 0.6)_ |
-|  **VERZENDT** | `user_updated` | → CRM |  v1.0 header | [5.2](#52-user_updated) |
-|  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.3](#53-user_deleted-frontend--crm) |
+|  **VERZENDT** | `user_created` | → CRM |  v1.0 header + dotted type | [5.2](#52-user_created) |
+|  **VERZENDT** | `user_updated` | → CRM |  v1.0 header | [5.3](#53-user_updated) |
+|  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.4](#54-user_deleted) |
+|  **VERZENDT** | `user_registered` | → CRM |  v1.0 header + dotted type + verkeerde queue | [5.5](#55-user_registered) |
 |  **VERZENDT** | `user_checkin` | → CRM |  v1.0 header + `user.checkin` | [21.1](#211-user_checkin-frontend--crm) |
 |  **VERZENDT** | `calendar_invite` | → Planning |  dotted type + mist `version` | [17.2](#172-calendar_invite-frontend--planning) |
 |  **ONTVANGT** | `payment_registered` | ← CRM |  | [13.1](#131-payment_registered-crm--frontend) |
 |  **ONTVANGT** | `payment_status` | ← Kassa |  | [16](#16-rabbitmq-queue--exchange-overzicht) |
 |  **ONTVANGT** | `session_created`, `session_updated` | ← Planning |  | [7](#7-planning--crm) |
-|  **BROADCAST** | `heartbeat` | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
 
 **Kritieke fixes (web/modules/custom/rabbitmq_sender/src/):**
 -  NewRegistrationSender.php: `<master_uuid>` verwijderen, `<age>` → `<date_of_birth>`, `<customer>` → `<contact>`
 -  UserCreatedSender.php: v1.0 header → v2.0, type `user.created` → `user_created`
--  UserRegisteredSender.php: v1.0 header → v2.0, type `user.registered` → `user_registered`
+-  UserRegisteredSender.php: v1.0 header → v2.0, type `user.registered` → `user_registered`, queue `frontend.user.registered` → `crm.incoming`, `is_company` boolean → `<type>private|company</type>` (zie §5.5)
 -  UserUpdatedSender.php: v1.0 header → v2.0, type `user.updated` → `user_updated`
 -  UserUnregisteredSender.php: v1.0 header → v2.0, type `user.unregistered` → `user_deleted`
 -  UserCheckinSender.php: v1.0 header → v2.0, type `user.checkin` → `user_checkin`
@@ -104,7 +111,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `calendar_invite_confirmed` | → Frontend | [17.2](#172-calendar_invite_confirmed-planning--frontend) |
 |  **RPC** | `session_view_request` / `session_view_response` | ↔ Frontend | [17.1](#171-session_view_request--session_view_response-rpc) |
 |  **REST** | `Token Registration` | ← Frontend | [17.0](#170-oauth-token-registration-rest-api) |
-|  **BROADCAST** | `heartbeat` | → Monitoring | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring | [3](#3-heartbeat--alle-teams--monitoring) |
 
 **XSD's referentie:**
 - `Planning/xsd/` ( bijgewerkt naar v2.0)
@@ -124,7 +131,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `invoice_status` | → CRM |  type is `send_invoice` | [8.1](#81-invoice_status) |
 |  **VERZENDT** | `payment_registered` | → CRM |  XSD bevat `<master_uuid>` | [8.2](#82-payment_registered) |
 |  **VERZENDT** | `send_mailing` | → Mailing |  | [13.1](#131-send_mailing-facturatie--mailing) |
-|  **BROADCAST** | `heartbeat` | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
 
 **Kritieke fixes (Facturatie/schemas/):**
 -  Queue listener: `crm.to.facturatie` → `facturatie.incoming`
@@ -171,7 +178,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |----------|---|---|---|---|
 |  **ONTVANGT** | `send_mailing` | ← CRM + Facturatie |  | [12.1](#121-send_mailing-crm--mailing) / [13.1](#131-send_mailing-facturatie--mailing) |
 |  **ONTVANGT** | `system_alert` | ← Monitoring |  | [4](#4-monitoring--mailing--alert) |
-|  **BROADCAST** | `heartbeat` | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
 
 **Opmerkingen:**
 - Mailing consumer moet zowel `source=crm` als `source=facturatie` verwerken
@@ -228,7 +235,7 @@ Dit addendum overschrijft alle eerdere audituitspraken die niet met bronregel ko
 - CRM bouwt outbound type `mailing_status` i.p.v. `send_mailing` (`CRM/src/sender.js:85`).
 - CRM bouwt nog `<age>` in Kassa-flows (`CRM/src/sender.js:191`, `CRM/src/sender.js:245`).
 - Frontend `UserCreatedSender` gebruikt nog namespace + receiver + version 1.0 + dotted type (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCreatedSender.php:49`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCreatedSender.php:54`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCreatedSender.php:55`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCreatedSender.php:56`).
-- Frontend `UserRegisteredSender` gebruikt nog dotted type `user.registered` en version 1.0 (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserRegisteredSender.php:64`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserRegisteredSender.php:65`).
+- Frontend `UserRegisteredSender` gebruikt nog dotted type `user.registered`, version 1.0, xmlns en verkeerde queue `frontend.user.registered` (moet `crm.incoming` zijn). Tevens moet `is_company` boolean vervangen worden door `<type>private|company</type>` per contract §5.5 (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserRegisteredSender.php:64`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserRegisteredSender.php:65`).
 - Frontend `UserUnregisteredSender` gebruikt nog type `user.unregistered` en receiver-list in header (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserUnregisteredSender.php:67`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserUnregisteredSender.php:68`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserUnregisteredSender.php:69`).
 - Frontend `UserCheckinSender` gebruikt nog type `user.checkin`, receiver en version 1.0 (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCheckinSender.php:57`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCheckinSender.php:58`, `IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/UserCheckinSender.php:59`).
 - Frontend `CalendarInviteSender` gebruikt nog dotted `calendar.invite` (`IP-groep1-frontend/web/modules/custom/rabbitmq_sender/src/CalendarInviteSender.php:25`) en zet geen `version` in header.
@@ -294,8 +301,10 @@ Wat goed is:
 #### Schendingen in queue-configuratie:
 -  Outbound naar Facturatie via queue `crm.to.facturatie` — moet `facturatie.incoming` zijn (sectie 11)
 
+#### Te verwijderen (Sidecar Principle):
+- [ ] **`src/heartbeat.js`**: Moet verwijderd worden. Heartbeats worden nu EXCLUSIEF afgehandeld door de project-sidecar. (zie Sectie 3.1)
+
 #### Wat al correct is:
--  `src/heartbeat.js`: gebruikt al de standaard `<message>` envelop met v2.0 header
 -  `src/sender.js` `buildMessage()`: header zonder `<receiver>` en zonder `xmlns`
 -  `crm.dead-letter` queue voor falende berichten
 
@@ -440,6 +449,8 @@ Wat nu correct is:
 ###  Heartbeat Service — `IntegrationProject-Groep1/heartbeat`
 
 **Status: VOLLEDIG ANTI-PATROON — moet herschreven worden**
+
+> **Noot:** Deze service is de eigenaar van de "Standard Sidecar" (`heartbeat/sidecar.py`). Andere teams gebruiken deze sidecar om heartbeats te versturen zonder eigen implementatie (zie [Sectie 3.1](#31-de-sidecar-principle-clarificatie)).
 
 #### Schending:
 -  Stuurt platte XML root: `<heartbeat><system>...</system><timestamp>...</timestamp><uptime>...</uptime></heartbeat>`
@@ -783,11 +794,13 @@ De Master UUID is verplicht voor registraties. Als de Identity Service niet bere
 4.  **Reporting:** Stuur een `system_error` met code `identity_service_unavailable`.
 
 ### 2.5.3 Dead Letter Queues (DLQ)
-Gebruik DLQ's alleen voor **infrastructurele fouten** (bijv. database verbinding verbroken). 
+Gebruik DLQ's alleen voor **infrastructurele fouten** (bijv. database verbinding verbroken).
 *   **Logische fouten** (ongeldige data, UUID niet gevonden) horen **niet** in de DLQ maar moeten worden afgehandeld via `system_error` en een ACK op het originele bericht.
 
----
+### 2.5.4 Kassa Specifieke Regels (ACK/NACK)
+*   **Badge Not Found:** Voor `badge_not_found` stuurt het Kassa-systeem een **ACK** (geen NACK) om oneindige lussen te voorkomen. Dit gaat vergezeld van een `system_error` bericht naar de `kassa.errors` queue voor monitoring.
 
+---
 ## 2.6 Global `system_error` Format
 
 Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun eigen error queue.
@@ -861,9 +874,23 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
 
 ## 3. Heartbeat — Alle teams → Monitoring
 
-- **Queue:** `heartbeat`
+- **Exchange:** `kassa.exchange` (Topic Exchange)
+- **Routing Key:** `heartbeat.{source}` (bijv. `heartbeat.crm`)
+- **Queue:** `heartbeat` (Monitoring luistert op deze queue, gebonden aan de exchange)
 - **Interval:** elke 1 seconde
-- **Wie stuurt:** frontend, crm, kassa, planning, facturatie, mailing, monitoring
+- **Wie stuurt:** Wordt afgehandeld door de **Sidecar**, niet door de applicatie-logica zelf.
+
+### 3.1 De "Sidecar Principle" Clarificatie
+
+> **"Applicatie-services hoeven heartbeats NIET intern te implementeren indien ze gedeployed zijn met de standaard project-sidecar. De sidecar is de enige producent van heartbeat-berichten."**
+
+Voor een beter begrip van het contract maken we onderscheid tussen:
+*   **Logical Requirement:** Het systeem als geheel moet gemonitord worden. Elke component moet zijn aanwezigheid melden.
+*   **Technical Implementation:** Dit wordt centraal afgehandeld via `heartbeat/sidecar.py`. Applicatieteams hoeven geen code te schrijven voor heartbeats; zij moeten enkel zorgen dat de sidecar correct meedraait in hun deployment (container/pod).
+
+### 3.2 Monitoring Queue vs. Exchange
+
+Hoewel de Monitoring service luistert op een queue genaamd `heartbeat`, moeten teams (via de sidecar) hun heartbeats **altijd naar de gedeelde Topic Exchange (`kassa.exchange`) sturen** met een specifieke routing key (bijv. `heartbeat.kassa` of `heartbeat.crm`). Dit zorgt ervoor dat de infrastructuur schaalbaar blijft en andere tools ook op de health-data kunnen inpluggen zonder de hoofd-queue leeg te trekken.
 
 ### XSD
 
@@ -1116,7 +1143,125 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
 
 ---
 
-### 5.2 `user_updated`
+### 5.2 `user_created`
+
+Wanneer een nieuw gebruikersaccount wordt aangemaakt zonder directe sessie-inschrijving (profile-only). Voor sessie-inschrijvingen gebruik je `new_registration` (§5.1).
+
+> **Volgorde t.o.v. Identity Service:** dit bericht wordt pas gepubliceerd nadat Frontend de `master_uuid` heeft opgehaald via de Identity RPC (`identity.user.create.request`, zie §15.1). Identity zelf broadcast óók een `user_event` (UserCreated) op de `user.events` fanout (§15.5) — dit `user_created` bericht naar CRM is een aanvulling met de profielvelden die Identity niet heeft (naam, geboortedatum, bedrijfsdata).
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="timestamp"  type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="user_created"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="customer">
+            <xs:complexType><xs:sequence>
+              <!-- user_id: de master_uuid van de Identity Service -->
+              <xs:element name="user_id"       type="xs:string"/>
+              <xs:element name="email"         type="xs:string"/>
+              <xs:element name="date_of_birth" type="xs:date"/>
+              <xs:element name="contact">
+                <xs:complexType><xs:sequence>
+                  <xs:element name="first_name" type="xs:string"/>
+                  <xs:element name="last_name"  type="xs:string"/>
+                </xs:sequence></xs:complexType>
+              </xs:element>
+              <xs:element name="type">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="private"/>
+                  <xs:enumeration value="company"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <xs:element name="phone"        type="xs:string" minOccurs="0"/>
+              <xs:element name="company_name" type="xs:string" minOccurs="0"/>
+              <xs:element name="vat_number"   type="xs:string" minOccurs="0"/>
+              <xs:element name="company_id"   type="xs:string" minOccurs="0"/>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML — particulier
+
+```xml
+<message>
+  <header>
+    <message_id>1a2b3c4d-5e6f-7890-1234-567890abcdef</message_id>
+    <timestamp>2026-04-24T09:14:00Z</timestamp>
+    <source>frontend</source>
+    <type>user_created</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <customer>
+      <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+      <email>jan.peeters@ehb.be</email>
+      <date_of_birth>1995-03-21</date_of_birth>
+      <contact>
+        <first_name>Jan</first_name>
+        <last_name>Peeters</last_name>
+      </contact>
+      <type>private</type>
+      <phone>+32477123456</phone>
+    </customer>
+  </body>
+</message>
+```
+
+#### Voorbeeld XML — bedrijf
+
+```xml
+<message>
+  <header>
+    <message_id>2b3c4d5e-6f70-8901-2345-67890abcdef0</message_id>
+    <timestamp>2026-04-24T09:14:00Z</timestamp>
+    <source>frontend</source>
+    <type>user_created</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <customer>
+      <user_id>f9c38d2e-5f3b-4c4f-ad6f-234567890bcd</user_id>
+      <email>info@ehb.be</email>
+      <date_of_birth>1980-01-01</date_of_birth>
+      <contact>
+        <first_name>An</first_name>
+        <last_name>Janssens</last_name>
+      </contact>
+      <type>company</type>
+      <company_name>Erasmushogeschool Brussel</company_name>
+      <vat_number>BE0876543210</vat_number>
+      <company_id>ehb-001</company_id>
+    </customer>
+  </body>
+</message>
+```
+
+> **Voor CRM:** Maak/update een Salesforce Contact met deze velden. Géén sessie-inschrijving aanmaken — dat gebeurt later via `new_registration` (§5.1) als de gebruiker zich daadwerkelijk inschrijft op een sessie.
+
+---
+
+### 5.3 `user_updated`
 
 Wanneer een gebruiker zijn profiel wijzigt.
 
@@ -1191,7 +1336,7 @@ Wanneer een gebruiker zijn profiel wijzigt.
 
 ---
 
-### 5.3 `user_deleted`
+### 5.4 `user_deleted`
 
 Wanneer een account volledig wordt verwijderd.  
 > **Naamwijziging:** was `user.unregistered` → nu `user_deleted` (snake_case, duidelijker).
@@ -1243,6 +1388,138 @@ Wanneer een account volledig wordt verwijderd.
     <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
     <email>jan.peeters@ehb.be</email>
     <reason>Account op verzoek van gebruiker verwijderd</reason>
+  </body>
+</message>
+```
+
+---
+
+### 5.5 `user_registered`
+
+Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat sessie-details en initiële betaalstatus.  
+> **Naamwijziging:** was `user.registered` → nu `user_registered` (snake_case, v2.0 standaard).  
+> **Queue-correctie:** was `frontend.user.registered` → nu `crm.incoming`.
+
+**Queue:** `crm.incoming`  
+**Richting:** Frontend → CRM
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="xs:string"/>
+          <xs:element name="correlation_id" type="xs:string"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="user_registered"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="user">
+            <xs:complexType><xs:sequence>
+              <xs:element name="email"      type="xs:string"/>
+              <xs:element name="first_name" type="xs:string"/>
+              <xs:element name="last_name"  type="xs:string"/>
+              <xs:element name="type">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="private"/>
+                  <xs:enumeration value="company"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <!-- Verplicht wanneer type=company -->
+              <xs:element name="company" minOccurs="0">
+                <xs:complexType><xs:sequence>
+                  <xs:element name="name"       type="xs:string"/>
+                  <xs:element name="vat_number" type="xs:string"/>
+                </xs:sequence></xs:complexType>
+              </xs:element>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+          <xs:element name="session">
+            <xs:complexType><xs:sequence>
+              <xs:element name="id"   type="xs:string"/>
+              <xs:element name="name" type="xs:string"/>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+          <xs:element name="payment_status">
+            <xs:simpleType><xs:restriction base="xs:string">
+              <xs:enumeration value="pending"/>
+              <xs:enumeration value="paid"/>
+            </xs:restriction></xs:simpleType>
+          </xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML (particulier)
+
+```xml
+<message>
+  <header>
+    <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
+    <correlation_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</correlation_id>
+    <timestamp>2026-05-01T10:00:00Z</timestamp>
+    <source>frontend</source>
+    <type>user_registered</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <user>
+      <email>jan.peeters@ehb.be</email>
+      <first_name>Jan</first_name>
+      <last_name>Peeters</last_name>
+      <type>private</type>
+    </user>
+    <session>
+      <id>sess-2026-mainstage-01</id>
+      <name>Main Stage Opening</name>
+    </session>
+    <payment_status>pending</payment_status>
+  </body>
+</message>
+```
+
+#### Voorbeeld XML (bedrijf)
+
+```xml
+<message>
+  <header>
+    <message_id>b2c3d4e5-f6a7-8901-bcde-f01234567891</message_id>
+    <correlation_id>b2c3d4e5-f6a7-8901-bcde-f01234567891</correlation_id>
+    <timestamp>2026-05-01T10:05:00Z</timestamp>
+    <source>frontend</source>
+    <type>user_registered</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <user>
+      <email>marie.desmet@acme.be</email>
+      <first_name>Marie</first_name>
+      <last_name>Desmet</last_name>
+      <type>company</type>
+      <company>
+        <name>Acme NV</name>
+        <vat_number>BE0123456789</vat_number>
+      </company>
+    </user>
+    <session>
+      <id>sess-2026-workshop-04</id>
+      <name>Tech Workshop: Cloud Integrations</name>
+    </session>
+    <payment_status>pending</payment_status>
   </body>
 </message>
 ```
@@ -1366,6 +1643,10 @@ Klant bestelt consumpties aan de bar. Schema v2.3 — bevat `sku`, `vat_rate` en
 </xs:schema>
 ```
 
+#### Business Logic Rules (Verplicht)
+*   **Regel 1 (Top-ups):** Voor wallet-herladingen moet `item_type` de waarde `wallet_topup` hebben en `vat_rate` moet `0` zijn. Dit is een niet-belastbare financiële transactie.
+*   **Regel 2 (Anoniem):** Als `is_anonymous` op `true` staat, wordt het `<customer>` blok weggelaten. In dit geval kan er later geen factuur worden aangevraagd; de klant ontvangt enkel een fysiek kasticket.
+
 #### Voorbeeld XML
 
 ```xml
@@ -1434,7 +1715,7 @@ Een badge/QR-code wordt gekoppeld aan een klant bij de inkom.
       </xs:element>
       <xs:element name="body">
         <xs:complexType><xs:sequence>
-          <xs:element name="user_id" type="xs:string"/>
+          <xs:element name="user_id"     type="xs:string"/>
           <xs:element name="badge_id"    type="xs:string"/>
           <xs:element name="assigned_at" type="xs:dateTime"/>
         </xs:sequence></xs:complexType>
@@ -1467,7 +1748,9 @@ Een badge/QR-code wordt gekoppeld aan een klant bij de inkom.
 
 ### 6.3 `badge_scanned`
 
-Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
+Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).  
+**Flow:** IoT (Raspberry Pi) → Kassa  
+**Routing Key:** `kassa.incoming`
 
 #### XSD
 
@@ -1481,7 +1764,6 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
           <xs:element name="message_id" type="xs:string"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
           <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
-            <xs:enumeration value="kassa"/>
             <xs:enumeration value="iot_gateway"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="badge_scanned"/></xs:restriction></xs:simpleType></xs:element>
@@ -1515,7 +1797,7 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
   <header>
     <message_id>18b9c0d1-e2f3-4567-bcde-567890100007</message_id>
     <timestamp>2026-05-15T18:06:30Z</timestamp>
-    <source>kassa</source>
+    <source>iot_gateway</source>
     <type>badge_scanned</type>
     <version>2.0</version>
   </header>
@@ -1572,6 +1854,8 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
+              <!-- user_id optioneel: anonieme refunds hebben geen user_id -->
+              <xs:element name="user_id" type="xs:string" minOccurs="0"/>
               <xs:element name="refund_type">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
@@ -1580,8 +1864,6 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
-              <!-- user_id optioneel: anonieme refunds hebben geen user_id -->
-              <xs:element name="user_id" type="xs:string" minOccurs="0"/>
               <xs:element name="refund">
                 <xs:complexType>
                   <xs:sequence>
@@ -1622,6 +1904,9 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
 </xs:schema>
 ```
 
+#### Business Logic Rules
+*   **Regel 1 (Saldo Update):** Als de `method` gelijk is aan `badge_wallet`, zal Kassa ook een `wallet_balance_update` bericht broadcasten naar de Frontend.
+
 #### Voorbeeld XML — badge_wallet refund
 
 ```xml
@@ -1636,8 +1921,8 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
     <correlation_id>f14d0000-0000-0000-0000-000000000004</correlation_id>
   </header>
   <body>
-    <refund_type>consumption_item</refund_type>
     <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+    <refund_type>consumption_item</refund_type>
     <refund>
       <amount currency="eur">5.00</amount>
       <method>badge_wallet</method>
@@ -1664,8 +1949,8 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
     <correlation_id>8fc6d7e8-f9a0-1234-cdef-234567800014</correlation_id>
   </header>
   <body>
-    <refund_type>consumption_item</refund_type>
     <!-- geen user_id bij anonieme terugbetaling -->
+    <refund_type>consumption_item</refund_type>
     <refund>
       <amount currency="eur">5.00</amount>
       <method>cash</method>
@@ -2084,8 +2369,8 @@ Kassa stuurt dit bij elk foutscenario. Monitoring ontvangt dit voor het dashboar
 | Code | Wanneer |
 |------|---------|
 | `badge_not_found` | badge_id niet gevonden in Odoo |
-| `odoo_api_error` | Odoo XML-RPC niet bereikbaar |
-| `offline_queue_full` | outbox.json heeft limiet van 500 berichten bereikt |
+| `odoo_api_error` | De Kassa-integratie kan de Odoo XML-RPC API niet bereiken. |
+| `offline_queue_full` | De lokale outbox-buffer heeft de limiet (500 berichten) bereikt. |
 
 *(Voor algemene codes zoals `invalid_xml_format`, zie sectie 2.6)*
 
@@ -2830,7 +3115,7 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
 
 ### 10.3 `cancel_registration` (CRM → Kassa & Planning)
 
-> **Gap Resolution (Mei 2026):** CRM stuurt dit bericht nu ook door naar Planning (via `calendar.exchange`) zodat `current_attendees` daar correct verlaagd kan worden bij een annulatie.
+> **Gap Resolution (April 2026):** CRM stuurt dit bericht nu ook door naar Planning (via `calendar.exchange`) zodat `current_attendees` daar correct verlaagd kan worden bij een annulatie.
 
 #### XSD
 
@@ -3621,6 +3906,7 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 |-----|------|-------|-------------------|
 | Frontend | CRM | `crm.incoming` | — |
 | Kassa | CRM | `crm.incoming` | exchange: `kassa.exchange`, routing: `kassa.payments.consumption` / `registration` / `refund` / `invoice` / `badge` |
+| IoT (Raspberry Pi) | Kassa | `kassa.incoming` | exchange: `kassa.exchange`, routing: `kassa.incoming` |
 | Planning | CRM | `planning.session.events` | exchange: `planning.exchange`, routing: `planning.session.*` |
 | Facturatie | CRM | `facturatie.to.crm` | — |
 | Mailing | CRM | `crm.incoming` | — |
@@ -3630,7 +3916,7 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 | CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
 | Facturatie | Mailing | `facturatie.to.mailing` | — |
 | Monitoring | Mailing | `monitoring.alerts` | — |
-| Alle teams | Monitoring | `heartbeat` | — |
+| Alle teams | Monitoring | `heartbeat` | exchange: `kassa.exchange` (topic), routing: `heartbeat.{source}` |
 | Frontend/CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `frontend.to.planning.calendar.invite` |
 | Planning | Frontend | reply_to queue (RPC) | exchange: `calendar.exchange`, routing: `planning.to.frontend.calendar.invite.confirmed` |
 | Frontend/CRM | Planning | `planning.session.events` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` (RPC) |
@@ -3663,6 +3949,7 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 | ← Planning | `session_created` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.created` |
 | ← Planning | `session_updated` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.updated` |
 | ← Planning | `session_deleted` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.deleted` |
+| → CRM | `user_registered` | `crm.incoming` |
 | → CRM | `user_deleted` | `crm.incoming` |
 | → CRM | `cancel_registration` | `crm.incoming` |
 | → CRM | `user_checkin` | `crm.incoming` |
@@ -3679,7 +3966,7 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 PHP senders die volledig moeten gemigreerd worden naar de v2.0 header:
 - [ ] `UserUnregisteredSender.php` — type `user.unregistered` → `user_deleted`, xmlns weg, `<receiver>` weg, `version=2.0`, geen `<master_uuid>`
 - [ ] `UserCreatedSender.php` — type `user.created` → `user_created`, idem header-migratie
-- [ ] `UserRegisteredSender.php` — type `user.registered` → `user_registered`, idem header-migratie
+- [ ] `UserRegisteredSender.php` — type `user.registered` → `user_registered`, v2.0 header (xmlns weg, `<receiver>` weg, `<version>2.0</version>`), queue → `crm.incoming`, `is_company` boolean → `<type>private|company</type>` (zie §5.5)
 - [ ] `UserUpdatedSender.php` — type `user.updated` → `user_updated`, idem header-migratie
 - [ ] `UserCheckinSender.php` — type `user.checkin` → `user_checkin`, idem + voeg `<session_id>` body toe (sectie 21.1)
 - [ ] `CalendarInviteSender.php` — type `calendar.invite` → `calendar_invite`, voeg `<version>2.0</version>` toe (was afwezig!), voeg `<attendee_email>` toe in body (sectie 17.2)
@@ -3702,7 +3989,7 @@ Nieuwe functionaliteit (uit v2.0):
 | → CRM | `consumption_order` | `kassa.payments.consumption` |
 | → CRM | `payment_registered` | `kassa.payments.consumption` of `kassa.payments.registration` |
 | → CRM | `badge_assigned` | `kassa.payments.badge` |
-| → CRM | `badge_scanned` | `kassa.payments.consumption` |
+| ← IoT (Raspberry Pi) | `badge_scanned` | `kassa.incoming` |
 | → CRM | `refund_processed` | `kassa.payments.refund` |
 | → CRM | `invoice_request` | `kassa.payments.invoice` |
 | → Frontend | `payment_status` | `frontend.payments` (routing: `kassa.frontend.payment`) |
@@ -3712,7 +3999,7 @@ Nieuwe functionaliteit (uit v2.0):
 | ← CRM | `profile_update` | `kassa.incoming` |
 | ← CRM | `cancel_registration` | `kassa.incoming` |
 
-**Status v2.3 audit:  CONFORM — Geen wijzigingen vereist!**
+**Status v2.3 audit:  CONFORM (v2.5 sync) — Geen wijzigingen vereist!**
 
 Kassa's `XML_Structuren_Kassa.md` v2.5 voldoet volledig aan dit contract. De hieronder vermelde actiepunten zijn historische items uit v2.0 die ondertussen allemaal zijn afgewerkt — ze blijven hier voor referentie.
 
@@ -3720,7 +4007,7 @@ Kassa's `XML_Structuren_Kassa.md` v2.5 voldoet volledig aan dit contract. De hie
 - [x] `<age>` verwijderen — leeftijd lokaal berekenen via `date_of_birth`
 - [x] `currency="eur"` attribuut op alle bedragen
 - [x] `refund_processed`: `correlation_id` = message_id originele `payment_registered` (UUID)
-- [x] `refund_processed`: `payment_method` = `cash` of `card_reversal` (nooit `badge_wallet`)
+- [x] `refund_processed`: `method` = `cash`, `card_reversal` of `badge_wallet`
 - [x] `payment_registered` sturen na elke kassatransactie (routing: consumption/registration)
 - [x] `payment_status` sturen naar `frontend.payments` na inschrijvingsbetaling
 - [x] `wallet_balance_update` sturen naar `frontend.payments` bij badge saldo-wijziging
@@ -3752,11 +4039,11 @@ Kassa's `XML_Structuren_Kassa.md` v2.5 voldoet volledig aan dit contract. De hie
 | ← Frontend | `session_delete_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.delete` |
 | ← CRM | `cancel_registration` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
 
-**Status v2.3 audit:  VOLLEDIG CONFORM (Mei 2026 update) **
+**Status v2.3 audit:  VOLLEDIG CONFORM (April 2026 update) **
 
 Planning heeft alle resterende afwijkingen weggewerkt en de XSD-validatie volledig conform v2.0 gemaakt. Tevens is de gap in de annulatie-flow gedicht via Option A (forwarding door CRM).
 
-**Afgewerkte actiepunten (Mei 2026):**
+**Afgewerkte actiepunten (April 2026):**
 - [x] **XSD's**: Alle 7 XSD's in `/xsd/` folder gemigreerd naar v2.0 (geen namespaces, `xs:dateTime`, snake_case types).
 - [x] `calendar_invite.xsd`: `attendee_email` verplicht toegevoegd.
 - [x] **Heartbeat**: Broadcaster actief op queue `heartbeat`.
@@ -3852,6 +4139,7 @@ CRM is technisch goed opgezet (Node.js + jsforce + amqplib + fast-xml-parser + x
 `src/receiver.js`:
 - [ ] Hernoem case `'session_update'` → `'session_updated'` in de switch-statement (sectie 7.2)
 - [ ] Bind `planning.session.events` queue correct aan `planning.exchange` topic exchange
+- [ ] `user_registered` handler implementeren (sectie 5.5) — sessie-inschrijving verwerken, `user_registered` toevoegen aan `MESSAGE_TYPES`
 - [ ] `user_checkin` handler implementeren (sectie 21.1) — opslaan als aanwezigheid in Salesforce
 
 `src/sender.js`:
@@ -3862,7 +4150,7 @@ CRM is technisch goed opgezet (Node.js + jsforce + amqplib + fast-xml-parser + x
 - [ ] `consumption_order` 1-op-1 doorgeven naar `facturatie.incoming` (passthrough, sectie 11.3)
 - [ ] `payment_registered` (Kassa registration) doorgeven naar `facturatie.incoming` (passthrough, sectie 11.4)
 - [ ] `payment_registered` sturen naar `frontend.incoming` na betalingsbevestiging (sectie 14)
-- [ ] `cancel_registration` forwarden naar `calendar.exchange` (routing: `crm.to.planning.cancel_registration`) voor Team Planning (Mei 2026 update)
+- [ ] `cancel_registration` forwarden naar `calendar.exchange` (routing: `crm.to.planning.cancel_registration`) voor Team Planning (April 2026 update)
 - [ ] `vat_validation_error` sturen naar `frontend.incoming` bij ongeldig BTW-nr (sectie 20)
 
 Tests:
@@ -4877,7 +5165,7 @@ IntegrationProject-Groep1/
         invoice_request_crm_facturatie.xsd
         session_created.xsd
         ... (één bestand per berichttype)
-     XML_XSD_Contract_v2.3.md   ← dit document
+     XML_XSD_Contract_v2.3_Centralized 1.md   ← dit document
 ```
 
 Elk team voegt dan dit als git-submodule toe en valideert inkomende berichten tegen de shared XSD. Zo is het contract machine-leesbaar én mensleesbaar.
@@ -4897,4 +5185,5 @@ Maar: dit document IS nu de canonieke bron. Zolang er geen issue + update gewees
 
 *Document v2.3 — Gegenereerd op basis van volledige repo-audit + bestaande v2.0 contract — April 2026*
 *Volgende geplande revisie: na demo 3 — toevoegen of aanpassen via Pull Request*
+
 
