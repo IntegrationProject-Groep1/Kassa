@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=250&section=header&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,100:ffffff&height=120&section=header&animation=fadeIn" />
 
-  <!-- Typing SVG -->
+  <!-- Optimized Typing SVG -->
   <a href="https://git.io/typing-svg">
-    <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=45&pause=1000&color=FFFFFF&center=true&vCenter=true&width=900&height=120&lines=Kassa+Integration;The+Resilient+Pulse+of+Event+Retail" alt="Typing SVG" />
+    <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=32&pause=1000&color=FFFFFF&center=true&vCenter=true&width=600&height=100&lines=Kassa+Integration;The+Resilient+Pulse+of+Event+Retail" alt="Typing SVG" />
   </a>
 
   <!-- Tech Badges -->
