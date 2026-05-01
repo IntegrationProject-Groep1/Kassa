@@ -140,13 +140,15 @@ class OrderPoller:
         if not partner_id:
             return None
 
+        # Ensure partner_id is an integer (Odoo ID)
+        if isinstance(partner_id, (list, tuple)):
+            partner_id = partner_id[0]
+
         # Return cached result if available
         if hasattr(self, '_customer_cache') and partner_id in self._customer_cache:
             return self._customer_cache[partner_id]
 
         try:
-            if isinstance(partner_id, (list, tuple)):
-                partner_id = partner_id[0]
 
             base_fields = [
                 'id', 'name', 'email', 'phone', 'is_company', 'parent_id',
