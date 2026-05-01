@@ -11,7 +11,7 @@
     <xs:sequence>
       <xs:element name="message_id" type="xs:string"/>
       <xs:element name="type" type="xs:string" fixed="payment_registered"/>
-      <xs:element name="source" type="xs:string"/>
+      <xs:element name="source" type="xs:string" fixed="kassa"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
       <xs:element name="version" type="xs:string"/>
       <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
