@@ -436,7 +436,7 @@ def process_message(ch, method, properties, body):
         try:
             validate_xml(xml_text, msg_type)
         except ValueError as e:
-            logger.error("[RECEIVER] ❌ XSD validation failed for '%s'", msg_type)
+            logger.error("[RECEIVER] ❌ Validation failure for '%s': %s", msg_type, e)
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return

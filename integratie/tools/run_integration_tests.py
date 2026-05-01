@@ -13,21 +13,21 @@ import xmlrpc.client  # nosec
 
 # Allow importing config_utils from the integratie/ root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_utils import parse_rabbit_port  # noqa: E402
+from config_utils import get_env, parse_rabbit_port  # noqa: E402
 
 # ── RabbitMQ config ────────────────────────────────────────────────────────────
-RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
+RABBIT_HOST = get_env("RABBIT_HOST", "localhost")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
-RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
-QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
+RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
+RABBIT_USER = get_env("RABBIT_USER", "guest")
+RABBIT_PASS = get_env("RABBIT_PASS", "guest")
+QUEUE_NAME = get_env("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
 # ── Odoo config ────────────────────────────────────────────────────────────────
-ODOO_URL = os.environ.get("ODOO_URL", "http://kassa-web:8069")
-ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
-ODOO_USER = os.environ.get("ODOO_USER", "odoo")
-ODOO_PASS = os.environ.get("ODOO_PASS", "myodoo")
+ODOO_URL = get_env("ODOO_URL", "http://kassa-web:8069")
+ODOO_DB = get_env("ODOO_DB", "odoo_kassa")
+ODOO_USER = get_env("ODOO_USER", "odoo")
+ODOO_PASS = get_env("ODOO_PASS", "myodoo")
 
 # ── Test identity (unique per run) ─────────────────────────────────────────────
 TEST_USER_ID = f"kassa-test-{uuid.uuid4()}"
