@@ -92,7 +92,7 @@ class OrderPoller:
     def get_pending_orders(self):
         """Fetch orders in state 'paid'/'done' that haven't been sent or errored."""
         try:
-            buffered_ids = sender.get_buffered_order_ids()
+            buffered_ids = sender.get_buffered_record_ids(model="pos.order")
 
             # Search for completed orders not yet sent and not marked with errors
             order_ids = self.models.execute_kw(
@@ -355,7 +355,7 @@ class OrderPoller:
                     vat_rate = int(max(amounts))
 
                 # BEST PRACTICE: Use price_subtotal_incl to ensure the XML matches what the customer actually paid
-                total_incl = float(line.get('price_subtotal_incl', line['qty'] * line['price_unit']))
+                total_incl = float(line.get('price_subtotal_incl') or (line['qty'] * line['price_unit']))
                 unit_price_incl = round(total_incl / line['qty'], 2) if line['qty'] != 0 else float(line['price_unit'])
 
                 items.append({
@@ -371,8 +371,13 @@ class OrderPoller:
 
         customer_type = "private"
         if customer_info:
-            if customer_info.get('is_company') or customer_info.get('parent_id'):
+            if customer_info.get('is_company'):
                 customer_type = "company"
+            elif customer_info.get('parent_id'):
+                # Check if parent is a company
+                parent_info = self.get_customer_info(customer_info['parent_id'])
+                if parent_info and parent_info.get('is_company'):
+                    customer_type = "company"
 
         xml_message = sender.build_consumption_order_xml(
             items=items,
@@ -460,6 +465,8 @@ class OrderPoller:
         and send the Flow 2 (badge_assigned) message to CRM.
         """
         try:
+            buffered_ids = sender.get_buffered_record_ids(model="res.partner")
+
             # Search for partners with a badge that hasn't been reported yet
             partner_ids = self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -468,6 +475,9 @@ class OrderPoller:
                   ['x_badge_sent', '=', False],
                   ['x_user_id', '!=', False]]]
             )
+
+            if buffered_ids:
+                partner_ids = [pid for pid in partner_ids if pid not in buffered_ids]
 
             if not partner_ids:
                 return
@@ -479,17 +489,32 @@ class OrderPoller:
             )
 
             for p in partners:
-                badge_id = p['x_badge_id']
-                user_id = p['x_user_id']
-                logger.info(f"🏷️ Badge {badge_id} assigned to user {user_id} — sending badge_assigned")
+                try:
+                    badge_id = p['x_badge_id']
+                    user_id = p['x_user_id']
+                    logger.info(f"🏷️ Badge {badge_id} assigned to user {user_id} — sending badge_assigned")
 
-                badge_xml = sender.build_badge_assigned_xml(badge_id, user_id)
-                if sender.send_typed_message('badge_assigned', badge_xml):
-                    self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'write',
-                        [[p['id']], {'x_badge_sent': True}]
-                    )
+                    badge_xml = sender.build_badge_assigned_xml(badge_id, user_id)
+                    if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[p['id']], {'x_badge_sent': True}]
+                        )
+                except sender.XSDValidationError as ve:
+                    logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
+                    # We mark it as sent to stop the loop, but log it as an error
+                    try:
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[p['id']], {'x_badge_sent': True}]
+                        )
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.error(f"❌ Error processing badge assignment for partner {p['id']}: {e}")
+
         except Exception as e:
             logger.error(f"❌ Error in poll_badge_assignments: {e}")
 
@@ -504,9 +529,9 @@ class OrderPoller:
                 # Flush the outbox buffer roughly every 30 seconds
                 reconnect_counter += 1
                 if reconnect_counter >= reconnect_interval / interval:
-                    flushed_ids = sender.flush_buffer()
-                    if flushed_ids:
-                        self._mark_orders_sent(flushed_ids)
+                    flushed_records = sender.flush_buffer()
+                    if flushed_records:
+                        self._mark_records_sent(flushed_records)
                     reconnect_counter = 0
 
                 # Poll for orders
@@ -525,20 +550,24 @@ class OrderPoller:
                 logger.error(f"Unexpected error in main loop: {e}")
                 time.sleep(interval)
 
-    def _mark_orders_sent(self, order_ids: list) -> None:
-        """Mark orders as sent after buffer flush."""
-        unique_ids = list(set(order_ids))
-        if not unique_ids:
-            return
-        try:
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.order', 'write',
-                [unique_ids, {'x_rabbitmq_sent': True}]
-            )
-            logger.info(f"✅ Marked {len(unique_ids)} orders as sent after flush")
-        except Exception as e:
-            logger.warning(f"⚠️  Could not mark orders as sent after flush: {e}")
+    def _mark_records_sent(self, records: list[tuple[str, int]]) -> None:
+        """Mark records as sent after buffer flush (handles multiple models)."""
+        model_to_ids = collections.defaultdict(list)
+        for model, record_id in records:
+            model_to_ids[model].append(record_id)
+
+        for model, ids in model_to_ids.items():
+            unique_ids = list(set(ids))
+            field = 'x_rabbitmq_sent' if model == 'pos.order' else 'x_badge_sent'
+            try:
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    model, 'write',
+                    [unique_ids, {field: True}]
+                )
+                logger.info(f"✅ Marked {len(unique_ids)} {model} records as sent after flush")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not mark {model} records as sent after flush: {e}")
 
 
 def main():

@@ -94,25 +94,20 @@ _cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
 
-def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
+def _buffer_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order") -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
-    If the buffer is already at BUFFER_MAX_MESSAGES the incoming message is
-    dropped and a system_error is attempted (best-effort). This caps disk and
-    memory usage at the cost of losing the oldest un-sendable message once the
-    buffer is full — acceptable because a full buffer means the broker has been
-    down for an extended period.
-
-    order_id, when provided, is stored in the entry so that flush_buffer() can
-    return the Odoo order IDs of successfully flushed messages and the poller
-    can then write x_rabbitmq_sent=True for those orders.
+    record_id and model, when provided, are stored in the entry so that
+    flush_buffer() can report which Odoo records were successfully flushed
+    and the poller can then write x_rabbitmq_sent=True for them.
     """
     with _buffer_lock:
         entry: dict[str, str | int] = {
             "routing_key": routing_key, "xml": message_xml}
-        if order_id is not None:
-            entry["order_id"] = order_id
+        if record_id is not None:
+            entry["record_id"] = record_id
+            entry["model"] = model
         entries = _read_buffer()
 
         if len(entries) >= BUFFER_MAX_MESSAGES:
@@ -142,18 +137,12 @@ def _read_buffer() -> list:
         return []
 
 
-def flush_buffer() -> list:
+def flush_buffer() -> list[tuple[str, int]]:
     """
     Replay buffered messages in order, stopping at the first send failure.
 
-    Messages that were successfully sent are removed from the file; messages
-    that failed (and all messages after the first failure) are left in place
-    so the next call can try again. Stopping on the first error preserves
-    message order — partial replays could deliver later messages before earlier
-    ones if we skipped failures and continued.
-
-    Returns a list of Odoo order IDs for entries that were successfully flushed,
-    so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
+    Returns a list of (model, record_id) tuples for entries that were
+    successfully flushed, so the caller can update Odoo accordingly.
     """
     with _buffer_lock:
         entries = _read_buffer()
@@ -175,10 +164,6 @@ def flush_buffer() -> list:
     with _buffer_lock:
         # Re-read entries in case something was buffered while we were sending
         current_entries = _read_buffer()
-        # Remove succeeded from current_entries (careful, dicts can't be hashed, so compare id/xml)
-        # For simplicity, we just rebuild: order_ids we succeeded on.
-        # But wait, original code was: 'remaining = [e for e in entries if e not in succeeded]'
-        # To handle thread-safety properly:
         succeeded_xmls = {e["xml"] for e in succeeded}
         remaining = [e for e in current_entries if e["xml"] not in succeeded_xmls]
 
@@ -195,7 +180,7 @@ def flush_buffer() -> list:
         logger.info(
             f"✅ Successfully flushed {len(succeeded)} buffered messages")
 
-    return [e["order_id"] for e in succeeded if "order_id" in e]
+    return [(e["model"], e["record_id"]) for e in succeeded if "record_id" in e and "model" in e]
 
 
 _connection = None
@@ -268,18 +253,13 @@ def setup_exchange(channel):
     )
 
 
-def send_message(routing_key: str, message_xml: str, order_id: int | None = None, buffer_on_fail: bool = True) -> bool:
+def send_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order", buffer_on_fail: bool = True) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
-    On any exception (connection refused, timeout, channel error) the message
-    is written to the local outbox buffer instead of being lost, unless
-    buffer_on_fail is set to False. The connection globals are reset to None
-    so the next call opens a fresh connection rather than retrying a broken one.
+    On any exception the message is written to the local outbox buffer instead of
+    being lost, unless buffer_on_fail is set to False.
     Returns True if successfully sent, False if failed (and possibly buffered).
-
-    order_id is stored in the buffer entry when provided, so that
-    flush_buffer() can report which Odoo orders were successfully flushed.
     """
     try:
         _publish_or_raise(routing_key, message_xml)
@@ -294,7 +274,7 @@ def send_message(routing_key: str, message_xml: str, order_id: int | None = None
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml, order_id=order_id)
+        _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
         return False
 
 
@@ -346,7 +326,8 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
 def send_typed_message(
     msg_type: str,
     message_xml: str,
-    order_id: int | None = None,
+    record_id: int | None = None,
+    model: str = "pos.order",
     buffer_on_fail: bool = True
 ) -> bool:
     """
@@ -378,23 +359,21 @@ def send_typed_message(
         raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml, order_id=order_id, buffer_on_fail=buffer_on_fail)
+    return send_message(routing_key, message_xml, record_id=record_id, model=model, buffer_on_fail=buffer_on_fail)
 
 
-def get_buffered_order_ids() -> set:
-    """Return the set of Odoo order IDs currently waiting in the outbox buffer (cached)."""
+def get_buffered_record_ids(model: str = "pos.order") -> set[int]:
+    """Return the set of record IDs currently waiting in the outbox buffer for a given model."""
     global _last_buffer_mtime, _cached_buffer_ids
+    # Note: caching logic needs to be model-aware if we want to be strictly correct,
+    # but for now we just re-read if mtime changed.
     with _buffer_lock:
         if not BUFFER_FILE.exists():
-            _cached_buffer_ids = set()
-            _last_buffer_mtime = 0.0
-            return _cached_buffer_ids
-        mtime = os.path.getmtime(BUFFER_FILE)
-        if mtime > _last_buffer_mtime:
-            _cached_buffer_ids = {e["order_id"] for e in _read_buffer() if "order_id" in e}
-            _last_buffer_mtime = mtime
-
-        return _cached_buffer_ids.copy()
+            return set()
+        
+        # Simple implementation: read all and filter
+        entries = _read_buffer()
+        return {e["record_id"] for e in entries if e.get("model") == model and "record_id" in e}
 
 
 def now_utc() -> str:
