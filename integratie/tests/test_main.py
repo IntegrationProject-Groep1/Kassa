@@ -98,9 +98,9 @@ class TestMainSetup:
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 4 fields, pos.order has 3, product.template has 2 → 9 creates
+        # res.partner has 12 fields, pos.order has 4, product.template has 1 → 17 creates
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 9
+        assert len(create_calls) == 17
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):

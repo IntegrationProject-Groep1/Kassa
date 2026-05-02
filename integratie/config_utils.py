@@ -58,3 +58,13 @@ def require_env(*names: str) -> dict[str, str]:
         raise ValueError(f"Required environment variables are missing: {missing_csv}")
 
     return values
+
+
+def parse_xml_float(element, default: float = 0.0) -> float:
+    """Consistently parse a float from an XML element's text, falling back to default on error."""
+    if element is None or not element.text:
+        return default
+    try:
+        return float(element.text.strip())
+    except (ValueError, TypeError):
+        return default
