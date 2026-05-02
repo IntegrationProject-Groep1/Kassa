@@ -558,7 +558,7 @@ class OrderPoller:
                 'email': customer_info.get('email'),
                 'address': {
                     'street': customer_info.get('street', ''),
-                    'number': "", # Odoo street usually includes number; split if needed
+                    'number': "",  # Odoo street usually includes number; split if needed
                     'city': customer_info.get('city', ''),
                     'postal_code': customer_info.get('zip', ''),
                     'country': country_code
