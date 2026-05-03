@@ -53,6 +53,10 @@ class BufferFullError(RuntimeError):
     """Raised when the outbox buffer has reached its maximum capacity."""
 
 
+class XSDValidationError(Exception):
+    """Raised when an outgoing message fails strict XSD validation."""
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +81,6 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
-    "heartbeat": "kassa.heartbeat",
     "system_error": "kassa.errors",
 }
 
@@ -91,25 +94,20 @@ _cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
 
-def _buffer_message(routing_key: str, message_xml: str, order_id: int | None = None) -> None:
+def _buffer_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order") -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
-    If the buffer is already at BUFFER_MAX_MESSAGES the incoming message is
-    dropped and a system_error is attempted (best-effort). This caps disk and
-    memory usage at the cost of losing the oldest un-sendable message once the
-    buffer is full — acceptable because a full buffer means the broker has been
-    down for an extended period.
-
-    order_id, when provided, is stored in the entry so that flush_buffer() can
-    return the Odoo order IDs of successfully flushed messages and the poller
-    can then write x_rabbitmq_sent=True for those orders.
+    record_id and model, when provided, are stored in the entry so that
+    flush_buffer() can report which Odoo records were successfully flushed
+    and the poller can then write x_rabbitmq_sent=True for them.
     """
     with _buffer_lock:
         entry: dict[str, str | int] = {
             "routing_key": routing_key, "xml": message_xml}
-        if order_id is not None:
-            entry["order_id"] = order_id
+        if record_id is not None:
+            entry["record_id"] = record_id
+            entry["model"] = model
         entries = _read_buffer()
 
         if len(entries) >= BUFFER_MAX_MESSAGES:
@@ -139,18 +137,12 @@ def _read_buffer() -> list:
         return []
 
 
-def flush_buffer() -> list:
+def flush_buffer() -> list[tuple[str, int]]:
     """
     Replay buffered messages in order, stopping at the first send failure.
 
-    Messages that were successfully sent are removed from the file; messages
-    that failed (and all messages after the first failure) are left in place
-    so the next call can try again. Stopping on the first error preserves
-    message order — partial replays could deliver later messages before earlier
-    ones if we skipped failures and continued.
-
-    Returns a list of Odoo order IDs for entries that were successfully flushed,
-    so the caller (order_poller) can write x_rabbitmq_sent=True for those orders.
+    Returns a list of (model, record_id) tuples for entries that were
+    successfully flushed, so the caller can update Odoo accordingly.
     """
     with _buffer_lock:
         entries = _read_buffer()
@@ -172,10 +164,6 @@ def flush_buffer() -> list:
     with _buffer_lock:
         # Re-read entries in case something was buffered while we were sending
         current_entries = _read_buffer()
-        # Remove succeeded from current_entries (careful, dicts can't be hashed, so compare id/xml)
-        # For simplicity, we just rebuild: order_ids we succeeded on.
-        # But wait, original code was: 'remaining = [e for e in entries if e not in succeeded]'
-        # To handle thread-safety properly:
         succeeded_xmls = {e["xml"] for e in succeeded}
         remaining = [e for e in current_entries if e["xml"] not in succeeded_xmls]
 
@@ -192,7 +180,7 @@ def flush_buffer() -> list:
         logger.info(
             f"✅ Successfully flushed {len(succeeded)} buffered messages")
 
-    return [e["order_id"] for e in succeeded if "order_id" in e]
+    return [(e["model"], e["record_id"]) for e in succeeded if "record_id" in e and "model" in e]
 
 
 _connection = None
@@ -241,8 +229,7 @@ def _publish_or_raise(routing_key: str, message_xml: str) -> None:
                 properties=pika.BasicProperties(delivery_mode=2),
             )
             return
-        # type: ignore[attr-defined]
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):
+        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
             global _connection, _channel
             _connection = None
             _channel = None
@@ -266,18 +253,19 @@ def setup_exchange(channel):
     )
 
 
-def send_message(routing_key: str, message_xml: str, order_id: int | None = None, buffer_on_fail: bool = True) -> bool:
+def send_message(
+    routing_key: str,
+    message_xml: str,
+    record_id: int | None = None,
+    model: str = "pos.order",
+    buffer_on_fail: bool = True
+) -> bool:
     """
     Publish xml to kassa.exchange with the given routing_key.
 
-    On any exception (connection refused, timeout, channel error) the message
-    is written to the local outbox buffer instead of being lost, unless
-    buffer_on_fail is set to False. The connection globals are reset to None
-    so the next call opens a fresh connection rather than retrying a broken one.
+    On any exception the message is written to the local outbox buffer instead of
+    being lost, unless buffer_on_fail is set to False.
     Returns True if successfully sent, False if failed (and possibly buffered).
-
-    order_id is stored in the buffer entry when provided, so that
-    flush_buffer() can report which Odoo orders were successfully flushed.
     """
     try:
         _publish_or_raise(routing_key, message_xml)
@@ -292,7 +280,7 @@ def send_message(routing_key: str, message_xml: str, order_id: int | None = None
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml, order_id=order_id)
+        _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
         return False
 
 
@@ -305,6 +293,10 @@ _OUTGOING_SCHEMA_MAP = {
     "payment_registered_registration": _SCHEMA_DIR / "schema_payment_registered_v2.1.xsd",
     "refund_processed": _SCHEMA_DIR / "schema_refund_processed.xsd",
     "invoice_request": _SCHEMA_DIR / "schema_invoice_request.xsd",
+    "badge_assigned": _SCHEMA_DIR / "schema_badge_assigned.xsd",
+    "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
+    "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
+    "system_error": _SCHEMA_DIR / "schema_error.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -314,71 +306,84 @@ _schema_cache: dict[str, etree.XMLSchema] = {}
 def _validate_outgoing(msg_type: str, message_xml: str) -> None:
     """
     Validate outgoing XML against the corresponding XSD schema.
-    Raises ValueError if validation fails. Skips silently if no schema is mapped.
+    Strictly catches both XSD violations and structural XML syntax errors.
     """
     schema_path = _OUTGOING_SCHEMA_MAP.get(msg_type)
     if not schema_path or not schema_path.exists():
         return
 
-    if msg_type not in _schema_cache:
-        _schema_cache[msg_type] = etree.XMLSchema(
-            etree.parse(str(schema_path)))
+    try:
+        from defusedxml.lxml import fromstring
+        if msg_type not in _schema_cache:
+            parser = etree.XMLParser(resolve_entities=False)
+            schema_doc = etree.parse(str(schema_path), parser)
+            _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
 
-    xml_doc = etree.fromstring(message_xml.encode("utf-8"))
-    if not _schema_cache[msg_type].validate(xml_doc):
-        errors = str(_schema_cache[msg_type].error_log)
-        raise ValueError(
-            f"Outgoing XSD validation failed for '{msg_type}':\n{errors}")
+        xml_doc = fromstring(message_xml.encode("utf-8"))
+        if not _schema_cache[msg_type].validate(xml_doc):
+            errors = str(_schema_cache[msg_type].error_log)
+            raise ValueError(f"XSD Validation Error: {errors}")
+    except Exception as e:
+        if isinstance(e, ValueError):
+            raise e
+        raise ValueError(f"Unexpected Validation Failure: {str(e)}")
 
 
 def send_typed_message(
     msg_type: str,
     message_xml: str,
-    order_id: int | None = None,
+    record_id: int | None = None,
+    model: str = "pos.order",
     buffer_on_fail: bool = True
 ) -> bool:
-    """Validate against XSD then send with automatic routing key selection based on type."""
+    """
+    Validate against XSD and send the message.
+    Strictly blocks the message if XSD validation fails to ensure contract compliance.
+    """
     try:
         _validate_outgoing(msg_type, message_xml)
     except ValueError as e:
-        logger.warning(
-            f"⚠️  XSD validation failed for '{msg_type}': {str(e)[:300]} — message will be sent anyway")
+        # BLOCK the message: Log the detailed XSD error and raise.
+        # This prevents invalid XML from reaching RabbitMQ or the offline buffer.
+
+        # BEST PRACTICE: Attempt to extract message_id from the invalid XML for traceability
+        related_id = None
+        try:
+            # We use a non-validating parse just to get the header ID
+            from defusedxml import ElementTree as DET
+            blocked_root = DET.fromstring(message_xml)
+            related_id = blocked_root.findtext(".//message_id")
+        except Exception:
+            pass
+
+        error_msg = f"XSD validation failed for '{msg_type}': {str(e)}"
+        logger.error(
+            f"❌ MESSAGE BLOCKED: {error_msg}\n"
+            f"Message content (first 500 chars): {message_xml[:500]}..."
+        )
+        # Send a system_error with the extracted related_id
+        send_error_to_queue("invalid_xml_format", related_id, error_msg[:500])
+        raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(routing_key, message_xml, order_id=order_id, buffer_on_fail=buffer_on_fail)
+    return send_message(
+        routing_key,
+        message_xml,
+        record_id=record_id,
+        model=model,
+        buffer_on_fail=buffer_on_fail
+    )
 
 
-def send_heartbeat() -> None:
-    """
-    Send a heartbeat message to kassa.heartbeat — without buffering.
-    Heartbeats are diagnostic signals used for monitoring; they are discarded
-    if the broker is unreachable to avoid filling the buffer with stale pings.
-    """
-    root = ET.Element("message")
-    _make_header(root, "heartbeat")
-    body = ET.SubElement(root, "body")
-    ET.SubElement(body, "status").text = "up"
-    uptime = int(time.monotonic() - _APP_START_TIME)
-    ET.SubElement(body, "uptime_seconds").text = str(uptime)
-
-    heartbeat_xml = _to_xml(root)
-    send_typed_message("heartbeat", heartbeat_xml, buffer_on_fail=False)
-
-
-def get_buffered_order_ids() -> set:
-    """Return the set of Odoo order IDs currently waiting in the outbox buffer (cached)."""
-    global _last_buffer_mtime, _cached_buffer_ids
+def get_buffered_record_ids(model: str = "pos.order") -> set[int]:
+    """Return the set of record IDs currently waiting in the outbox buffer for a given model."""
     with _buffer_lock:
         if not BUFFER_FILE.exists():
-            _cached_buffer_ids = set()
-            _last_buffer_mtime = 0.0
-            return _cached_buffer_ids
-        mtime = os.path.getmtime(BUFFER_FILE)
-        if mtime > _last_buffer_mtime:
-            _cached_buffer_ids = {e["order_id"] for e in _read_buffer() if "order_id" in e}
-            _last_buffer_mtime = mtime
+            return set()
 
-        return _cached_buffer_ids.copy()
+        # Simple implementation: read all and filter
+        entries = _read_buffer()
+        return {e["record_id"] for e in entries if e.get("model") == model and "record_id" in e}
 
 
 def now_utc() -> str:
@@ -514,7 +519,7 @@ def build_payment_registered_xml(
 
 
 def build_invoice_request_xml(
-    user_id: str, invoice_data: dict, correlation_id=None
+    user_id: str, invoice_data: dict, correlation_id: str
 ) -> str:
     """
     Build an invoice_request message asking the CRM to generate a formal invoice.
@@ -525,6 +530,9 @@ def build_invoice_request_xml(
                        optionally vat_number for B2B invoices.
         correlation_id: message_id of the original sale this invoice covers.
     """
+    if not correlation_id:
+        raise ValueError("correlation_id is required for invoice_request")
+
     root = ET.Element("message")
     _make_header(root, "invoice_request", correlation_id)
     body = ET.SubElement(root, "body")
@@ -551,6 +559,9 @@ def build_invoice_request_xml(
     addr = ET.SubElement(inv, "address")
     for k, v in invoice_data.get("address", {}).items():
         ET.SubElement(addr, k).text = str(v) if v is not None else ""
+
+    if invoice_data.get("company_name"):
+        ET.SubElement(inv, "company_name").text = invoice_data["company_name"]
 
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
@@ -604,22 +615,22 @@ def build_refund_processed_xml(
         original_payment_msg_id: message_id of the payment_registered message
                                  being refunded — sent as correlation_id so the
                                  CRM can locate the original transaction.
-        refund_type:             'full' or 'partial'.
+        refund_type:             'consumption_item' or 'partial'.
         refund_amount:           Amount refunded in EUR.
-        refund_method:           How the refund was returned, e.g. 'cash',
-                                 'card', 'wallet'.
-        refund_reason:           Short human-readable reason for the refund.
+        refund_method:           How the refund was returned: 'badge_wallet',
+                                 'cash', or 'card_reversal'.
+        refund_reason:           Canonical reason: 'duplicate_payment',
+                                 'customer_request', or 'system_error'.
         original_transaction_id: Terminal transaction ID from the original sale.
         user_id:                 CRM x_user_id if the customer is known.
         description:             Optional longer description of the refund.
         new_wallet_balance:      Updated wallet balance after the refund, if the
-                                 refund method was 'wallet'. Included in the XML
+                                 refund method was 'badge_wallet'. Included in the XML
                                  so the CRM can update its own balance record.
     """
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
     if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id

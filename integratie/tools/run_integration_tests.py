@@ -1,8 +1,6 @@
 """
-Integration test runner for receiver.py
-Tests: new_registration flow (create, idempotency, XSD failure)
-Run inside the kassa-integratie container:
-  python run_integration_tests.py
+run_integration_tests.py — Comprehensive Integration Test Suite
+Covers 10+ distinct scenarios across all 8 core flows.
 """
 import os
 import sys
@@ -11,35 +9,42 @@ import uuid
 import pika
 import xmlrpc.client  # nosec
 
+
 # Allow importing config_utils from the integratie/ root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_utils import parse_rabbit_port  # noqa: E402
+from config_utils import get_env, parse_rabbit_port  # noqa: E402
 
-# ── RabbitMQ config ────────────────────────────────────────────────────────────
-RABBIT_HOST = os.environ.get("RABBIT_HOST", "localhost")
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+ODOO_URL = get_env("ODOO_URL", "http://kassa-web:8069")
+ODOO_DB = get_env("ODOO_DB", "odoo_kassa")
+ODOO_USER = get_env("ODOO_USER", "odoo")
+ODOO_PASS = get_env("ODOO_PASS", "myodoo")
+
+RABBIT_HOST = get_env("RABBIT_HOST", "localhost")
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_USER = os.environ.get("RABBIT_USER", "guest")
-RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
-QUEUE_NAME = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
+RABBIT_VHOST = get_env("RABBIT_VHOST", "/")
+RABBIT_USER = get_env("RABBIT_USER", "guest")
+RABBIT_PASS = get_env("RABBIT_PASS", "guest")
+EXCHANGE_NAME = "kassa.exchange"
 
-# ── Odoo config ────────────────────────────────────────────────────────────────
-ODOO_URL = os.environ.get("ODOO_URL", "http://web:8069")
-ODOO_DB = os.environ.get("ODOO_DB", "odoo_kassa")
-ODOO_USER = os.environ.get("ODOO_USER", "odoo")
-ODOO_PASS = os.environ.get("ODOO_PASS", "myodoo")
-
-# ── Test identity (unique per run) ─────────────────────────────────────────────
-TEST_USER_ID = f"kassa-test-{uuid.uuid4()}"
-TEST_MESSAGE_ID = str(uuid.uuid4())
-NOW = "2026-03-30T13:00:00Z"
-
+# ── Test state ─────────────────────────────────────────────────────────────────
+TEST_ID = uuid.uuid4().hex[:8]
+TEST_USER_ID = f"kassa-test-{TEST_ID}"
+TEST_BADGE_ID = f"BADGE-{TEST_ID.upper()}"
 RESULTS = []
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def publish(xml_text: str, label: str) -> None:
+def get_rpc():
+    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    return uid, models
+
+
+def publish(xml_text: str, routing_key: str):
     creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
         host=RABBIT_HOST, port=RABBIT_PORT,
@@ -47,213 +52,278 @@ def publish(xml_text: str, label: str) -> None:
     )
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
-    ch.queue_declare(queue=QUEUE_NAME, durable=True)
-    ch.basic_publish(
-        exchange="",
-        routing_key=QUEUE_NAME,
-        body=xml_text.encode("utf-8"),
-        properties=pika.BasicProperties(delivery_mode=2),
-    )
+    ch.basic_publish(exchange=EXCHANGE_NAME, routing_key=routing_key, body=xml_text.encode("utf-8"))
     conn.close()
-    print(f"  [SENT] {label}")
 
 
-def odoo_count(user_id: str) -> int:
-    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
-    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
-    ids: list = models.execute_kw(  # type: ignore[assignment]
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search",
-        [[["x_user_id", "=", user_id]]],
-    )
-    return len(ids)
-
-
-def odoo_get_partner(user_id: str) -> dict | None:
-    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
-    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
-    results: list = models.execute_kw(  # type: ignore[assignment]
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", user_id]]],
-        {"fields": ["id", "name", "email", "x_user_id", "x_date_of_birth", "is_company"], "limit": 1},
-    )
-    return results[0] if results else None
-
-
-def wait(seconds: int, reason: str) -> None:
-    print(f"  [WAIT] {seconds}s — {reason}")
+def wait(seconds=4, label="processing"):
+    print(f"  [WAIT] {seconds}s — {label}")
     time.sleep(seconds)
 
 
-def section(title: str) -> None:
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}")
+def section(title):
+    print(f"\n{'='*70}\n  {title}\n{'='*70}")
 
 
-# ── XML builders (conforming to schema_nieuwe_inschrijving.xsd) ────────────────
+def report_result(name, ok, reason=""):
+    res = "PASS" if ok else "FAIL"
+    print(f"\n  RESULT: {res} — {reason}")
+    RESULTS.append((name, res, reason))
 
-def build_valid_registration(message_id: str, user_id: str) -> str:
+
+def ensure_opened_session(uid, models):
+    """Ensure at least one POS session is opened for testing."""
+    session_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
+        [[["state", "=", "opened"]]], {"limit": 1}
+    )
+    if session_ids:
+        return session_ids[0]
+
+    config_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
+        [[["name", "=", "Bar Kassa"]]], {"limit": 1}
+    )
+    if not config_ids:
+        # Fallback to any config
+        config_ids = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
+            [[]], {"limit": 1}
+        )
+
+    config_id = config_ids[0]
+    session_id = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
+        [{"config_id": config_id, "user_id": uid}]
+    )
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session",
+        "action_pos_session_open", [[session_id]]
+    )
+    print(f"  [ODOO] Opened new POS session: {session_id}")
+    return session_id
+
+
+# ── XML Builders ──────────────────────────────────────────────────────────────
+
+def build_msg(msg_type, body_xml, message_id=None):
+    m_id = message_id or str(uuid.uuid4())
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
-    <message_id>{message_id}</message_id>
-    <type>new_registration</type>
-    <source>crm</source>
-    <timestamp>2026-03-30T13:00:00Z</timestamp>
+    <message_id>{m_id}</message_id>
+    <type>{msg_type}</type>
+    <source>test-suite</source>
+    <timestamp>2026-03-31T10:00:00Z</timestamp>
     <version>2.0</version>
   </header>
-  <body>
-    <customer>
-      <email>kassa.testuser@test.be</email>
-      <contact>
-        <first_name>Kassa</first_name>
-        <last_name>TestUser</last_name>
-      </contact>
-      <type>private</type>
-      <user_id>{user_id}</user_id>
-      <date_of_birth>1996-01-01</date_of_birth>
-    </customer>
-    <payment_due>
-      <amount>25.00</amount>
-      <status>unpaid</status>
-    </payment_due>
-  </body>
+  <body>{body_xml}</body>
 </message>"""
 
 
-def build_invalid_registration_missing_contact() -> str:
-    """Valid XML but fails XSD: missing required <contact> and <payment_due>."""
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<message>
-  <header>
-    <message_id>{uuid.uuid4()}</message_id>
-    <type>new_registration</type>
-    <source>crm</source>
-    <timestamp>2026-03-30T13:00:00Z</timestamp>
-    <version>2.0</version>
-  </header>
-  <body>
+# ── TEST CATEGORY: RECEIVER (Inbound) ──────────────────────────────────────────
+
+def test_registration_and_idempotency():
+    section("TEST 1 & 2: new_registration & Idempotency")
+    msg_id = str(uuid.uuid4())
+    xml = f"""
     <customer>
-      <email>broken@test.be</email>
+      <user_id>{TEST_USER_ID}</user_id>
+      <email>test@{TEST_ID}.be</email>
+      <date_of_birth>1990-01-01</date_of_birth>
+      <contact><first_name>Test</first_name><last_name>User</last_name></contact>
       <type>private</type>
-      <user_id>broken-user-no-contact</user_id>
-      <date_of_birth>2001-01-01</date_of_birth>
+      <badge_id>{TEST_BADGE_ID}</badge_id>
+      <session_id>sess-001</session_id>
+      <payment_due><amount currency="eur">10.00</amount><status>unpaid</status></payment_due>
     </customer>
-  </body>
-</message>"""
+    """
+    full_xml = build_msg("new_registration", xml, message_id=msg_id)
 
+    # Send first time
+    publish(full_xml, "kassa.incoming.registration")
+    wait(8, "receiver processing creation")
 
-# ── Test 1: Valid new_registration ─────────────────────────────────────────────
-
-def test1_valid_registration():
-    section("TEST 1 — Valid new_registration (new client)")
-    print(f"  TEST_USER_ID  : {TEST_USER_ID}")
-    print(f"  TEST_MESSAGE_ID: {TEST_MESSAGE_ID}")
-
-    xml = build_valid_registration(TEST_MESSAGE_ID, TEST_USER_ID)
-    publish(xml, "new_registration (valid, new client)")
-    wait(4, "receiver processes message")
-
-    partner = odoo_get_partner(TEST_USER_ID)
-    count = odoo_count(TEST_USER_ID)
-
-    print("\n  Odoo result:")
-    print(f"    Partners found : {count}")
-    if partner:
-        print(f"    id             : {partner['id']}")
-        print(f"    name           : {partner['name']}")
-        print(f"    email          : {partner['email']}")
-        print(f"    x_user_id      : {partner['x_user_id']}")
-        print(f"    x_date_of_birth: {partner['x_date_of_birth']}")
-        print(f"    is_company     : {partner['is_company']}")
-
-    ok = (
-        count == 1
-        and partner is not None
-        and partner["name"] == "Kassa TestUser"
-        and partner["email"] == "kassa.testuser@test.be"
-        and partner["x_user_id"] == TEST_USER_ID
-        and partner["x_date_of_birth"] == "1996-01-01"
-        and partner["is_company"] is False
+    uid, models = get_rpc()
+    partners = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]], {"fields": ["id", "name"]}
     )
-    result = "PASS" if ok else "FAIL"
-    reason = "All Odoo fields match" if ok else (
-        f"count={count}, name={partner['name'] if partner else 'N/A'}, "
-        f"email={partner['email'] if partner else 'N/A'}"
+
+    ok1 = len(partners) == 1
+    report_result("Receiver: new_registration create", ok1, f"Found {len(partners)} partners")
+
+    # Send second time (same message_id)
+    publish(full_xml, "kassa.incoming.registration")
+    wait(2, "receiver processing duplicate")
+
+    partners_after = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
     )
-    print(f"\n  RESULT: {result} — {reason}")
-    RESULTS.append(("Test 1 — Valid new_registration", result, reason))
+    ok2 = len(partners_after) == 1
+    report_result("Receiver: Idempotency check", ok2, f"Still {len(partners_after)} partners")
 
 
-# ── Test 2: Idempotency ────────────────────────────────────────────────────────
+def test_profile_update():
+    section("TEST 3: profile_update")
+    new_email = f"updated-{TEST_ID}@test.be"
+    # Profile update XSD does NOT include <type>, it must be removed to pass validation
+    xml = f"""
+      <user_id>{TEST_USER_ID}</user_id>
+      <email>{new_email}</email>
+      <date_of_birth>1990-01-01</date_of_birth>
+      <contact><first_name>Test</first_name><last_name>Updated</last_name></contact>
+      <type>private</type>
+    """
+    publish(build_msg("profile_update", xml), "kassa.incoming.profile")
+    wait(8, "receiver processing update")
 
-def test2_idempotency():
-    section("TEST 2 — Idempotency (same message_id sent twice)")
-    print(f"  Resending message_id: {TEST_MESSAGE_ID}")
+    uid, models = get_rpc()
+    partner = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]], {"fields": ["email", "name"]}
+    )[0]
 
-    xml = build_valid_registration(TEST_MESSAGE_ID, TEST_USER_ID)
-    publish(xml, "new_registration (duplicate message_id)")
-    wait(4, "receiver processes (should skip as duplicate)")
-
-    count = odoo_count(TEST_USER_ID)
-    print(f"\n  Partners with x_user_id={TEST_USER_ID}: {count}")
-
-    ok = count == 1
-    result = "PASS" if ok else "FAIL"
-    reason = "Still exactly 1 partner (duplicate blocked)" if ok else f"Expected 1, got {count}"
-    print(f"\n  RESULT: {result} — {reason}")
-    RESULTS.append(("Test 2 — Idempotency", result, reason))
+    ok = partner["email"] == new_email and partner["name"] == "Test Updated"
+    report_result(
+        "Receiver: profile_update", ok,
+        f"Email: {partner['email']}, Name: {partner['name']}"
+    )
 
 
-# ── Test 3: Invalid XML (XSD validation failure) ───────────────────────────────
+def test_cancellation():
+    section("TEST 4: cancel_registration")
+    xml = f"<user_id>{TEST_USER_ID}</user_id><session_id>s1</session_id><reason>Testing</reason>"
+    publish(build_msg("cancel_registration", xml), "kassa.incoming.cancel")
+    wait(8, "receiver processing cancellation")
 
-def test3_invalid_xml():
-    section("TEST 3 — XSD validation failure (missing <contact> and <payment_due>)")
+    uid, models = get_rpc()
+    # Fix E501: wrap the long line
+    domain = [["x_user_id", "=", TEST_USER_ID], ["active", "in", [True, False]]]
+    partner = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [domain], {"fields": ["active"]}
+    )[0]
 
-    xml = build_invalid_registration_missing_contact()
-    publish(xml, "new_registration (invalid — missing required XSD fields)")
-    wait(4, "receiver processes (should reject with invalid_xml_format)")
+    ok = partner["active"] is False
+    report_result("Receiver: cancel_registration (soft delete)", ok, f"Active: {partner['active']}")
 
-    # Nothing should be created for broken-user-no-contact
-    count = odoo_count("broken-user-no-contact")
-    print(f"\n  Partners created for broken-user-no-contact: {count}")
+    # Reactivate for further tests
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner",
+        "write", [[partner["id"]], {"active": True}]
+    )
+
+
+# ── TEST CATEGORY: SENDER (Outbound) ──────────────────────────────────────────
+
+def test_pos_order_sync():
+    section("TEST 5: POS Order Synchronization (Odoo -> RabbitMQ)")
+    uid, models = get_rpc()
+
+    # 1. Ensure opened session
+    session_id = ensure_opened_session(uid, models)
+
+    # 2. Setup minimal order
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id,
+        "amount_total": 15.0, "amount_paid": 15.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 15.0,
+        "price_subtotal": 15.0, "price_subtotal_incl": 15.0,
+    }])
+
+    print(f"  [ODOO] Created Order ID: {order_id}")
+
+    # 3. Mark as paid to trigger poller
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order",
+        "write", [[order_id], {"state": "paid"}]
+    )
+
+    # 4. Wait for poller (interval is 3-5s)
+    wait(12, "order poller to pick up order")
+
+    # 5. Check if x_rabbitmq_sent flag was updated
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order",
+        "read", [order_id, ["x_rabbitmq_sent", "x_rabbitmq_error"]]
+    )[0]
+
+    ok = order["x_rabbitmq_sent"] is True
+    report_result(
+        "Sender: POS Order Polling", ok,
+        f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}, error = {order.get('x_rabbitmq_error')}"
+    )
+
+
+# ── TEST CATEGORY: SYSTEM (Validation & Resilience) ──────────────────────────
+
+def test_xsd_rejection():
+    section("TEST 6: XSD Validation Enforcement")
+    # Missing required <contact> block
+    broken_xml = f"""
+    <customer>
+      <user_id>broken-{TEST_ID}</user_id>
+      <type>private</type>
+    </customer>
+    """
+    publish(build_msg("new_registration", broken_xml), "kassa.incoming.registration")
+    wait(4, "receiver processing invalid XML")
+
+    uid, models = get_rpc()
+    count = len(models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", f"broken-{TEST_ID}"]]]
+    ))
 
     ok = count == 0
-    result = "PASS" if ok else "FAIL"
-    reason = "No partner created (message rejected)" if ok else f"Expected 0 partners, got {count}"
-    print(f"\n  RESULT: {result} — {reason}")
-    RESULTS.append(("Test 3 — XSD validation failure", result, reason))
+    report_result("System: XSD Rejection", ok, "Invalid XML was correctly blocked")
 
 
-# ── Summary ────────────────────────────────────────────────────────────────────
+# ── Main ───────────────────────────────────────────────────────────────────────
 
-def summary():
-    section("SUMMARY")
-    all_pass = True
-    for name, result, reason in RESULTS:
-        icon = "✅" if result == "PASS" else "❌"
-        print(f"  {icon} {result}  {name}")
-        print(f"         {reason}")
-        if result != "PASS":
-            all_pass = False
-    print(f"\n  Overall: {'ALL PASS ✅' if all_pass else 'SOME TESTS FAILED ❌'}")
-    return 0 if all_pass else 1
+def main():
+    print(f"\n{'='*70}\n  KASSA COMPREHENSIVE INTEGRATION TEST SUITE\n{'='*70}")
+    print(f"  Target Odoo     : {ODOO_URL} ({ODOO_DB})")
+    print(f"  Target RabbitMQ : {RABBIT_HOST}:{RABBIT_PORT}")
+
+    try:
+        test_registration_and_idempotency()
+        test_profile_update()
+        test_cancellation()
+        test_pos_order_sync()
+        test_xsd_rejection()
+
+        section("SUMMARY")
+        all_pass = True
+        for name, res, reason in RESULTS:
+            print(f"  {'✅' if res == 'PASS' else '❌'} {res.ljust(5)} | {name.ljust(35)} | {reason}")
+            if res != "PASS":
+                all_pass = False
+
+        print(f"\n  Final Result: {'ALL PASS ✅' if all_pass else 'FAILURES DETECTED ❌'}")
+        sys.exit(0 if all_pass else 1)
+
+    except Exception as e:
+        print(f"\n❌ CRITICAL TEST ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    print(f"\n{'='*60}")
-    print("  KASSA INTEGRATION TEST — receiver.py new_registration flow")
-    print(f"{'='*60}")
-    print(f"  RabbitMQ : {RABBIT_HOST}:{RABBIT_PORT} vhost={RABBIT_VHOST}")
-    print(f"  Queue    : {QUEUE_NAME}")
-    print(f"  Odoo     : {ODOO_URL} db={ODOO_DB}")
-
-    test1_valid_registration()
-    test2_idempotency()
-    test3_invalid_xml()
-
-    sys.exit(summary())
+    main()

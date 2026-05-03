@@ -32,24 +32,45 @@ services:
     build: .
     container_name: kassa_integratie
     environment:
-      - ODOO_URL=${ODOO_URL}
-      - ODOO_DB=${ODOO_DB}
-      - ODOO_USER=${ODOO_USER}
-      - ODOO_PASS=${ODOO_PASS}
-      - RABBIT_HOST=${RABBIT_HOST}
-      - RABBIT_PORT=${RABBIT_PORT}
-      - RABBIT_USER=${RABBIT_USER}
-      - RABBIT_PASS=${RABBIT_PASS}
-      - RABBIT_VHOST=${RABBIT_VHOST}
-      - RABBIT_EXCHANGE=${RABBIT_EXCHANGE}
-      - RABBIT_INCOMING_QUEUE=${RABBIT_INCOMING_QUEUE}
-      - POLL_INTERVAL=${POLL_INTERVAL}
-      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS}
+      - ODOO_URL=${ODOO_URL:-http://kassa-web:8069}
+      - ODOO_DB=${ODOO_DB:-odoo_kassa}
+      - ODOO_USER=${ODOO_USER:-odoo}
+      - ODOO_PASS=${ODOO_PASS:-myodoo}
+      - RABBIT_HOST=${RABBIT_HOST:-rabbitmq}
+      - RABBIT_PORT=${RABBIT_PORT:-5672}
+      - RABBIT_USER=${RABBIT_USER:-guest}
+      - RABBIT_PASS=${RABBIT_PASS:-guest}
+      - RABBIT_VHOST=${RABBIT_VHOST:-/}
+      - RABBIT_EXCHANGE=${RABBIT_EXCHANGE:-kassa.exchange}
+      - RABBIT_INCOMING_QUEUE=${RABBIT_INCOMING_QUEUE:-kassa.incoming}
+      - RABBIT_DLX=${RABBIT_DLX:-kassa.exchange}
+      - RABBIT_DLQ=${RABBIT_DLQ:-kassa.incoming.dlq}
+      - POLL_INTERVAL=${POLL_INTERVAL:-3}
+      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-admin}
     volumes:
       - ./integratie:/app
       - outbox-data:/app/outbox
     depends_on:
-      - kassa-web
+      kassa-web:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: kassa_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
