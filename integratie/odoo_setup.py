@@ -107,7 +107,7 @@ def setup_database(
                 if uid:
                     print(f"✓ Authenticated as '{odoo_user}'", flush=True)
                     return True
-                
+
                 # If target user failed, try 'admin' (fallback for fresh installs)
                 if odoo_user != "admin":
                     uid = common.authenticate(odoo_db, "admin", odoo_pass, {})
@@ -139,13 +139,13 @@ def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
         # Check if user exists
         existing = _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "search_read",
                         [[["login", "=", odoo_user]]], {"fields": ["id"]})
-        
+
         if not existing:
             print(f"Creating user '{odoo_user}'...", flush=True)
             # Create user (cloning admin for groups)
             admin_data = _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "read",
                               [[admin_uid]], {"fields": ["groups_id"]})
-            
+
             _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "create", [{
                 "name": odoo_user.capitalize(),
                 "login": odoo_user,
@@ -158,7 +158,6 @@ def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                  [[existing[0]["id"]], {"password": odoo_pass}])
     except Exception as e:
         print(f"⚠️ Could not ensure custom user '{odoo_user}': {e}", flush=True)
-
 
 
 def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
