@@ -113,9 +113,12 @@ def test_process_order_routes_refund(mock_sender, poller):
             patch.object(poller, '_process_consumption') as mock_consumption:
         # Mocking return values for process_order to unpack
         mock_consumption.return_value = (True, "msg-123")
+        mock_refund.return_value = (True, "refund-msg-123")
         poller.process_order(order)
-        mock_refund.assert_called_once()
-        mock_consumption.assert_not_called()
+
+    mock_refund.assert_called_once()
+    mock_consumption.assert_not_called()
+
 
 
 @patch('order_poller.sender')

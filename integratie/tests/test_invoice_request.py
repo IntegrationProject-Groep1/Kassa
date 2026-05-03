@@ -51,7 +51,8 @@ class TestBuildInvoiceRequestXML:
         }
         xml_str = sender.build_invoice_request_xml(
             user_id="e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
-            invoice_data=invoice_data
+            invoice_data=invoice_data,
+            correlation_id="test-corr-123"
         )
 
         # Verify XML structure
@@ -100,7 +101,8 @@ class TestBuildInvoiceRequestXML:
         }
         xml_str = sender.build_invoice_request_xml(
             user_id="user-123",
-            invoice_data=invoice_data
+            invoice_data=invoice_data,
+            correlation_id="test-corr-456"
         )
 
         root = etree.fromstring(xml_str.encode('utf-8'))
@@ -169,7 +171,8 @@ class TestInvoiceRequestXMLValidation:
         }
         xml_str = sender.build_invoice_request_xml(
             user_id="test-user-123",
-            invoice_data=invoice_data
+            invoice_data=invoice_data,
+            correlation_id="test-corr-valid"
         )
 
         # Validate
@@ -285,7 +288,7 @@ class TestOrderPollerInvoiceRequestDetection:
             mock_sender.send_typed_message.return_value = True
             mock_sender.build_invoice_request_xml.return_value = "<xml/>"
 
-            poller._process_invoice_request(order, customer_info)
+            poller._process_invoice_request(order, customer_info, correlation_id="test-corr-789")
 
             # Verify build_invoice_request_xml was called with correct data
             mock_sender.build_invoice_request_xml.assert_called_once()
@@ -295,6 +298,7 @@ class TestOrderPollerInvoiceRequestDetection:
             assert call_kwargs['invoice_data']['email'] == 'jan@example.com'
             assert call_kwargs['invoice_data']['address']['street'] == 'Kiekenmarkt'
             assert call_kwargs['invoice_data']['vat_number'] == 'BE0123456789'
+            assert call_kwargs['correlation_id'] == 'test-corr-789'
 
 
 class TestInvoiceRequestMessaging:
@@ -317,13 +321,14 @@ class TestInvoiceRequestMessaging:
 
         xml_str = sender.build_invoice_request_xml(
             user_id="user-123",
-            invoice_data=invoice_data
+            invoice_data=invoice_data,
+            correlation_id="test-corr-456"
         )
 
         # Mock successful publish
         mock_publish.return_value = None
 
-        sender.send_typed_message("invoice_request", xml_str, order_id=100)
+        sender.send_typed_message("invoice_request", xml_str, record_id=100)
 
         # Verify published to correct routing key
         assert mock_publish.called
@@ -352,7 +357,8 @@ class TestInvoiceRequestDoD:
 
         xml_str = sender.build_invoice_request_xml(
             user_id="user-123",
-            invoice_data=invoice_data
+            invoice_data=invoice_data,
+            correlation_id="test-corr-456"
         )
 
         root = etree.fromstring(xml_str.encode('utf-8'))
