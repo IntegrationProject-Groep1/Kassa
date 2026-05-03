@@ -146,11 +146,13 @@ def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             admin_data = _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "read",
                               [[admin_uid]], {"fields": ["groups_id"]})
 
+            groups_ids = admin_data[0].get("groups_id", []) if admin_data else []
+
             _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "create", [{
                 "name": odoo_user.capitalize(),
                 "login": odoo_user,
                 "password": odoo_pass,
-                "groups_id": admin_data[0].get("groups_id", []),
+                "groups_id": [[6, 0, groups_ids]],
             }])
         else:
             print(f"Updating password for user '{odoo_user}'...", flush=True)
