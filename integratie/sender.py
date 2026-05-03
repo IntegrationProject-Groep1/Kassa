@@ -554,7 +554,7 @@ def build_invoice_request_xml(
 
     ET.SubElement(inv, "first_name").text = str(first_name or "")
     ET.SubElement(inv, "last_name").text = str(last_name or "")
-    ET.SubElement(inv, "email").text = invoice_data["email"]
+    ET.SubElement(inv, "email").text = str(invoice_data.get("email") or "")
 
     addr = ET.SubElement(inv, "address")
     for k, v in invoice_data.get("address", {}).items():
