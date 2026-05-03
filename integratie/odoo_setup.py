@@ -42,10 +42,12 @@ def wait_for_odoo(url: str, timeout: int = 300) -> bool:
 
     for _ in range(attempts):
         try:
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                print("Odoo is reachable.", flush=True)
-                return True
+            # We accept ANY status code (even 500) as "reachable".
+            # Odoo often returns 500 when no database is created yet,
+            # but the web server is up and ready for /web/database/create.
+            requests.get(url, timeout=5)
+            print("Odoo is reachable.", flush=True)
+            return True
         except requests.exceptions.RequestException:
             pass
         time.sleep(5)
@@ -71,6 +73,7 @@ def setup_database(
     except Exception:
         pass
 
+    print(f"Database '{odoo_db}' not found. Attempting to create...", flush=True)
     response = requests.post(
         f"{odoo_url}/web/database/create",
         data={
@@ -93,7 +96,7 @@ def setup_database(
         )
         return False
 
-    deadline = time.time() + 180
+    deadline = time.time() + 300
     while time.time() < deadline:
         try:
             uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
@@ -101,7 +104,7 @@ def setup_database(
                 return True
         except Exception:
             pass
-        time.sleep(2)
+        time.sleep(5)
 
     print(f"Database '{odoo_db}' was not available after creation attempt.", flush=True)
     return False
