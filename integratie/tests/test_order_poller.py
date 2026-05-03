@@ -120,7 +120,6 @@ def test_process_order_routes_refund(mock_sender, poller):
     mock_consumption.assert_not_called()
 
 
-
 @patch('order_poller.sender')
 def test_process_order_routes_consumption(mock_sender, poller):
     """Positive amount_total routes to _process_consumption."""
