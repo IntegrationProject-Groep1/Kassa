@@ -36,16 +36,18 @@ def _common_and_models(odoo_url: str) -> tuple[Any, Any]:
     return common, models
 
 
-def wait_for_odoo(url: str, timeout: int = 60) -> bool:
+def wait_for_odoo(url: str, timeout: int = 300) -> bool:
     print(f"Waiting for Odoo at {url}...", flush=True)
     attempts = max(1, timeout // 5)
 
     for _ in range(attempts):
         try:
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                print("Odoo is reachable.", flush=True)
-                return True
+            # We accept ANY status code (even 500) as "reachable".
+            # Odoo often returns 500 when no database is created yet,
+            # but the web server is up and ready for /web/database/create.
+            requests.get(url, timeout=5)
+            print("Odoo is reachable.", flush=True)
+            return True
         except requests.exceptions.RequestException:
             pass
         time.sleep(5)
@@ -62,50 +64,102 @@ def setup_database(
     odoo_master_pass: str,
     odoo_load_demo: bool = False,
 ) -> bool:
-    common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
-
     try:
-        uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
-        if uid:
-            return True
-    except Exception:
-        pass
+        db_service = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/db", allow_none=True)
+        common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
 
-    response = requests.post(
-        f"{odoo_url}/web/database/create",
-        data={
-            'master_pwd': odoo_master_pass,
-            'name': odoo_db,
-            'login': odoo_user,
-            'email': odoo_user,
-            'password': odoo_pass,
-            'phone': '',
-            'lang': 'en_US',
-            'country_code': 'be',
-            'company_name': odoo_db,
-            'demo': '1' if odoo_load_demo else '',
-        },
-        timeout=30,
-    )
-    if response.status_code >= 400:
-        print(
-            f"Database create request failed with HTTP {response.status_code}: {response.text[:300]}",
-            flush=True,
-        )
+        # 1. Check if database exists without needing authentication
+        db_exists = False
+        try:
+            db_exists = bool(db_service.db_exist(odoo_db))
+        except Exception as e:
+            print(f"Could not check database existence: {e}. Trying authentication check...", flush=True)
+            try:
+                uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+                db_exists = bool(uid)
+            except Exception:
+                pass
+
+        # 2. Create if it doesn't exist
+        if not db_exists:
+            print(f"Database '{odoo_db}' not found. Attempting to create (this may take a few minutes)...", flush=True)
+            try:
+                # Odoo 17 create_database(master_pwd, name, demo, lang, admin_password)
+                # This always creates an 'admin' user with odoo_pass.
+                db_service.create_database(odoo_master_pass, odoo_db, odoo_load_demo, 'en_US', odoo_pass)
+                print("Database creation request sent successfully.", flush=True)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    print(f"Database '{odoo_db}' already exists (caught during create).", flush=True)
+                else:
+                    print(f"Database creation failed: {e}", flush=True)
+                    return False
+
+        # 3. Wait for the database to be authenticatable
+        # We try both the configured user AND 'admin' (because fresh DBs only have admin).
+        print(f"Waiting for database '{odoo_db}' to become available...", flush=True)
+        deadline = time.time() + 300
+        uid = None
+        while time.time() < deadline:
+            try:
+                # Try target user first
+                uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
+                if uid:
+                    print(f"✓ Authenticated as '{odoo_user}'", flush=True)
+                    return True
+
+                # If target user failed, try 'admin' (fallback for fresh installs)
+                if odoo_user != "admin":
+                    uid = common.authenticate(odoo_db, "admin", odoo_pass, {})
+                    if uid:
+                        print(f"✓ Authenticated as 'admin' (need to setup user '{odoo_user}')", flush=True)
+                        # We are in! Now ensure our custom user exists.
+                        _ensure_custom_user(odoo_url, odoo_db, odoo_user, odoo_pass)
+                        return True
+            except Exception:
+                pass
+            time.sleep(5)
+
+        print(f"Database '{odoo_db}' was not available after creation attempt.", flush=True)
+        return False
+    except Exception as e:
+        print(f"Unexpected error in setup_database: {e}", flush=True)
         return False
 
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        try:
-            uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
-            if uid:
-                return True
-        except Exception:
-            pass
-        time.sleep(2)
 
-    print(f"Database '{odoo_db}' was not available after creation attempt.", flush=True)
-    return False
+def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> None:
+    """Ensure the custom Odoo user exists and has the correct password."""
+    try:
+        common, models = _common_and_models(odoo_url)
+        # Login as admin to create the user
+        admin_uid = common.authenticate(odoo_db, "admin", odoo_pass, {})
+        if not admin_uid:
+            return
+
+        # Check if user exists
+        existing = _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "search_read",
+                        [[["login", "=", odoo_user]]], {"fields": ["id"]})
+
+        if not existing:
+            print(f"Creating user '{odoo_user}'...", flush=True)
+            # Create user (cloning admin for groups)
+            admin_data = _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "read",
+                              [[admin_uid]], {"fields": ["groups_id"]})
+
+            groups_ids = admin_data[0].get("groups_id", []) if admin_data else []
+
+            _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "create", [{
+                "name": odoo_user.capitalize(),
+                "login": odoo_user,
+                "password": odoo_pass,
+                "groups_id": [[6, 0, groups_ids]],
+            }])
+        else:
+            print(f"Updating password for user '{odoo_user}'...", flush=True)
+            _rpc(models, odoo_db, admin_uid, odoo_pass, "res.users", "write",
+                 [[existing[0]["id"]], {"password": odoo_pass}])
+    except Exception as e:
+        print(f"⚠️ Could not ensure custom user '{odoo_user}': {e}", flush=True)
 
 
 def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
@@ -139,7 +193,7 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         models, odoo_db, uid, odoo_pass, "ir.module.module",
         "button_immediate_install", [[module_id]]
     )
-    deadline = time.time() + 60
+    deadline = time.time() + 300
     while time.time() < deadline:
         module_state = _rpc(
             models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
@@ -147,7 +201,7 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         )
         if module_state and module_state[0].get("state") == "installed":
             return True
-        time.sleep(2)
+        time.sleep(5)
     return False
 
 
