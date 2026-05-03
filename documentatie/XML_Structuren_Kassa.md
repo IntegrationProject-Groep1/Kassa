@@ -1112,4 +1112,3 @@ Gebruik uitsluitend de onderstaande waarden. Conform XML_naamgeving §4.
 | <vat_rate> | 0, 6, 12, 21 | 0 voor Top-up producten. De poller identificeert deze via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — niet enkel op BTW-tarief. `vat_rate=0` wordt altijd geforceerd in de XML-export voor deze producten door `poller.py`. BTW-percentage voor overige producten opgehaald via `account.tax`. |
 
 Team Kassa | XML Structuren v2.4 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
-ML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026

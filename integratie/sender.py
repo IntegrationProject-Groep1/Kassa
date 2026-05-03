@@ -395,14 +395,7 @@ def _make_header(root, msg_type, correlation_id=None):
     """Build standard message header"""
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
-
-    # Internal types like 'payment_registered_consumption' must be mapped back
-    # to the canonical 'payment_registered' type for the XML tag to pass XSD validation.
-    xml_type = msg_type
-    if msg_type.startswith("payment_registered_"):
-        xml_type = "payment_registered"
-
-    ET.SubElement(header, "type").text = xml_type
+    ET.SubElement(header, "type").text = msg_type
     ET.SubElement(header, "source").text = "kassa"
     ET.SubElement(header, "timestamp").text = now_utc()
     ET.SubElement(header, "version").text = "2.0"

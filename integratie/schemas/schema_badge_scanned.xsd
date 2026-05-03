@@ -12,7 +12,8 @@
             <xs:enumeration value="kassa"/>
           </xs:restriction>
         </xs:simpleType>
-      </xs:element>      <xs:element name="timestamp" type="xs:dateTime"/>
+      </xs:element>
+      <xs:element name="timestamp" type="xs:dateTime"/>
       <xs:element name="version" type="xs:string" fixed="2.0"/>
     </xs:sequence>
   </xs:complexType>
