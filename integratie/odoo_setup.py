@@ -71,7 +71,7 @@ def setup_database(
         # 1. Check if database exists without needing authentication
         db_exists = False
         try:
-            db_exists = db_service.db_exist(odoo_db)
+            db_exists = bool(db_service.db_exist(odoo_db))
         except Exception as e:
             print(f"Could not check database existence: {e}. Trying authentication check...", flush=True)
             try:
