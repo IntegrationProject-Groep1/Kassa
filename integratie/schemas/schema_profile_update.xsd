@@ -27,7 +27,7 @@
                   <xs:element name="last_name" type="xs:string"/>
                 </xs:sequence></xs:complexType>
               </xs:element>
-              <xs:element name="type">
+              <xs:element name="type" minOccurs="0">
                 <xs:simpleType><xs:restriction base="xs:string">
                   <xs:enumeration value="private"/>
                   <xs:enumeration value="company"/>

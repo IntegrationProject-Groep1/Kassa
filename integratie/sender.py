@@ -395,7 +395,14 @@ def _make_header(root, msg_type, correlation_id=None):
     """Build standard message header"""
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
-    ET.SubElement(header, "type").text = msg_type
+    
+    # Internal types like 'payment_registered_consumption' must be mapped back
+    # to the canonical 'payment_registered' type for the XML tag to pass XSD validation.
+    xml_type = msg_type
+    if msg_type.startswith("payment_registered_"):
+        xml_type = "payment_registered"
+        
+    ET.SubElement(header, "type").text = xml_type
     ET.SubElement(header, "source").text = "kassa"
     ET.SubElement(header, "timestamp").text = now_utc()
     ET.SubElement(header, "version").text = "2.0"
@@ -580,8 +587,8 @@ def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
     root = ET.Element("message")
     _make_header(root, "badge_assigned")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "assigned_at").text = now_utc()
     return _to_xml(root)
 

@@ -252,13 +252,16 @@ XSD Schema (schema_profile_update.xsd):
 <xs:element name="last_name" type="xs:string"/>
 </xs:sequence></xs:complexType>
 <xs:element name="contact" type="ContactType"/>
-<xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
-<xs:enumeration value="private"/><xs:enumeration value="company"/>
-</xs:restriction></xs:simpleType></xs:element>
+<xs:element name="type" minOccurs="0">
+  <xs:simpleType><xs:restriction base="xs:string">
+    <xs:enumeration value="private"/>
+    <xs:enumeration value="company"/>
+  </xs:restriction></xs:simpleType>
+</xs:element>
 <xs:element name="company_name" type="xs:string" minOccurs="0"/>
 <xs:element name="vat_number" type="xs:string" minOccurs="0"/>
 <xs:element name="company_id" type="xs:string" minOccurs="0"/>
-<xs:element name="date_of_birth" type="xs:date"/>
+<xs:element name="date_of_birth" type="xs:date" minOccurs="0"/>
 <xs:element name="payment_due" minOccurs="0">
   <xs:complexType><xs:sequence>
     <xs:element name="amount">
@@ -984,8 +987,8 @@ Voorbeeld XML:
 <correlation_id>f14d0000-0000-0000-0000-000000000004</correlation_id>
 </header>
 <body>
-<refund_type>consumption_item</refund_type>
 <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+<refund_type>consumption_item</refund_type>
 <refund>
 <amount currency="eur">5.00</amount>
 <method>badge_wallet</method>
@@ -1109,3 +1112,4 @@ Gebruik uitsluitend de onderstaande waarden. Conform XML_naamgeving §4.
 | <vat_rate> | 0, 6, 12, 21 | 0 voor Top-up producten. De poller identificeert deze via de POS-categorie 'Top-ups' of het custom veld `x_is_topup` op `product.product` — niet enkel op BTW-tarief. `vat_rate=0` wordt altijd geforceerd in de XML-export voor deze producten door `poller.py`. BTW-percentage voor overige producten opgehaald via `account.tax`. |
 
 Team Kassa | XML Structuren v2.4 | Conform XML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026
+ML_naamgeving standaard | Integratieproject Desideriushogeschool | 2026

@@ -79,7 +79,6 @@ def setup_database(
             'login': odoo_user,
             'email': odoo_user,
             'password': odoo_pass,
-            'phone': '',
             'lang': 'en_US',
             'country_code': 'be',
             'company_name': odoo_db,

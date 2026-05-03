@@ -151,7 +151,7 @@ class OrderPoller:
         try:
 
             base_fields = [
-                'id', 'name', 'email', 'phone', 'is_company', 'parent_id',
+                'id', 'name', 'email', 'is_company', 'parent_id',
                 'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
             ]
             try:
