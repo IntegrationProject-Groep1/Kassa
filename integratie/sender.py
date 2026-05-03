@@ -554,7 +554,7 @@ def build_invoice_request_xml(
 
     ET.SubElement(inv, "first_name").text = str(first_name or "")
     ET.SubElement(inv, "last_name").text = str(last_name or "")
-    ET.SubElement(inv, "email").text = invoice_data["email"]
+    ET.SubElement(inv, "email").text = str(invoice_data.get("email") or "")
 
     addr = ET.SubElement(inv, "address")
     for k, v in invoice_data.get("address", {}).items():
@@ -580,8 +580,8 @@ def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
     root = ET.Element("message")
     _make_header(root, "badge_assigned")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "assigned_at").text = now_utc()
     return _to_xml(root)
 
