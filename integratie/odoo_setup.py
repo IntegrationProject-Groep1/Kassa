@@ -36,7 +36,7 @@ def _common_and_models(odoo_url: str) -> tuple[Any, Any]:
     return common, models
 
 
-def wait_for_odoo(url: str, timeout: int = 60) -> bool:
+def wait_for_odoo(url: str, timeout: int = 300) -> bool:
     print(f"Waiting for Odoo at {url}...", flush=True)
     attempts = max(1, timeout // 5)
 
@@ -93,7 +93,7 @@ def setup_database(
         )
         return False
 
-    deadline = time.time() + 120
+    deadline = time.time() + 180
     while time.time() < deadline:
         try:
             uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
@@ -138,7 +138,7 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         models, odoo_db, uid, odoo_pass, "ir.module.module",
         "button_immediate_install", [[module_id]]
     )
-    deadline = time.time() + 60
+    deadline = time.time() + 300
     while time.time() < deadline:
         module_state = _rpc(
             models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
@@ -146,7 +146,7 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         )
         if module_state and module_state[0].get("state") == "installed":
             return True
-        time.sleep(2)
+        time.sleep(5)
     return False
 
 
