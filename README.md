@@ -95,7 +95,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <a id="message-flows--routing"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20MESSAGE%20FLOWS%20%26%20ROUTING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=17&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20MESSAGE%20FLOWS%20%26amp%3B%20ROUTING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=17&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -137,7 +137,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <a id="documentation--data-mapping"></a>
-<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:163652&amp;height=50&amp;text=%E2%97%88%20DOCUMENTATION%20%26%20DATA%20MAPPING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=20&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:163652&amp;height=50&amp;text=%E2%97%88%20DOCUMENTATION%20%26amp%3B%20DATA%20MAPPING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=20&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -158,7 +158,7 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 <br>
 
 <a id="local-development--setup"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,50:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26%20SETUP&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=18&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,50:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26amp%3B%20SETUP&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=18&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -245,7 +245,7 @@ docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 <br>
 
 <a id="cicd--deployment"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:2a1f5f&amp;height=40&amp;text=%E2%97%88%20CI%2FCD%20%26%20DEPLOYMENT&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=13&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:2a1f5f&amp;height=40&amp;text=%E2%97%88%20CI%2FCD%20%26amp%3B%20DEPLOYMENT&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=13&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
