@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=230&amp;text=POS%20Integration&amp;desc=Odoo%20%E2%80%A2%20RabbitMQ%20%E2%80%A2%20Docker%20%E2%80%A2%20Python&amp;fontColor=58A6FF&amp;fontSize=54&amp;fontAlignY=42&amp;descAlignY=65&amp;descSize=18&amp;descColor=8b949e&amp;animation=fadeIn" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&height=230&text=POS%20Integration&desc=Odoo%20%E2%80%A2%20RabbitMQ%20%E2%80%A2%20Docker%20%E2%80%A2%20Python&fontColor=58A6FF&fontSize=54&fontAlignY=42&descAlignY=65&descSize=18&descColor=8b949e&animation=fadeIn" width="100%"/>
 
 <br>
 
@@ -23,7 +23,7 @@
 <br>
 
 <a id="table-of-contents"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20TABLE%20OF%20CONTENTS&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20TABLE%20OF%20CONTENTS&fontColor=58A6FF&fontSize=18&fontAlign=15&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -39,7 +39,7 @@
 <br>
 
 <a id="system-architecture"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20SYSTEM%20ARCHITECTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=16&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20SYSTEM%20ARCHITECTURE&fontColor=58A6FF&fontSize=18&fontAlign=16&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -77,7 +77,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 
 <br>
 
-<details>
+<details open>
 <summary><b>Core Design Principles</b></summary>
 <br>
 
@@ -95,7 +95,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <a id="message-flows--routing"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20MESSAGE%20FLOWS%20%26%20ROUTING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=17&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20MESSAGE%20FLOWS%20%26%20ROUTING&fontColor=58A6FF&fontSize=18&fontAlign=17&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -137,7 +137,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <a id="documentation--data-mapping"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20DOCUMENTATION%20%26%20DATA%20MAPPING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=20&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20DOCUMENTATION%20%26%20DATA%20MAPPING&fontColor=58A6FF&fontSize=18&fontAlign=20&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -158,7 +158,7 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 <br>
 
 <a id="local-development--setup"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26%20SETUP&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=18&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26%20SETUP&fontColor=58A6FF&fontSize=18&fontAlign=18&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -220,32 +220,32 @@ docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 <br>
 
 <a id="repository-structure"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20REPOSITORY%20STRUCTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20REPOSITORY%20STRUCTURE&fontColor=58A6FF&fontSize=18&fontAlign=15&fontAlignY=62" width="100%"/>
 
 <br>
 
 ```text
-Kassa/
-├── documentatie/           # Architecture, mapping, and flow documentation
-├── integratie/             # Python integration scripts
-│   ├── schemas/            # XSD validation files
-│   ├── tests/              # Pytest files
-│   ├── tools/              # Ping and diagnostic scripts
-│   ├── main.py             # Entrypoint — starts receiver + poller
-│   ├── receiver.py         # Processes incoming RabbitMQ messages
-│   ├── sender.py           # Builds and dispatches outgoing XML messages
-│   └── poller.py           # Polls Odoo for new POS orders, triggers flows
-├── outbox/                 # Mounted as Docker volume — outbox.json buffer
-├── .env.example            # Example environment variables
-├── docker-compose.yml      # Odoo + PostgreSQL + POS integration stack
-└── README.md
+📦 Kassa/
+ ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
+ ┣ 📂 integratie/            # Python integration scripts
+ ┃ ┣ 📂 schemas/             # XSD validation files
+ ┃ ┣ 📂 tests/               # Pytest files
+ ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
+ ┃ ┣ 📄 main.py              # Entrypoint — starts receiver + poller
+ ┃ ┣ 📄 receiver.py          # Processes incoming RabbitMQ messages
+ ┃ ┣ 📄 sender.py            # Builds and dispatches outgoing XML messages
+ ┃ ┗ 📄 poller.py            # Polls Odoo for new POS orders, triggers flows
+ ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
+ ┣ 📄 .env.example           # Example environment variables
+ ┣ 📄 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
+ ┗ 📄 README.md
 ```
 
 <br>
 <br>
 
 <a id="cicd--deployment"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20CI%2FCD%20%26%20DEPLOYMENT&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=13&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20CI%2FCD%20%26%20DEPLOYMENT&fontColor=58A6FF&fontSize=18&fontAlign=13&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -269,7 +269,7 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
 <br>
 
 <a id="team"></a>
-<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20TEAM&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=8&amp;fontAlignY=62" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20TEAM&fontColor=58A6FF&fontSize=18&fontAlign=8&fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -288,6 +288,6 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=120&amp;section=footer&amp;text=Team%20POS%20%E2%80%94%20Desideriushogeschool%202026&amp;fontColor=8b949e&amp;fontSize=14&amp;fontAlignY=65" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&height=120&section=footer&text=Team%20POS%20%E2%80%94%20Desideriushogeschool%202026&fontColor=8b949e&fontSize=14&fontAlignY=65" width="100%"/>
 
 </div>
