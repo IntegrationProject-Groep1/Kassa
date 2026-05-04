@@ -313,13 +313,13 @@ def _validate_outgoing(msg_type: str, message_xml: str) -> None:
         return
 
     try:
-        from defusedxml.lxml import fromstring
+        # Use a secure parser to avoid DeprecationWarning from defusedxml.lxml
+        parser = etree.XMLParser(resolve_entities=False, dtd_validation=False, no_network=True)
         if msg_type not in _schema_cache:
-            parser = etree.XMLParser(resolve_entities=False)
             schema_doc = etree.parse(str(schema_path), parser)
             _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
 
-        xml_doc = fromstring(message_xml.encode("utf-8"))
+        xml_doc = etree.fromstring(message_xml.encode("utf-8"), parser=parser)
         if not _schema_cache[msg_type].validate(xml_doc):
             errors = str(_schema_cache[msg_type].error_log)
             raise ValueError(f"XSD Validation Error: {errors}")
