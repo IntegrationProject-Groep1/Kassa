@@ -415,13 +415,13 @@ class OrderPoller:
         """Handle refund logic."""
         payment_ids = order.get('payment_ids', [])
         pay_info = self._get_special_payment_info(payment_ids)
-        
+
         refund_method = DEFAULT_REFUND_METHOD
         if pay_info["is_badge_wallet"]:
             refund_method = XML_REFUND_METHOD_WALLET
         elif pay_info["is_customer_account"]:
             refund_method = XML_REFUND_METHOD_INVOICE
-            
+
         ok_wallet = True
 
         if pay_info["is_badge_wallet"] and customer_info and not order.get('x_wallet_updated'):
@@ -612,7 +612,7 @@ class OrderPoller:
         is_pay_later = pay_info["is_customer_account"] or (
             (order.get('to_invoice') or order.get('account_move')) and customer_type == 'company'
         )
-        
+
         invoice_status = "open" if is_pay_later else "paid"
         amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))
         payment_method = "invoice" if is_pay_later else "on_site"

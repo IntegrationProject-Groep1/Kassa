@@ -78,7 +78,7 @@ def _side_effect_both_absent(bar_id=10, inschrijving_id=11):
     Sixteen calls: both POS configs absent, "Cash (Inschrijving)" and "Customer Account" need creation.
 
     Pre-phase (3):   res.users, pos.category, pos.config archive search
-    Phase 1 (9):     Bar Kassa Cash/Card/Badge/CustomerAcc(miss+create) [5]; 
+    Phase 1 (9):     Bar Kassa Cash/Card/Badge/CustomerAcc(miss+create) [5];
                      Inschrijvingskassa Cash(Inschrijving)(miss+create), Card, CustomerAcc(found) [4]
     Phase 2 (4):     Bar Kassa search→absent+create; Inschrijvingskassa search→absent+create
     """
@@ -88,8 +88,8 @@ def _side_effect_both_absent(bar_id=10, inschrijving_id=11):
         _PM_CASH, _PM_CARD, _PM_BADGE,
         [], _CUSTOMER_ACCOUNT_NEW_ID,  # Customer Account: miss → create
         # Phase 1 — Inschrijvingskassa pm lookups
-        [], _CASH_INSCHRIJVING_NEW_ID,  # Cash (Inschrijving): miss → create
-        _PM_CARD, _PM_CUSTOMER_ACCOUNT, # Card: found, Customer Account: found
+        [], _CASH_INSCHRIJVING_NEW_ID,    # Cash (Inschrijving): miss → create
+        _PM_CARD, _PM_CUSTOMER_ACCOUNT,  # Card: found, Customer Account: found
         # Phase 2 — Bar Kassa config
         [], bar_id,
         # Phase 2 — Inschrijvingskassa config
@@ -505,7 +505,7 @@ def test_missing_badge_wallet_excluded_from_bar_kassa(patched_proxy):
     patched_proxy.execute_kw.side_effect = [
         *_pre_phase(),
         # Phase 1
-        _PM_CASH, _PM_CARD, [], _PM_CUSTOMER_ACCOUNT, # Badge Wallet not found
+        _PM_CASH, _PM_CARD, [], _PM_CUSTOMER_ACCOUNT,  # Badge Wallet not found
         [], _CASH_INSCHRIJVING_NEW_ID, _PM_CARD, _PM_CUSTOMER_ACCOUNT,
         # Phase 2
         [], 10,
