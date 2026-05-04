@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&height=230&text=POS%20Integration&desc=Odoo%20%E2%80%A2%20RabbitMQ%20%E2%80%A2%20Docker%20%E2%80%A2%20Python&fontColor=58A6FF&fontSize=54&fontAlignY=42&descAlignY=65&descSize=18&descColor=8b949e&animation=fadeIn" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=230&amp;text=POS%20Integration&amp;desc=Odoo%20%E2%80%A2%20RabbitMQ%20%E2%80%A2%20Docker%20%E2%80%A2%20Python&amp;fontColor=58A6FF&amp;fontSize=54&amp;fontAlignY=42&amp;descAlignY=65&amp;descSize=18&amp;descColor=8b949e&amp;animation=fadeIn" width="100%"/>
 
 <br>
 
@@ -22,22 +22,24 @@
 
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20TABLE%20OF%20CONTENTS&fontColor=58A6FF&fontSize=18&fontAlign=15&fontAlignY=62" width="100%"/>
+<a id="table-of-contents"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20TABLE%20OF%20CONTENTS&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
-&nbsp;&nbsp;🏗️ &nbsp;[System Architecture](#-system-architecture) &nbsp;·&nbsp;
-📨 &nbsp;[Message Flows](#-message-flows--routing) &nbsp;·&nbsp;
-📚 &nbsp;[Documentation](#-documentation--data-mapping) &nbsp;·&nbsp;
-💻 &nbsp;[Local Setup](#-local-development--setup) &nbsp;·&nbsp;
-📁 &nbsp;[Repository Structure](#-repository-structure) &nbsp;·&nbsp;
-🔄 &nbsp;[CI/CD](#-cicd--deployment) &nbsp;·&nbsp;
-👥 &nbsp;[Team](#-team)
+- [System Architecture](#system-architecture)
+- [Message Flows & Routing](#message-flows--routing)
+- [Documentation & Data Mapping](#documentation--data-mapping)
+- [Local Development & Setup](#local-development--setup)
+- [Repository Structure](#repository-structure)
+- [CI/CD & Deployment](#cicd--deployment)
+- [Team](#team)
 
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20SYSTEM%20ARCHITECTURE&fontColor=58A6FF&fontSize=18&fontAlign=16&fontAlignY=62" width="100%"/>
+<a id="system-architecture"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20SYSTEM%20ARCHITECTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=16&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -48,10 +50,10 @@ flowchart LR
         IoT[IoT Badge Scanners]
     end
 
-    RMQ{RabbitMQ\nkassa.exchange}
+    RMQ{{"RabbitMQ\nkassa.exchange"}}
 
-    subgraph Team POS
-        PY[Python POS Integration\nsender · receiver · poller]
+    subgraph POS["Team POS"]
+        PY[Python POS Integration\nsender / receiver / poller]
         ODOO[(Odoo POS\n+ PostgreSQL)]
     end
 
@@ -76,28 +78,29 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <details>
-<summary><b>⚙️ Core Design Principles</b></summary>
+<summary><b>Core Design Principles</b></summary>
 <br>
 
 | Principle | Description |
 | :--- | :--- |
-| 🔗 **Loosely Coupled** | Systems never talk directly — everything flows through `kassa.exchange` (topic exchange) |
-| 📦 **Offline-first Buffering** | If RabbitMQ is down, messages queue in `outbox.json` (Docker volume `outbox-data`) and auto-retry via `flush_buffer()`. POS keeps selling. |
-| 💾 **Local Odoo Cache** | When the CRM is unreachable, the POS operates on locally cached customer profiles. Syncs on reconnect. |
-| 🚨 **Error Handling** | Invalid messages are caught as `system_error`, routed to `kassa.errors`, and rejected with `basic_nack(requeue=false)` → Dead Letter Queue. |
-| 💓 **Heartbeats** | Managed by a dedicated monitoring sidecar container — not by the POS integration itself. |
+| **Loosely Coupled** | Systems never talk directly — everything flows through `kassa.exchange` (topic exchange) |
+| **Offline-first Buffering** | If RabbitMQ is down, messages queue in `outbox.json` (Docker volume `outbox-data`) and auto-retry via `flush_buffer()`. The POS continues selling. |
+| **Local Odoo Cache** | When the CRM is unreachable, the POS operates on locally cached customer profiles. Syncs on reconnect. |
+| **Error Handling** | Invalid messages are caught as `system_error`, routed to `kassa.errors`, and rejected with `basic_nack(requeue=false)` into the Dead Letter Queue. |
+| **Heartbeats** | Managed by a dedicated monitoring sidecar container — not by the POS integration itself. |
 
 </details>
 
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20MESSAGE%20FLOWS%20%26%20ROUTING&fontColor=58A6FF&fontSize=18&fontAlign=17&fontAlignY=62" width="100%"/>
+<a id="message-flows--routing"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20MESSAGE%20FLOWS%20%26%20ROUTING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=17&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
 <details open>
-<summary><b>📥 Incoming — <code>kassa.incoming</code></b></summary>
+<summary><b>Incoming — <code>kassa.incoming</code></b></summary>
 <br>
 
 | Type | From | Action |
@@ -112,7 +115,7 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <details open>
-<summary><b>📤 Outgoing — <code>kassa.exchange</code></b></summary>
+<summary><b>Outgoing — <code>kassa.exchange</code></b></summary>
 <br>
 
 | Type | Routing Key | Destination |
@@ -128,12 +131,13 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 
 </details>
 
-> 💡 The Controlroom team can passively monitor **all** POS messages via the wildcard binding `kassa.#`.
+> The Controlroom team can passively monitor **all** POS messages via the wildcard binding `kassa.#`.
 
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20DOCUMENTATION%20%26%20DATA%20MAPPING&fontColor=58A6FF&fontSize=18&fontAlign=20&fontAlignY=62" width="100%"/>
+<a id="documentation--data-mapping"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20DOCUMENTATION%20%26%20DATA%20MAPPING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=20&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -141,7 +145,7 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 
 <br>
 
-| 📄 File | 📝 Contents |
+| File | Contents |
 | :--- | :--- |
 | [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all scripts with code examples, Docker setup, CI/CD |
 | [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologies, Python libraries, environment variables, architecture constraints |
@@ -153,7 +157,8 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26%20SETUP&fontColor=58A6FF&fontSize=18&fontAlign=18&fontAlignY=62" width="100%"/>
+<a id="local-development--setup"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26%20SETUP&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=18&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
@@ -162,7 +167,7 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 ![Docker](https://img.shields.io/badge/Docker_%26_Compose-required-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Git](https://img.shields.io/badge/Git-required-F05032?style=flat-square&logo=git&logoColor=white)
 
-### 🚀 Quickstart
+### Quickstart
 
 **1. Configure Environment**
 ```bash
@@ -179,11 +184,11 @@ docker-compose up -d
 ```bash
 docker-compose exec kassa-integratie python tools/ping_odoo.py
 ```
-> ✅ *Expected:* `Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.`
+> *Expected:* `Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.`
 
 <br>
 
-### 🛠️ Useful Commands
+### Useful Commands
 
 | Command | What it does |
 | :--- | :--- |
@@ -193,7 +198,7 @@ docker-compose exec kassa-integratie python tools/ping_odoo.py
 | `docker-compose logs -f odoo` | Live logs from Odoo |
 | `docker-compose exec kassa-integratie bash` | Open a shell in the integration container |
 
-### ▶️ Run Scripts
+### Run Scripts
 
 ```bash
 docker-compose exec kassa-integratie python integratie/tools/test_sender.py
@@ -214,47 +219,48 @@ docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20REPOSITORY%20STRUCTURE&fontColor=58A6FF&fontSize=18&fontAlign=15&fontAlignY=62" width="100%"/>
+<a id="repository-structure"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20REPOSITORY%20STRUCTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
 ```text
-📦 Kassa-dev
- ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
- ┣ 📂 integratie/            # Python integration scripts
- ┃ ┣ 📂 schemas/             # XSD validation files
- ┃ ┣ 📂 tests/               # Pytest files
- ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
- ┃ ┣ 📜 main.py              # Entrypoint — starts receiver + poller
- ┃ ┣ 📜 receiver.py          # Processes incoming RabbitMQ messages
- ┃ ┣ 📜 sender.py            # Builds and dispatches outgoing XML messages
- ┃ ┗ 📜 poller.py            # Polls Odoo for new POS orders, triggers flows
- ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
- ┣ 📜 .env.example           # Example environment variables
- ┣ 📜 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
- ┗ 📜 README.md
+Kassa/
+├── documentatie/           # Architecture, mapping, and flow documentation
+├── integratie/             # Python integration scripts
+│   ├── schemas/            # XSD validation files
+│   ├── tests/              # Pytest files
+│   ├── tools/              # Ping and diagnostic scripts
+│   ├── main.py             # Entrypoint — starts receiver + poller
+│   ├── receiver.py         # Processes incoming RabbitMQ messages
+│   ├── sender.py           # Builds and dispatches outgoing XML messages
+│   └── poller.py           # Polls Odoo for new POS orders, triggers flows
+├── outbox/                 # Mounted as Docker volume — outbox.json buffer
+├── .env.example            # Example environment variables
+├── docker-compose.yml      # Odoo + PostgreSQL + POS integration stack
+└── README.md
 ```
 
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20CI%2FCD%20%26%20DEPLOYMENT&fontColor=58A6FF&fontSize=18&fontAlign=13&fontAlignY=62" width="100%"/>
+<a id="cicd--deployment"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20CI%2FCD%20%26%20DEPLOYMENT&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=13&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
-The GitHub Actions pipeline triggers automatically on push to `dev` or `prod`:
+The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
 
 | Step | Trigger | Action |
 | :--- | :--- | :--- |
-| ✅ **Tests** | push → `dev` or `prod` | `pytest tests/ -v` |
-| 🚀 **Deploy** | push → `prod` | SSH deploy via `docker-compose up -d --build` |
+| **Tests** | push to `dev` or `main` | `pytest tests/ -v` |
+| **Deploy** | push to `main` | SSH deploy via `docker-compose up -d --build` |
 
-### 🌿 Branch Strategy
+### Branch Strategy
 
 | Branch | Purpose |
 | :--- | :--- |
-| `main` | Stable, approved code |
-| `prod` | Production — triggers deployment |
+| `main` | Production — stable, approved code, triggers deployment |
 | `dev` | Active development |
 | `feature/...` | New features |
 | `fix/...` | Bug fixes |
@@ -262,13 +268,14 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `prod`:
 <br>
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:1f3a5f&height=40&text=%E2%97%88%20TEAM&fontColor=58A6FF&fontSize=18&fontAlign=8&fontAlignY=62" width="100%"/>
+<a id="team"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20TEAM&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=8&amp;fontAlignY=62" width="100%"/>
 
 <br>
 
 <div align="center">
 
-| 🏅 Role | 👤 Name |
+| Role | Name |
 | :---: | :---: |
 | **Team Lead** | Jeremy Luyckfasseel |
 | **Developer** | Ahmed Takadoumi |
@@ -281,6 +288,6 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `prod`:
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&height=120&section=footer&text=Team%20POS%20%E2%80%94%20Desideriushogeschool%202026&fontColor=8b949e&fontSize=14&fontAlignY=65" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=120&amp;section=footer&amp;text=Team%20POS%20%E2%80%94%20Desideriushogeschool%202026&amp;fontColor=8b949e&amp;fontSize=14&amp;fontAlignY=65" width="100%"/>
 
 </div>
