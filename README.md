@@ -274,13 +274,33 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
 <br>
 
 <div align="center">
-
-| Role | Name |
-| :---: | :---: |
-| **Team Lead** | Jeremy Luyckfasseel |
-| **Developer** | Ahmed Takadoumi |
-| **Developer** | Zeno Van Neygen |
-
+<table>
+  <tr>
+    <td align="center" width="240">
+      <img src="https://ui-avatars.com/api/?name=J+L&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <br/><br/>
+      <b>Jeremy Luyckfasseel</b>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Team%20Lead-58A6FF?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+    <td width="40"></td>
+    <td align="center" width="240">
+      <img src="https://ui-avatars.com/api/?name=A+T&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <br/><br/>
+      <b>Ahmed Takadoumi</b>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+    <td width="40"></td>
+    <td align="center" width="240">
+      <img src="https://ui-avatars.com/api/?name=Z+N&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <br/><br/>
+      <b>Zeno Van Neygen</b>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+  </tr>
+</table>
 </div>
 
 <br>
