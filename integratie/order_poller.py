@@ -34,7 +34,7 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
-from config_utils import get_env
+from config_utils import get_env, require_env
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -103,10 +103,11 @@ def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
 class OrderPoller:
     def __init__(self):
         """Read Odoo credentials from the environment and prepare internal state."""
-        self.odoo_url = get_env("ODOO_URL")
-        self.odoo_db = get_env("ODOO_DB")
-        self.odoo_user = get_env("ODOO_USER")
-        self.odoo_pass = get_env("ODOO_PASS")
+        env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
+        self.odoo_url = env["ODOO_URL"]
+        self.odoo_db = env["ODOO_DB"]
+        self.odoo_user = env["ODOO_USER"]
+        self.odoo_pass = env["ODOO_PASS"]
 
         self.odoo_uid = None
         self.models = None

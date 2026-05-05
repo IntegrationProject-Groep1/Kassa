@@ -61,10 +61,12 @@ logger = logging.getLogger(__name__)
 
 
 # Configuration
-RABBIT_HOST = os.environ.get("RABBIT_HOST")
+_rabbit_env = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
+RABBIT_HOST = _rabbit_env["RABBIT_HOST"]
+RABBIT_USER = _rabbit_env["RABBIT_USER"]
+RABBIT_PASS = _rabbit_env["RABBIT_PASS"]
+
 RABBIT_PORT = parse_rabbit_port()
-RABBIT_USER = os.environ.get("RABBIT_USER")
-RABBIT_PASS = os.environ.get("RABBIT_PASS")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
 
