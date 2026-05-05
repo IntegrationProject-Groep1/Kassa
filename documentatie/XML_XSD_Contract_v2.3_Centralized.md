@@ -30,6 +30,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `payment_registered` | → CRM | [6.6 Kassa → CRM](#66-payment_registered-kassa--rabbitmq) |
 |  **VERZENDT** | `payment_status`, `wallet_balance_update` | → Frontend | [16](#16-rabbitmq-queue--exchange-overzicht) |
 |  **BROADCAST** | `heartbeat` | → Monitoring | [3. Heartbeat](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring | [3.5](#35-logging--alle-teams--monitoring) |
 
 **XSD's referentie:**
 - `Kassa/integratie/schemas/` ( compleet — wordt als voorbeeld gebruikt)
@@ -57,6 +58,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `send_mailing` | → Mailing |  type is `mailing_status` | [12.1](#121-send_mailing-crm--mailing) |
 |  **VERZENDT** | `payment_registered` | → Frontend |  | [13.1](#131-payment_registered-crm--frontend) |
 |  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring |  | [3.5](#35-logging--alle-teams--monitoring) |
 
 **Kritieke fixes (src/sender.js + src/receiver.js):**
 1.  Regel line 20: `session_update` → `session_updated`
@@ -79,11 +81,13 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.4](#54-user_deleted) |
 |  **VERZENDT** | `user_registered` | → CRM |  v1.0 header + dotted type + verkeerde queue | [5.5](#55-user_registered) |
 |  **VERZENDT** | `user_checkin` | → CRM |  v1.0 header + `user.checkin` | [21.1](#211-user_checkin-frontend--crm) |
+|  **VERZENDT** | `cancel_registration` | → CRM |  | [5.6](#56-cancel_registration-frontend--crm) |
 |  **VERZENDT** | `calendar_invite` | → Planning |  dotted type + mist `version` | [17.2](#172-calendar_invite-frontend--planning) |
 |  **ONTVANGT** | `payment_registered` | ← CRM |  | [13.1](#131-payment_registered-crm--frontend) |
 |  **ONTVANGT** | `payment_status` | ← Kassa |  | [16](#16-rabbitmq-queue--exchange-overzicht) |
 |  **ONTVANGT** | `session_created`, `session_updated` | ← Planning |  | [7](#7-planning--crm) |
 |  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring |  | [3.5](#35-logging--alle-teams--monitoring) |
 
 **Kritieke fixes (web/modules/custom/rabbitmq_sender/src/):**
 -  NewRegistrationSender.php: `<master_uuid>` verwijderen, `<age>` → `<date_of_birth>`, `<customer>` → `<contact>`
@@ -112,6 +116,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **RPC** | `session_view_request` / `session_view_response` | ↔ Frontend | [17.1](#171-session_view_request--session_view_response-rpc) |
 |  **REST** | `Token Registration` | ← Frontend | [17.0](#170-oauth-token-registration-rest-api) |
 |  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring | [3.5](#35-logging--alle-teams--monitoring) |
 
 **XSD's referentie:**
 - `Planning/xsd/` ( bijgewerkt naar v2.0)
@@ -132,6 +137,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `payment_registered` | → CRM |  XSD bevat `<master_uuid>` | [8.2](#82-payment_registered) |
 |  **VERZENDT** | `send_mailing` | → Mailing |  | [13.1](#131-send_mailing-facturatie--mailing) |
 |  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring |  | [3.5](#35-logging--alle-teams--monitoring) |
 
 **Kritieke fixes (Facturatie/schemas/):**
 -  Queue listener: `crm.to.facturatie` → `facturatie.incoming`
@@ -152,7 +158,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 **Kritieke fix (heartbeat/sidecar.py):**
 -  XML builder: `<heartbeat>` platte root → standaard `<message><header><body>` envelope
 -  Header: voeg `version=2.0`, `type=heartbeat`, `source={systeem}`, unieke `message_id` toe
--  Body: `<status>online|degraded|offline</status>` (in plaats van `<system>`, `<uptime>`, etc.)
+-  Body: `<status>online|offline</status>` + `<uptime>{seconden}</uptime>` (in plaats van `<system>`, platte velden, etc.)
 
 ---
 
@@ -162,6 +168,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 | Richting | Berichttype | Van/Naar | Huidi-Status | Sectie |
 |----------|---|---|---|---|
 |  **ONTVANGT** | `heartbeat` | ← Alle teams |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **ONTVANGT** | `log` | ← Alle teams |  | [3.5](#35-logging--alle-teams--monitoring) |
 |  **VERZENDT** | `system_alert` | → Mailing |  platte `<alert>` root | [4](#4-monitoring--mailing--alert) |
 
 **Kritieke fixes (monitoring/):**
@@ -179,6 +186,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **ONTVANGT** | `send_mailing` | ← CRM + Facturatie |  | [12.1](#121-send_mailing-crm--mailing) / [13.1](#131-send_mailing-facturatie--mailing) |
 |  **ONTVANGT** | `system_alert` | ← Monitoring |  | [4](#4-monitoring--mailing--alert) |
 |  **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring |  | [3](#3-heartbeat--alle-teams--monitoring) |
+|  **VERZENDT** | `log` | → Monitoring |  | [3.5](#35-logging--alle-teams--monitoring) |
 
 **Opmerkingen:**
 - Mailing consumer moet zowel `source=crm` als `source=facturatie` verwerken
@@ -194,6 +202,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **ONTVANGT** | RPC request | ← CRM, Frontend |  platte XML (OK) | [15](#15-identity-service--uitzondering-op-de-standaard) |
 |  **VERZENDT** | `identity_response` | → Requestor |  platte XML (OK) | [15.4](#154-rpc-response--identity-antwoord-alle-3-de-requests) |
 |  **BROADCAST** | `user_event` | → CRM |  platte XML (OK) | [15.5](#155-fanout-event--usercreated) |
+|  **VERZENDT** | `log` | → Monitoring | [3.5](#35-logging--alle-teams--monitoring) |
 
 **Opmerkingen:**
 - Identity Service is **bewust uitzondering** — uses RPC pattern met platte XML
@@ -560,8 +569,9 @@ Deze onderdelen bestaan aantoonbaar in code of operationele documentatie, maar s
 2.5 [Error Handling & Resilience Strategy](#25-error-handling--resilience-strategy)
 2.6 [Global system_error Format](#26-global-system_error-format)
 3. [Heartbeat — Alle teams → Monitoring](#3-heartbeat--alle-teams--monitoring)
+3.5 [Logging — Alle teams → Monitoring](#35-logging--alle-teams--monitoring)
 4. [Monitoring → Mailing — Alert](#4-monitoring--mailing--alert)
-5. [Frontend → CRM](#5-frontend--crm)
+5. [Frontend → CRM](#5-frontend--crm) *(5.1 new_registration, 5.2 user_created, 5.3 user_updated, 5.4 user_deleted, 5.5 user_registered, 5.6 cancel_registration)*
 6. [Kassa → CRM](#6-kassa--crm)
 7. [Planning → CRM](#7-planning--crm)
 8. [Facturatie → CRM](#8-facturatie--crm)
@@ -575,8 +585,8 @@ Deze onderdelen bestaan aantoonbaar in code of operationele documentatie, maar s
 16. [RabbitMQ Queue & Exchange Overzicht](#16-rabbitmq-queue--exchange-overzicht)
 17. [Per-Team Samenvatting](#17-per-team-samenvatting)
 18. [Frontend ← Kassa (Direct flows)](#18-frontend--kassa-direct-flows)
-19. [Frontend ↔ Planning (Directe flows)](#19-frontend--planning-directe-flows)
-20. [CRM / Facturatie → Frontend: BTW Validatiefout](#20-crm--facturatie--frontend-btw-validatiefout)
+19. [Frontend ↔ Planning (Directe flows)](#19-frontend--planning-directe-flows) *(19.0 OAuth, 19.1 session_view RPC, 19.2 calendar_invite, 19.3 session_create_request, 19.4 session_update_request, 19.5 session_delete_request)*
+20. [CRM / Facturatie → Frontend: BTW Validatiefout](#20-crm--facturatie--frontend-btw-validatiefout) *(20.1 vat_validation_error)*
 21. [Frontend / Kassa → CRM + Monitoring: Check-in](#21-frontend--kassa--crm--monitoring-check-in)
 22. [Migratie Roadmap (NIEUW v2.3)](#22-migratie-roadmap)
 23. [Validatie Checklist](#23-validatie-checklist-per-bericht)
@@ -688,6 +698,39 @@ Deze regels gelden voor **elk** bericht zonder uitzondering.
 
 ---
 
+### Regel 6 — Adres splitsing (Straat vs Huisnummer)
+
+```xml
+<!--  CORRECT — Straat en nummer zijn strikt gescheiden -->
+<address>
+  <street>Kiekenmarkt</street>
+  <number>42</number>
+  <postal_code>1000</postal_code>
+  <city>Brussel</city>
+  <country>be</country>
+</address>
+
+<!--  FOUT — Alles in de straat tag, nummer leeg -->
+<address>
+  <street>Kiekenmarkt 42</street>
+  <number></number>
+  <postal_code>1000</postal_code>
+  <city>Brussel</city>
+  <country>be</country>
+</address>
+```
+
+**Waarom:** Systemen zoals Odoo slaan de straat vaak op als één vrije tekstveld. Echter, voor de layout van facturen (Team Facturatie) en database-integriteit is een strikte scheiding tussen de straatnaam en het huisnummer verplicht. Berichten met een leeg `<number>` veld kunnen door de XSD-validatie van de ontvanger worden geweigerd.
+
+**Splitting-algoritme (voor Odoo/Integratie):**
+Indien de bron-data slechts één veld bevat, moet de integratie-laag (bijv. `order_poller.py`) de tekst splitsen:
+1. Scan de string van achter naar voren.
+2. Identificeer het eerste getal (en eventuele bus-toevoegingen zoals "bus B" of "A").
+3. Isoleer dit deel als `<number>`.
+4. Alles wat vóór dit getal staat is de `<street>` (verwijder eventuele spaties aan het begin of einde).
+
+---
+
 ## 2. Standaard Berichtstructuur
 
 Elk bericht heeft de volgende structuur:
@@ -747,6 +790,7 @@ Elk bericht heeft de volgende structuur:
       <xs:enumeration value="facturatie"/>
       <xs:enumeration value="mailing"/>
       <xs:enumeration value="monitoring"/>
+      <xs:enumeration value="iot_gateway"/>
     </xs:restriction>
   </xs:simpleType>
 
@@ -762,17 +806,10 @@ Elk bericht heeft de volgende structuur:
   <xs:complexType name="AmountType">
     <xs:simpleContent>
       <xs:extension base="xs:decimal">
-        <xs:attribute name="currency" use="required">
-          <xs:simpleType>
-            <xs:restriction base="xs:string">
-              <xs:enumeration value="eur"/>
-            </xs:restriction>
-          </xs:simpleType>
-        </xs:attribute>
+        <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
       </xs:extension>
-    </xs:simpleContent>
-  </xs:complexType>
-
+      </xs:simpleContent>
+      </xs:complexType>
 </xs:schema>
 ```
 
@@ -820,13 +857,19 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id" type="xs:string"/>
+              <xs:element name="message_id" type="UUIDType"/>
               <xs:element name="type"       type="xs:string" fixed="system_error"/>
               <xs:element name="source"     type="xs:string"/>
               <xs:element name="timestamp"  type="xs:dateTime"/>
@@ -874,9 +917,8 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
 
 ## 3. Heartbeat — Alle teams → Monitoring
 
-- **Exchange:** `kassa.exchange` (Topic Exchange)
-- **Routing Key:** `heartbeat.{source}` (bijv. `heartbeat.crm`)
-- **Queue:** `heartbeat` (Monitoring luistert op deze queue, gebonden aan de exchange)
+- **Exchange:** `""` (AMQP default exchange — geen named exchange)
+- **Queue:** `heartbeat` (durable — direct adresseerbaar via default exchange)
 - **Interval:** elke 1 seconde
 - **Wie stuurt:** Wordt afgehandeld door de **Sidecar**, niet door de applicatie-logica zelf.
 
@@ -888,22 +930,28 @@ Voor een beter begrip van het contract maken we onderscheid tussen:
 *   **Logical Requirement:** Het systeem als geheel moet gemonitord worden. Elke component moet zijn aanwezigheid melden.
 *   **Technical Implementation:** Dit wordt centraal afgehandeld via `heartbeat/sidecar.py`. Applicatieteams hoeven geen code te schrijven voor heartbeats; zij moeten enkel zorgen dat de sidecar correct meedraait in hun deployment (container/pod).
 
-### 3.2 Monitoring Queue vs. Exchange
+### 3.2 Routing
 
-Hoewel de Monitoring service luistert op een queue genaamd `heartbeat`, moeten teams (via de sidecar) hun heartbeats **altijd naar de gedeelde Topic Exchange (`kassa.exchange`) sturen** met een specifieke routing key (bijv. `heartbeat.kassa` of `heartbeat.crm`). Dit zorgt ervoor dat de infrastructuur schaalbaar blijft en andere tools ook op de health-data kunnen inpluggen zonder de hoofd-queue leeg te trekken.
+De sidecar publiceert heartbeats met `exchange=""` en `routing_key="heartbeat"` — dit stuurt het bericht rechtstreeks naar de `heartbeat` queue via de AMQP default exchange. Logstash (Monitoring) luistert direct op die queue. Er is geen named exchange nodig.
 
 ### XSD
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id" type="xs:string"/>
+              <xs:element name="message_id" type="UUIDType"/>
               <xs:element name="timestamp"  type="xs:dateTime"/>
               <xs:element name="source"     type="xs:string"/>
               <xs:element name="type">
@@ -925,10 +973,10 @@ Hoewel de Monitoring service luistert op een queue genaamd `heartbeat`, moeten t
               <xs:element name="status">
                 <xs:simpleType><xs:restriction base="xs:string">
                   <xs:enumeration value="online"/>
-                  <xs:enumeration value="degraded"/>
                   <xs:enumeration value="offline"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
+              <xs:element name="uptime" type="xs:integer"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -951,11 +999,761 @@ Hoewel de Monitoring service luistert op een queue genaamd `heartbeat`, moeten t
   </header>
   <body>
     <status>online</status>
+    <uptime>3600</uptime>
   </body>
 </message>
 ```
 
+> **`uptime`** = aantal seconden dat de service ononderbroken draait (integer). Intern probleem? Stuur een `log` bericht met `level=error` en `action=system_error` — heartbeat blijft gewoon `online` zolang de container zelf draait.
+
 > ** Let op voor Monitoring-team:** Het veld `source` in de header komt overeen met het `system`-veld dat jullie intern gebruiken voor de Logstash-mapping. Toegestane waarden: `frontend`, `crm`, `kassa`, `planning`, `facturatie`, `mailing`, `monitoring`.
+
+---
+
+## 3.5 Logging — Alle teams → Monitoring
+
+- **Queue:** `logs` (durable, geen team-prefix — net als `heartbeat`)
+- **Exchange:** direct naar queue (geen exchange, geen routing key)
+- **Wie stuurt:** Elk applicatieteam stuurt zelf log-berichten via eigen publisher — dit is **geen** sidecar-taak.
+
+Logs zijn korte statusberichten die een afgesloten flow of fout beschrijven. Stuur niet bij elke tussenstap — enkel eindstatus en fouten.
+
+### Wanneer loggen
+
+| Level | Wanneer | Voorbeeld |
+|-------|---------|-----------|
+| `info` | Flow succesvol afgerond, geldig XML ontvangen, externe API-call geslaagd | Bestelling verwerkt, user aangemaakt |
+| `warning` | Verdacht maar niet kritiek: rate limit nadert, retry geslaagd, deprecated veld ontvangen | Rate limit 90% bereikt |
+| `error` | Iets is misgelopen: DB down, API 5xx, XML-validatiefout, onbekend berichttype, verplicht veld ontbreekt | Salesforce 503, XML parsing failed |
+
+**Niet loggen:** elke tussenstap binnen één flow, debug-info, heartbeats (die hebben hun eigen kanaal).
+
+### Action-categorieën
+
+| Action | Beschrijving | Relevante teams |
+|--------|--------------|-----------------|
+| `registration` | Inschrijvingen: aanmaken, annuleren, verwerken | Frontend, CRM, Kassa |
+| `user` | Users: aanmaken, bijwerken, verwijderen, ontvangen | Frontend, CRM, Kassa, Facturatie |
+| `payment` | Betalingen: verwerkt, ontvangen, mislukt | CRM, Kassa, Facturatie |
+| `invoice` | Facturen: aangemaakt, geannuleerd, status bijgewerkt | CRM, Kassa, Facturatie |
+| `session` | Sessies: aangemaakt, bijgewerkt, verwijderd | Planning, Frontend, CRM |
+| `calendar` | Kalenderuitnodigingen en bevestigingen | Planning, Frontend |
+| `email` | E-mails: verstuurd, mislukt, rate limit | Mailing |
+| `wallet` | Wallet saldo updates en top-ups | Kassa |
+| `refund` | Terugbetalingen verwerkt | Kassa |
+| `identity` | Identity service lookups | CRM |
+| `xml_validation` | Ongeldig of malformed XML ontvangen | Alle teams |
+| `system_error` | Externe dienst down of onverwachte systeemfout | Alle teams |
+| `badge` | Badge toewijzing en scans | Kassa, Frontend |
+
+### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="message_id" type="UUIDType"/>
+              <xs:element name="timestamp"  type="xs:dateTime"/>
+              <xs:element name="source">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="crm"/>
+                  <xs:enumeration value="kassa"/>
+                  <xs:enumeration value="facturatie"/>
+                  <xs:enumeration value="frontend"/>
+                  <xs:enumeration value="planning"/>
+                  <xs:enumeration value="mailing"/>
+                  <xs:enumeration value="identity-service"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <xs:element name="type">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="log"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <xs:element name="version">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="2.0"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="level">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="info"/>
+                  <xs:enumeration value="warning"/>
+                  <xs:enumeration value="error"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <xs:element name="action">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="registration"/>
+                  <xs:enumeration value="user"/>
+                  <xs:enumeration value="payment"/>
+                  <xs:enumeration value="invoice"/>
+                  <xs:enumeration value="session"/>
+                  <xs:enumeration value="calendar"/>
+                  <xs:enumeration value="email"/>
+                  <xs:enumeration value="wallet"/>
+                  <xs:enumeration value="refund"/>
+                  <xs:enumeration value="identity"/>
+                  <xs:enumeration value="xml_validation"/>
+                  <xs:enumeration value="system_error"/>
+                  <xs:enumeration value="badge"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+              <xs:element name="message" type="xs:string"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+### Voorbeeld XML — info
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>b2c3d4e5-f6a7-8901-bcde-f12345678901</message_id>
+    <timestamp>2026-03-15T10:42:03Z</timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>payment</action>
+    <message>Payment registered for user e8b27c1d-4f2a-4b3e-9c5f-123456789abc, amount 75.00 EUR</message>
+  </body>
+</message>
+```
+
+### Voorbeeld XML — error
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
+    <timestamp>2026-03-15T10:35:12Z</timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>system_error</action>
+    <message>Salesforce API returned 503 Service Unavailable</message>
+  </body>
+</message>
+```
+
+> **Let op voor Monitoring-team:** Logstash leest `header.source`, `header.timestamp`, `body.level`, `body.action` en `body.message`. Berichten met een onbekend `level` of `source` gaan naar de `logs-quarantine` index. Logs worden automatisch verwijderd na een configureerbare periode (standaard 7 dagen).
+
+### Voorbeelden per action-categorie
+
+> ⚠️ **De XML-voorbeelden hieronder zijn SJABLONEN — geen letterlijke strings om te kopiëren.**
+>
+> **Wat nooit hardcoded mag zijn:**
+> - `<message_id>` — moet een unieke UUID zijn, gegenereerd op het moment van versturen
+> - `<timestamp>` — moet het actuele tijdstip in UTC zijn op het moment van versturen
+> - `<message>` — moet een beschrijvende tekst zijn met werkelijke runtime-waarden (het echte master UUID, bedrag, e-mailadres, enz.)
+>
+> **Over de `{placeholder}`-notatie in de voorbeelden:**  
+> Placeholders zoals `{master_uuid}` of `{bedrag}` zijn aanduidingen van wat er op dat moment in de code beschikbaar moet zijn. Dit is **geen voorgeschreven syntax** — gebruik de string-opmaak van jouw taal:
+> - Python: `f"Payment of {amount} EUR registered for master_uuid {uuid}"`
+> - JavaScript/TypeScript: `` `Payment of ${amount} EUR registered for master_uuid ${uuid}` ``
+> - PHP: `sprintf("Payment of %s EUR registered for master_uuid %s", $amount, $uuid)`
+> - Java: `String.format("Payment of %s EUR registered for master_uuid %s", amount, uuid)`
+>
+> **De exacte berichttekst mag per team verschillen** zolang de relevante runtime-info erin zit (UUIDs, bedragen, queue-namen, foutmeldingen, enz.). De voorbeelden zijn een richtlijn, geen verplichting.
+
+---
+
+#### `registration`
+
+```xml
+<!-- level: info — inschrijving succesvol verwerkt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>frontend</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>registration</action>
+    <message>Registration completed for master_uuid {master_uuid}</message>
+    <!-- Vervang {master_uuid} door het werkelijke UUID van de registratie -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — registratie kon niet worden verwerkt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>registration</action>
+    <message>Failed to process registration for master_uuid {master_uuid}: {reden}</message>
+    <!-- Vervang {master_uuid} en {reden} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `user`
+
+```xml
+<!-- level: info — user aangemaakt of ontvangen -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>user</action>
+    <message>User created with master_uuid {master_uuid}</message>
+    <!-- Vervang {master_uuid} door het werkelijke UUID -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: warning — ontbrekend optioneel veld bij user-update -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>warning</level>
+    <action>user</action>
+    <message>user_updated received for master_uuid {master_uuid}: optional field {veldnaam} missing</message>
+    <!-- Vervang {master_uuid} en {veldnaam} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `payment`
+
+```xml
+<!-- level: info — betaling succesvol verwerkt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>payment</action>
+    <message>Payment of {bedrag} EUR registered for master_uuid {master_uuid}</message>
+    <!-- Vervang {bedrag} en {master_uuid} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — betaling mislukt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>payment</action>
+    <message>Payment processing failed for correlation_id {correlation_id}: {reden}</message>
+    <!-- Vervang {correlation_id} en {reden} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `invoice`
+
+```xml
+<!-- level: info — factuur aangemaakt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>invoice</action>
+    <message>Invoice {invoice_id} created for master_uuid {master_uuid}, amount {bedrag} EUR</message>
+    <!-- Vervang {invoice_id}, {master_uuid} en {bedrag} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — factuur kon niet worden aangemaakt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>invoice</action>
+    <message>Invoice creation failed for correlation_id {correlation_id}: {reden}</message>
+    <!-- Vervang {correlation_id} en {reden} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `session`
+
+```xml
+<!-- level: info — sessie succesvol aangemaakt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>planning</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>session</action>
+    <message>Session {session_id} created: {session_naam} on {datum}</message>
+    <!-- Vervang {session_id}, {session_naam} en {datum} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — sessie niet gevonden bij update -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>planning</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>session</action>
+    <message>Session update failed: session_id {session_id} not found</message>
+    <!-- Vervang {session_id} door de werkelijke sessie-ID -->
+  </body>
+</message>
+```
+
+---
+
+#### `calendar`
+
+```xml
+<!-- level: info — kalenderuitnodiging verstuurd -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>planning</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>calendar</action>
+    <message>Calendar invite sent for session {session_id} to {attendee_email}</message>
+    <!-- Vervang {session_id} en {attendee_email} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: warning — bevestiging nog niet ontvangen -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>frontend</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>warning</level>
+    <action>calendar</action>
+    <message>No calendar confirmation received for session {session_id} after {timeout}s, retrying</message>
+    <!-- Vervang {session_id} en {timeout} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `email`
+
+```xml
+<!-- level: info — e-mail succesvol verstuurd -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>mailing</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>email</action>
+    <message>Email sent to {email_adres} for correlation_id {correlation_id}</message>
+    <!-- Vervang {email_adres} en {correlation_id} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: warning — SendGrid rate limit nadert -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>mailing</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>warning</level>
+    <action>email</action>
+    <message>SendGrid rate limit at {percentage}% of daily quota</message>
+    <!-- Vervang {percentage} door het werkelijke gebruikspercentage -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — e-mail kon niet worden verstuurd -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>mailing</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>email</action>
+    <message>Failed to send email to {email_adres} for correlation_id {correlation_id}: {reden}</message>
+    <!-- Vervang {email_adres}, {correlation_id} en {reden} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `wallet`
+
+```xml
+<!-- level: info — wallet saldo bijgewerkt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>wallet</action>
+    <message>Wallet topped up for master_uuid {master_uuid}: +{bedrag} EUR, new balance {nieuw_saldo} EUR</message>
+    <!-- Vervang {master_uuid}, {bedrag} en {nieuw_saldo} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `refund`
+
+```xml
+<!-- level: info — terugbetaling verwerkt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>refund</action>
+    <message>Refund of {bedrag} EUR processed for master_uuid {master_uuid}, correlation_id {correlation_id}</message>
+    <!-- Vervang {bedrag}, {master_uuid} en {correlation_id} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — terugbetaling mislukt -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>refund</action>
+    <message>Refund failed for correlation_id {correlation_id}: {reden}</message>
+    <!-- Vervang {correlation_id} en {reden} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `identity`
+
+```xml
+<!-- level: info — UUID lookup succesvol -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>identity</action>
+    <message>Identity lookup successful for email {email_adres}, resolved master_uuid {master_uuid}</message>
+    <!-- Vervang {email_adres} en {master_uuid} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: info — UUID aangemaakt door identity-service -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>identity-service</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>identity</action>
+    <message>Master UUID {master_uuid} created for email {email_adres}</message>
+    <!-- Vervang {master_uuid} en {email_adres} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — master UUID niet gevonden -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>identity</action>
+    <message>Identity lookup failed: no master_uuid found for email {email_adres}</message>
+    <!-- Vervang {email_adres} door het werkelijke e-mailadres -->
+  </body>
+</message>
+```
+
+---
+
+#### `xml_validation`
+
+```xml
+<!-- level: error — ongeldig of malformed XML ontvangen -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>xml_validation</action>
+    <message>XML validation failed on queue {queue_naam}: {validatiefout}</message>
+    <!-- Vervang {queue_naam} door de queue waarop het bericht ontvangen werd, {validatiefout} door de XSD-foutmelding -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: warning — deprecated veld ontvangen -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>warning</level>
+    <action>xml_validation</action>
+    <message>Deprecated field {veldnaam} received in {berichttype} from queue {queue_naam}</message>
+    <!-- Vervang {veldnaam}, {berichttype} en {queue_naam} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+---
+
+#### `system_error`
+
+```xml
+<!-- level: error — externe dienst onbereikbaar -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>crm</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>system_error</action>
+    <message>{dienst_naam} returned {http_status}: {foutmelding}</message>
+    <!-- Vervang {dienst_naam} (bv. "Salesforce API"), {http_status} (bv. "503") en {foutmelding} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — database onbereikbaar -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>facturatie</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>system_error</action>
+    <message>Database connection failed: {foutmelding}</message>
+    <!-- Vervang {foutmelding} door de werkelijke exception of foutmelding -->
+  </body>
+</message>
+```
+
+---
+
+#### `badge`
+
+```xml
+<!-- level: info — badge succesvol gescand -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>info</level>
+    <action>badge</action>
+    <message>Badge {badge_id} scanned and validated for master_uuid {master_uuid}</message>
+    <!-- Vervang {badge_id} en {master_uuid} door werkelijke waarden -->
+  </body>
+</message>
+```
+
+```xml
+<!-- level: error — badge niet gevonden -->
+<message>
+  <header>
+    <message_id><!-- nieuw UUID genereren --></message_id>
+    <timestamp><!-- UTC timestamp --></timestamp>
+    <source>kassa</source>
+    <type>log</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <level>error</level>
+    <action>badge</action>
+    <message>Badge {badge_id} not found in registry</message>
+    <!-- Vervang {badge_id} door de werkelijke badge-ID uit het gescande bericht -->
+  </body>
+</message>
+```
+
+---
+
+> **Let op voor Monitoring-team:** Logstash leest `header.source`, `header.timestamp`, `body.level`, `body.action` en `body.message`. Berichten met een onbekend `level` of `source` gaan naar de `logs-quarantine` index. Logs worden automatisch verwijderd na een configureerbare periode (standaard 7 dagen).
 
 ---
 
@@ -972,6 +1770,12 @@ Hoewel de Monitoring service luistert op een queue genaamd `heartbeat`, moeten t
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -1053,6 +1857,12 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
 
@@ -1083,14 +1893,13 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
                   <xs:element name="last_name"  type="xs:string"/>
                 </xs:sequence></xs:complexType>
               </xs:element>
-              <xs:element name="phone"      type="xs:string" minOccurs="0"/>
               <xs:element name="company_id" type="xs:string" minOccurs="0"/>
               <xs:element name="session_id" type="xs:string"/>
               <xs:element name="payment_due">
                 <xs:complexType><xs:sequence>
                   <xs:element name="amount">
                     <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
-                      <xs:attribute name="currency" type="xs:string" use="required"/>
+                      <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
                     </xs:extension></xs:simpleContent></xs:complexType>
                   </xs:element>
                   <xs:element name="status" type="xs:string" fixed="unpaid"/>
@@ -1126,7 +1935,6 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
         <first_name>Jan</first_name>
         <last_name>Peeters</last_name>
       </contact>
-      <phone>+32477123456</phone>
       <company_id>ehb-001</company_id>
       <session_id>sess-keynote-001</session_id>
       <payment_due>
@@ -1154,6 +1962,12 @@ Wanneer een nieuw gebruikersaccount wordt aangemaakt zonder directe sessie-insch
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1188,7 +2002,6 @@ Wanneer een nieuw gebruikersaccount wordt aangemaakt zonder directe sessie-insch
                   <xs:enumeration value="company"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
-              <xs:element name="phone"        type="xs:string" minOccurs="0"/>
               <xs:element name="company_name" type="xs:string" minOccurs="0"/>
               <xs:element name="vat_number"   type="xs:string" minOccurs="0"/>
               <xs:element name="company_id"   type="xs:string" minOccurs="0"/>
@@ -1222,7 +2035,6 @@ Wanneer een nieuw gebruikersaccount wordt aangemaakt zonder directe sessie-insch
         <last_name>Peeters</last_name>
       </contact>
       <type>private</type>
-      <phone>+32477123456</phone>
     </customer>
   </body>
 </message>
@@ -1270,6 +2082,12 @@ Wanneer een gebruiker zijn profiel wijzigt.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1298,7 +2116,6 @@ Wanneer een gebruiker zijn profiel wijzigt.
                   <xs:element name="last_name"  type="xs:string"/>
                 </xs:sequence></xs:complexType>
               </xs:element>
-              <xs:element name="phone"      type="xs:string" minOccurs="0"/>
               <xs:element name="company_id" type="xs:string" minOccurs="0"/>
             </xs:sequence></xs:complexType>
           </xs:element>
@@ -1328,7 +2145,6 @@ Wanneer een gebruiker zijn profiel wijzigt.
         <first_name>Jan</first_name>
         <last_name>Peeters</last_name>
       </contact>
-      <phone>+32477999888</phone>
     </customer>
   </body>
 </message>
@@ -1346,6 +2162,12 @@ Wanneer een account volledig wordt verwijderd.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1408,6 +2230,12 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1526,6 +2354,75 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
 
 ---
 
+### 5.6 `cancel_registration` (Frontend → CRM)
+
+Wanneer een gebruiker zijn eigen sessie-inschrijving annuleert via de website.  
+CRM verwerkt de annulatie en stuurt het bericht door naar Kassa en Planning (zie §10.3).
+
+**Queue:** `crm.incoming`  
+**Richting:** Frontend → CRM
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="timestamp"  type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="cancel_registration"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <!-- user_id: de master_uuid van de Identity Service -->
+          <xs:element name="user_id"    type="xs:string"/>
+          <xs:element name="session_id" type="xs:string"/>
+          <xs:element name="reason"     type="xs:string" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>a9b8c7d6-e5f4-3210-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-10T13:45:00Z</timestamp>
+    <source>frontend</source>
+    <type>cancel_registration</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+    <session_id>sess-keynote-001</session_id>
+    <reason>Gebruiker heeft zelf annulatie gevraagd via website</reason>
+  </body>
+</message>
+```
+
+> **Voor CRM:** Verwerk de annulatie in Salesforce en stuur daarna `cancel_registration` door naar Kassa (`kassa.incoming`) én Planning (`calendar.exchange`, routing: `crm.to.planning.cancel_registration`) conform §10.3.
+
+---
+
 ## 6. Kassa → CRM
 
 - **Queue:** `crm.incoming`
@@ -1580,7 +2477,7 @@ Klant bestelt consumpties aan de bar. Schema v2.3 — bevat `sku`, `vat_rate` en
         <xs:complexType>
           <xs:simpleContent>
             <xs:extension base="xs:decimal">
-              <xs:attribute name="currency" type="xs:string" use="required"/>
+              <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
             </xs:extension>
           </xs:simpleContent>
         </xs:complexType>
@@ -1599,7 +2496,7 @@ Klant bestelt consumpties aan de bar. Schema v2.3 — bevat `sku`, `vat_rate` en
         <xs:complexType>
           <xs:simpleContent>
             <xs:extension base="xs:decimal">
-              <xs:attribute name="currency" type="xs:string" use="required"/>
+              <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
             </xs:extension>
           </xs:simpleContent>
         </xs:complexType>
@@ -1607,6 +2504,12 @@ Klant bestelt consumpties aan de bar. Schema v2.3 — bevat `sku`, `vat_rate` en
       <xs:element name="item_type" type="xs:string" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
 
   <xs:element name="message">
     <xs:complexType>
@@ -1616,9 +2519,9 @@ Klant bestelt consumpties aan de bar. Schema v2.3 — bevat `sku`, `vat_rate` en
             <xs:sequence>
               <xs:element name="message_id" type="xs:string"/>
               <xs:element name="type"       type="xs:string" fixed="consumption_order"/>
-              <xs:element name="source"     type="xs:string"/>
+              <xs:element name="source"     type="xs:string" fixed="kassa"/>
               <xs:element name="timestamp"  type="xs:dateTime"/>
-              <xs:element name="version"    type="xs:string"/>
+              <xs:element name="version"    type="xs:string" fixed="2.0"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -1699,6 +2602,12 @@ Een badge/QR-code wordt gekoppeld aan een klant bij de inkom.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1757,6 +2666,12 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -1764,7 +2679,8 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
           <xs:element name="message_id" type="xs:string"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
           <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
-            <xs:enumeration value="iot_gateway"/></xs:restriction></xs:simpleType></xs:element>
+            <xs:enumeration value="iot_gateway"/>
+            <xs:enumeration value="kassa"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="badge_scanned"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
@@ -1830,10 +2746,16 @@ Kassa stuurt dit bij elke terugbetaling. Routing key: `kassa.payments.refund`.
   <xs:complexType name="CurrencyAmountType">
     <xs:simpleContent>
       <xs:extension base="xs:decimal">
-        <xs:attribute name="currency" type="xs:string" use="required"/>
+        <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
       </xs:extension>
     </xs:simpleContent>
   </xs:complexType>
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
 
   <xs:element name="message">
     <xs:complexType>
@@ -1998,19 +2920,25 @@ Kassa vraagt een factuur aan voor een bedrijf. De koppeling met de bijhorende `c
     </xs:sequence>
   </xs:complexType>
 
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id"    type="xs:string"/>
+              <xs:element name="message_id"    type="UUIDType"/>
               <xs:element name="type"          type="xs:string" fixed="invoice_request"/>
               <xs:element name="source"        type="xs:string"/>
               <xs:element name="timestamp"     type="xs:dateTime"/>
               <xs:element name="version"       type="xs:string"/>
               <!-- correlation_id = message_id van het consumption_order bericht -->
-              <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
+              <xs:element name="correlation_id" type="UUIDType"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -2086,10 +3014,16 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
   <xs:complexType name="CurrencyAmountType">
     <xs:simpleContent>
       <xs:extension base="xs:decimal">
-        <xs:attribute name="currency" type="xs:string" use="required"/>
+        <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
       </xs:extension>
     </xs:simpleContent>
   </xs:complexType>
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
 
   <xs:element name="message">
     <xs:complexType>
@@ -2234,6 +3168,12 @@ Kassa stuurt dit naar Drupal nadat een **inschrijvingsbetaling** aan de kassa is
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -2305,6 +3245,12 @@ Kassa stuurt het **nieuwe badge-saldo** na elke saldo-wijziging naar Drupal.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -2415,6 +3361,12 @@ Kassa stuurt dit bij elk foutscenario. Monitoring ontvangt dit voor het dashboar
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2519,6 +3471,12 @@ Kassa stuurt dit bij elk foutscenario. Monitoring ontvangt dit voor het dashboar
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2623,6 +3581,12 @@ Kassa stuurt dit bij elk foutscenario. Monitoring ontvangt dit voor het dashboar
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2683,6 +3647,12 @@ Facturatie meldt de nieuwe status van een factuur.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
         <xs:element name="header">
@@ -2690,9 +3660,9 @@ Facturatie meldt de nieuwe status van een factuur.
             <xs:sequence>
               <xs:element name="message_id" type="xs:string"/>
               <xs:element name="timestamp"  type="xs:dateTime"/>
-              <xs:element name="source"     type="xs:string"/>
-              <xs:element name="type"       type="xs:string"/>
-              <xs:element name="version"    type="xs:string"/>
+              <xs:element name="source"     type="xs:string" fixed="facturatie"/>
+              <xs:element name="type"       type="xs:string" fixed="invoice_status"/>
+              <xs:element name="version"    type="xs:string" fixed="2.0"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -2711,11 +3681,8 @@ Facturatie meldt de nieuwe status van een factuur.
           </xs:element>
           <xs:element name="amount">
             <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
-              <xs:attribute name="currency" use="required">
-                <xs:simpleType><xs:restriction base="xs:string">
-                  <xs:enumeration value="eur"/></xs:restriction></xs:simpleType>
-              </xs:attribute>
-            </xs:extension></xs:simpleContent></xs:complexType>
+              <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+              </xs:extension></xs:simpleContent></xs:complexType>
           </xs:element>
           <xs:element name="due_date" type="xs:date" minOccurs="0"/>
         </xs:sequence></xs:complexType>
@@ -2757,6 +3724,12 @@ Een betaling werd verwerkt in FossBilling.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2777,11 +3750,8 @@ Een betaling werd verwerkt in FossBilling.
           <xs:element name="user_id"       type="xs:string"/>
           <xs:element name="amount_paid">
             <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
-              <xs:attribute name="currency" use="required">
-                <xs:simpleType><xs:restriction base="xs:string">
-                  <xs:enumeration value="eur"/></xs:restriction></xs:simpleType>
-              </xs:attribute>
-            </xs:extension></xs:simpleContent></xs:complexType>
+              <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+              </xs:extension></xs:simpleContent></xs:complexType>
           </xs:element>
           <xs:element name="payment_method">
             <xs:simpleType><xs:restriction base="xs:string">
@@ -2834,6 +3804,12 @@ Mailing rapporteert het resultaat van een verzonden campagne.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2925,6 +3901,12 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -2971,11 +3953,8 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
                 <xs:complexType><xs:sequence>
                   <xs:element name="amount">
                     <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
-                      <xs:attribute name="currency" use="required">
-                        <xs:simpleType><xs:restriction base="xs:string">
-                          <xs:enumeration value="eur"/></xs:restriction></xs:simpleType>
-                      </xs:attribute>
-                    </xs:extension></xs:simpleContent></xs:complexType>
+                      <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                      </xs:extension></xs:simpleContent></xs:complexType>
                   </xs:element>
                   <xs:element name="status">
                     <xs:simpleType><xs:restriction base="xs:string">
@@ -3038,6 +4017,12 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -3064,6 +4049,12 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
               <xs:element name="last_name"  type="xs:string"/>
             </xs:sequence></xs:complexType>
           </xs:element>
+          <xs:element name="type" minOccurs="0">
+            <xs:simpleType><xs:restriction base="xs:string">
+              <xs:enumeration value="private"/>
+              <xs:enumeration value="company"/>
+            </xs:restriction></xs:simpleType>
+          </xs:element>
           <xs:element name="company_name" type="xs:string" minOccurs="0"/>
           <xs:element name="vat_number"   type="xs:string" minOccurs="0"/>
           <xs:element name="company_id"   type="xs:string" minOccurs="0"/>
@@ -3071,12 +4062,12 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
             <xs:complexType><xs:sequence>
               <xs:element name="amount">
                 <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
-                  <xs:attribute name="currency" type="xs:string" use="required"/>
+                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
                 </xs:extension></xs:simpleContent></xs:complexType>
               </xs:element>
               <xs:element name="status">
                 <xs:simpleType><xs:restriction base="xs:string">
-                  <xs:enumeration value="pending"/>
+                  <xs:enumeration value="unpaid"/>
                   <xs:enumeration value="paid"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
@@ -3107,6 +4098,8 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
       <first_name>Jan</first_name>
       <last_name>Peeters</last_name>
     </contact>
+    <type>company</type>
+    <company_name>Erasmushogeschool Brussel</company_name>
   </body>
 </message>
 ```
@@ -3122,11 +4115,24 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
         <xs:complexType><xs:sequence>
-          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="message_id" type="UUIDType"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
           <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="crm"/></xs:restriction></xs:simpleType></xs:element>
@@ -3209,6 +4215,12 @@ CRM routeert de factuuraanvraag van Kassa door naar Facturatie. **CRM doet geen 
     </xs:sequence>
   </xs:complexType>
 
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -3284,6 +4296,12 @@ CRM routeert de factuuraanvraag van Kassa door naar Facturatie. **CRM doet geen 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -3357,9 +4375,7 @@ Facturatie ontvangt beide, matcht op correlation_id = f47ac10b, bouwt factuur.
 
 ### 11.4 `payment_registered` (CRM → Facturatie) — Passthrough
 
-Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kassa.payments.registration`), geeft CRM dit **1-op-1 door** naar `facturatie.incoming`. Facturatie zet de factuurstatus in FossBilling op `paid`.
-
-> **Bewijs:** Facturatie user story 8: *"betalingsbericht ontvangen van CRM wanneer deelnemer inschrijving aan kassa betaalt → factuurstatus onmiddellijk op 'betaald'"*
+Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kassa.payments.registration`), geeft CRM dit **1-op-1 door** naar `facturatie.incoming`. Facturatie zet deetalingsbericht ontvangen van CRM wanneer deelnemer inschrijving aan kassa betaalt → factuurstatus onmiddellijk op 'betaald'"*
 >
 > **transaction_id in FossBilling:** FossBilling kan vragen om een `transaction_id`. Dit is de `message_id` van het doorgestuurde `payment_registered` bericht (Facturatie user story 10 noot).
 
@@ -3382,6 +4398,12 @@ CRM vraagt Mailing om een e-mail te versturen.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -3389,7 +4411,8 @@ CRM vraagt Mailing om een e-mail te versturen.
           <xs:element name="message_id" type="xs:string"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
           <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
-            <xs:enumeration value="crm"/></xs:restriction></xs:simpleType></xs:element>
+            <xs:enumeration value="crm"/>
+            <xs:enumeration value="facturatie"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="send_mailing"/></xs:restriction></xs:simpleType></xs:element>
           <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
@@ -3486,7 +4509,7 @@ CRM vraagt Mailing om een e-mail te versturen.
 
 ## 13. Facturatie → Mailing
 
-- **Queue:** `crm.to.mailing` (zelfde queue als CRM, Mailing behandelt beide)
+- **Queue:** `facturatie.to.mailing`
 - Facturatie gebruikt **hetzelfde `send_mailing` formaat** als CRM, met `source: facturatie`
 
 ### 13.1 `send_mailing` (Facturatie → Mailing)
@@ -3551,6 +4574,12 @@ CRM informeert de Drupal Frontend over een bevestigde betaling. Frontend gebruik
     Frontend's PaymentRegisteredReceiver.php luistert op deze queue
     en updatet de betaalstatus van de gebruiker in Drupal.
   -->
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -3559,6 +4588,7 @@ CRM informeert de Drupal Frontend over een bevestigde betaling. Frontend gebruik
             <xs:sequence>
               <xs:element name="message_id" type="xs:string"/>
               <xs:element name="type"       type="xs:string" fixed="payment_registered"/>
+              <xs:element="type"       type="xs:string" fixed="payment_registered"/>
               <xs:element name="source"     type="xs:string" fixed="crm"/>
               <xs:element name="timestamp"  type="xs:dateTime"/>
               <xs:element name="version"    type="xs:string" fixed="2.0"/>
@@ -3577,7 +4607,7 @@ CRM informeert de Drupal Frontend over een bevestigde betaling. Frontend gebruik
                       <xs:complexType>
                         <xs:simpleContent>
                           <xs:extension base="xs:decimal">
-                            <xs:attribute name="currency" type="xs:string" use="required"/>
+                            <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
                           </xs:extension>
                         </xs:simpleContent>
                       </xs:complexType>
@@ -3663,8 +4693,7 @@ CRM informeert de Drupal Frontend over een bevestigde betaling. Frontend gebruik
   <!--
     TYPE   : identity_request (create)
     FLOW   : Elk systeem → Identity Service  (queue: identity.user.create.request)
-    LET OP : Geen <message><header> wrapper — dit is een platte RPC structuur
-    AMQP   : Stel reply_to, correlation_id, message_id en timestamp in als message properties
+    LET OP : Geen <messcorrelation_id, message_id en timestamp in als message properties
   -->
   <xs:element name="identity_request">
     <xs:complexType>
@@ -3916,7 +4945,8 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 | CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
 | Facturatie | Mailing | `facturatie.to.mailing` | — |
 | Monitoring | Mailing | `monitoring.alerts` | — |
-| Alle teams | Monitoring | `heartbeat` | exchange: `kassa.exchange` (topic), routing: `heartbeat.{source}` |
+| Alle teams | Monitoring | `heartbeat` | default exchange (`""`), routing_key: `heartbeat` (direct naar queue) |
+| Alle teams (excl. Monitoring) + Identity | Monitoring | `logs` | direct naar queue, geen exchange |
 | Frontend/CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `frontend.to.planning.calendar.invite` |
 | Planning | Frontend | reply_to queue (RPC) | exchange: `calendar.exchange`, routing: `planning.to.frontend.calendar.invite.confirmed` |
 | Frontend/CRM | Planning | `planning.session.events` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` (RPC) |
@@ -3971,6 +5001,7 @@ PHP senders die volledig moeten gemigreerd worden naar de v2.0 header:
 - [ ] `UserCheckinSender.php` — type `user.checkin` → `user_checkin`, idem + voeg `<session_id>` body toe (sectie 21.1)
 - [ ] `CalendarInviteSender.php` — type `calendar.invite` → `calendar_invite`, voeg `<version>2.0</version>` toe (was afwezig!), voeg `<attendee_email>` toe in body (sectie 17.2)
 - [ ] `NewRegistrationSender.php` — verwijder `<master_uuid>` uit header, vervang `<age>` door `<date_of_birth>`, namen in `<contact>` wrapper (sectie 5.1)
+- [ ] `CancelRegistrationSender.php` — implementeer nieuwe sender voor `cancel_registration` (sectie 5.6), source=`frontend`, queue `crm.incoming`
 
 Receivers:
 - [ ] `SessionUpdateReceiver.php` — accepteer `session_updated` als type-waarde (niet `session_update`)
@@ -4035,6 +5066,7 @@ Kassa's `XML_Structuren_Kassa.md` v2.5 voldoet volledig aan dit contract. De hie
 | ← Frontend/CRM | `session_view_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` (RPC) |
 | → Frontend | `session_view_response` | reply_to queue, routing: `planning.to.frontend.session.view.response` |
 | ← Frontend | `session_create_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.create` |
+| ← Frontend | `session_update_request` | exchange: `planning.exchange`, routing: 
 | ← Frontend | `session_update_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.update` |
 | ← Frontend | `session_delete_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.delete` |
 | ← CRM | `cancel_registration` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
@@ -4053,11 +5085,7 @@ Planning heeft alle resterende afwijkingen weggewerkt en de XSD-validatie volled
 - [x] Session events worden nu gepubliceerd op beide routing keys: `planning.session.*` (CRM) én `planning.to.frontend.session.*` (Frontend).
 - [x] Luistert op `planning.calendar.invite` queue voor inkomende kalenderverzoeken.
 - [x] Luistert op `calendar.exchange` voor `cancel_registration` berichten geforward door CRM.
----
-
-### Team Facturatie (FossBilling)
-| Richting | Type | Queue |
-|----------|------|-------|
+---|-------|
 | ← CRM | `invoice_request` | `facturatie.incoming` |
 | ← CRM | `invoice_cancelled` | `facturatie.incoming` |
 | ← CRM | `consumption_order` (passthrough) | `facturatie.incoming` |
@@ -4110,6 +5138,7 @@ Queue & validatie:
 | Richting | Type | Queue |
 |----------|------|-------|
 | ← Alle teams | `heartbeat` | `heartbeat` |
+| ← Alle teams (excl. Monitoring) | `log` | `logs` |
 | → Mailing | `system_alert` | `monitoring.alerts` |
 
 **Status v2.3 audit:  ALERT-FORMAAT MIGREREN + Heartbeat-service herwerken**
@@ -4119,6 +5148,7 @@ Queue & validatie:
 - [ ] Logstash heartbeat-parser bijwerken: bron lezen uit `header.source` i.p.v. body `<system>`
 - [ ] **`heartbeat`-service repo** (`IntegrationProject-Groep1/heartbeat`): volledige herwrite van XML-builder — zie sectie 3 (vervang platte `<heartbeat>` root door `<message>` envelop)
 - [ ] Heartbeat consumer aanpassen aan nieuwe envelop-structuur
+- [ ] Logstash `logs`-pipeline toevoegen: consumer op queue `logs`, XSD-structuur per sectie 3.5
 
 ---
 
@@ -4164,6 +5194,7 @@ Salesforce / data:
 
 ## 18. Frontend ← Kassa (Direct flows)
 
+
 > **Let op:** Deze berichten gaan **niet** via CRM. Kassa stuurt deze direct naar de `frontend.payments` queue.
 > Frontend moet luisteren op deze queue voor betaal- en saldo-updates.
 
@@ -4197,7 +5228,7 @@ Salesforce / data:
 
 ---
 
-### 17.0 OAuth Token Registration (REST API)
+### 19.0 OAuth Token Registration (REST API)
 
 Voordat gebruikers hun kalender kunnen synchroniseren, moet elke gebruiker na het inloggen eenmalig zijn OAuth-tokens registreren bij de Planning Service.
 
@@ -4231,7 +5262,7 @@ Voordat gebruikers hun kalender kunnen synchroniseren, moet elke gebruiker na he
 
 ---
 
-### 17.1 `session_view_request` / `session_view_response` (RPC)
+### 19.1 `session_view_request` / `session_view_response` (RPC)
 
 Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via het RPC-patroon.
 
@@ -4245,6 +5276,12 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -4260,8 +5297,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
                 </xs:restriction></xs:simpleType>
               </xs:element>
               <xs:element name="type">
-                <xs:simpleType><xs:restriction base="xs:string">
-                  <xs:enumeration value="session_view_request"/>
+    umeration value="session_view_request"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
               <xs:element name="version">
@@ -4292,6 +5328,12 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -4339,7 +5381,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
                           <xs:element name="speaker" minOccurs="0">
                             <xs:complexType>
                               <xs:sequence>
-                                <xs:element name="user_id"      type="xs:string"/>
+                                <xs:element name="user_id"      type="xs:string" minOccurs="0"/>
                                 <xs:element name="contact">
                                   <xs:complexType>
                                     <xs:sequence>
@@ -4415,7 +5457,6 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
         <session_type>keynote</session_type>
         <status>published</status>
         <max_attendees>120</max_attendees>
-        <current_attendees>87</current_attendees>
         <speaker>
           <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
           <contact>
@@ -4433,7 +5474,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
 
 ---
 
-### 17.2 `calendar_invite` / `calendar_invite_confirmed`
+### 19.2 `calendar_invite` / `calendar_invite_confirmed`
 
 Frontend vraagt Planning om een Office365/Outlook kalenderafspraak aan te maken voor een ingeschreven gebruiker.
 
@@ -4447,6 +5488,12 @@ Frontend vraagt Planning om een Office365/Outlook kalenderafspraak aan te maken 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -4501,6 +5548,12 @@ Frontend vraagt Planning om een Office365/Outlook kalenderafspraak aan te maken 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -4598,7 +5651,7 @@ Frontend vraagt Planning om een Office365/Outlook kalenderafspraak aan te maken 
 
 ---
 
-### 17.3 `session_create_request` (Frontend → Planning)
+### 19.3 `session_create_request` (Frontend → Planning)
 
 Wanneer een administrator in Drupal een nieuwe sessie aanmaakt.
 
@@ -4607,6 +5660,12 @@ Wanneer een administrator in Drupal een nieuwe sessie aanmaakt.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -4659,7 +5718,7 @@ Wanneer een administrator in Drupal een nieuwe sessie aanmaakt.
 
 ---
 
-### 17.4 `session_update_request` (Frontend → Planning)
+### 19.4 `session_update_request` (Frontend → Planning)
 
 Wanneer een administrator in Drupal een bestaande sessie wijzigt.
 
@@ -4668,6 +5727,12 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -4720,7 +5785,7 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
 
 ---
 
-### 17.5 `session_delete_request` (Frontend → Planning)
+### 19.5 `session_delete_request` (Frontend → Planning)
 
 Wanneer een administrator in Drupal een sessie verwijdert.
 
@@ -4729,6 +5794,12 @@ Wanneer een administrator in Drupal een sessie verwijdert.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType><xs:sequence>
       <xs:element name="header">
@@ -4781,11 +5852,17 @@ Wanneer een administrator in Drupal een sessie verwijdert.
 > Dit is een **anti-pattern dat Regel 1 breekt**. De header is nu **verplicht**.
 > CRM en Facturatie moeten de header altijd meesturen — ze kenden dit schema al.
 
-### 18.1 `vat_validation_error`
+### 20.1 `vat_validation_error`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -4870,6 +5947,12 @@ Wanneer een administrator in Drupal een sessie verwijdert.
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:element name="message">
     <xs:complexType>
       <xs:sequence>
@@ -5104,6 +6187,8 @@ Gebruik deze checklist bij het bouwen of reviewen van elke nieuwe sender of XSD:
   xs:dateTime in XML                xs:dateTime veld               
   geen namespace in bericht                  geen namespace vereist         
                                                                               
+    
+                                                                              
   INTERN: XSD's in /xsd/                    INTERN: case "session_update"   
   targetNamespace aanwezig                  → "session_updated" fix       
   xs:string i.p.v. dateTime                                                 
@@ -5185,5 +6270,9 @@ Maar: dit document IS nu de canonieke bron. Zolang er geen issue + update gewees
 
 *Document v2.3 — Gegenereerd op basis van volledige repo-audit + bestaande v2.0 contract — April 2026*
 *Volgende geplande revisie: na demo 3 — toevoegen of aanpassen via Pull Request*
+
+
+
+
 
 
