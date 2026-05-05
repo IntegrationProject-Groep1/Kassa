@@ -400,6 +400,7 @@ def process_message(ch, method, properties, body):
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
             logger.error("[RECEIVER] ❌ XML parse error: %s", e)
+            monitor.log("error", "xml_validation", f"Unparseable XML received: {e}")
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -466,11 +467,13 @@ def process_message(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
         else:
             logger.error("[RECEIVER] ❌ Max retries reached: %s", e)
+            monitor.log("error", "system_error", f"Receiver: Max retries reached for message {related_message_id}: {e}")
             send_error_to_queue("odoo_api_error", related_message_id, f"Max retries reached: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
         logger.error("[RECEIVER] ❌ Unexpected error: %s", e)
+        monitor.log("error", "system_error", f"Unexpected receiver error: {e}")
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
@@ -546,6 +549,7 @@ def start_listening():
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
+        monitor.log("warning", "system_error", f"Startup flush failure: {e}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
