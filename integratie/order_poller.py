@@ -291,7 +291,8 @@ class OrderPoller:
                     categories = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.category', 'read',
-                        [pos_categ_ids, ['name']]
+                        [pos_categ_ids, ['name']],
+                        {'context': {}}
                     )
                     for cat in categories:
                         if cat.get('name') == 'Top-ups':

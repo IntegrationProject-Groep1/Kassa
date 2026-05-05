@@ -376,11 +376,11 @@ def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass
             "pos.category",
             "search_read",
             [[["name", "=", name]]],
-            {"fields": ["id"], "limit": 1},
+            {"fields": ["id"], "limit": 1, "context": {}},
         )
         if records:
             return records[0]["id"]
-        return _rpc(models, odoo_db, uid, odoo_pass, "pos.category", "create", [{"name": name}])
+        return _rpc(models, odoo_db, uid, odoo_pass, "pos.category", "create", [{"name": name}], {"context": {}})
 
     return _ensure_category("Top-ups"), _ensure_category("Drinks")
 
