@@ -19,7 +19,7 @@ import receiver
 import sender
 from order_poller import OrderPoller
 from pos_profiles import ensure_pos_profiles
-from config_utils import get_env
+from config_utils import get_env, require_env
 from odoo_setup import (
     wait_for_odoo,
     setup_database,
@@ -58,11 +58,12 @@ def main():
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
 
-    odoo_url = get_env("ODOO_URL")
-    odoo_db = get_env("ODOO_DB")
-    odoo_user = get_env("ODOO_USER")
-    odoo_pass = get_env("ODOO_PASS")
-    odoo_master_pass = get_env("ODOO_MASTER_PASS")
+    odoo_env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS", "ODOO_MASTER_PASS")
+    odoo_url = odoo_env["ODOO_URL"]
+    odoo_db = odoo_env["ODOO_DB"]
+    odoo_user = odoo_env["ODOO_USER"]
+    odoo_pass = odoo_env["ODOO_PASS"]
+    odoo_master_pass = odoo_env["ODOO_MASTER_PASS"]
     odoo_load_demo_data = get_env("ODOO_LOAD_DEMO_DATA", "false").strip().lower() in {
         "1", "true", "yes", "on",
     }
