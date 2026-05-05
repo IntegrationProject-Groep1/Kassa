@@ -270,6 +270,168 @@ def test_pos_order_sync():
     )
 
 
+def test_refund_flow():
+    section("TEST 8: Refund Flow (Negative Order)")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create NEGATIVE order
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id,
+        "amount_total": -10.0, "amount_paid": -10.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": -1, "price_unit": 10.0,
+        "price_subtotal": -10.0, "price_subtotal_incl": -10.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Refund ID: {order_id}")
+
+    wait(12, "order poller to pick up refund")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Refund Processing", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_invoice_flow():
+    section("TEST 9: Invoice Request Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order with to_invoice=True
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id, "to_invoice": True,
+        "amount_total": 20.0, "amount_paid": 20.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 20.0,
+        "price_subtotal": 20.0, "price_subtotal_incl": 20.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Invoice Order ID: {order_id}")
+
+    wait(12, "order poller to pick up invoice request")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Invoice Request", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_wallet_payment_flow():
+    section("TEST 10: Wallet Payment Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    # Find Badge Wallet payment method
+    pm_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.payment.method", "search",
+        [[["name", "ilike", "Badge Wallet"]]]
+    )
+    if not pm_ids:
+        # Fallback to any PM if Badge Wallet is missing in this environment
+        pm_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.payment.method", "search", [[]])
+
+    pm_id = pm_ids[0]
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id,
+        "amount_total": 5.0, "amount_paid": 5.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 5.0,
+        "price_subtotal": 5.0, "price_subtotal_incl": 5.0,
+    }])
+
+    # Add payment via Wallet
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.payment", "create", [{
+        "pos_order_id": order_id, "payment_method_id": pm_id, "amount": 5.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Wallet Order ID: {order_id}")
+
+    wait(12, "order poller to pick up wallet payment")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Wallet Payment Update", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_anonymous_order_flow():
+    section("TEST 11: Anonymous Order Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order WITHOUT partner_id
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": False,
+        "amount_total": 7.5, "amount_paid": 7.5, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 7.5,
+        "price_subtotal": 7.5, "price_subtotal_incl": 7.5,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Anonymous Order ID: {order_id}")
+
+    wait(12, "order poller to pick up anonymous order")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Anonymous Order", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
 # ── TEST CATEGORY: SYSTEM (Validation & Resilience) ──────────────────────────
 
 def test_xsd_rejection():
@@ -296,14 +458,14 @@ def test_xsd_rejection():
 
 def test_monitoring_log():
     section("TEST 7: Monitoring Log (Direct to Default Exchange)")
-    # Since we can't easily "listen" to the default exchange 'logs' queue without 
+    # Since we can't easily "listen" to the default exchange 'logs' queue without
     # setting up a new consumer in this script, we'll verify the sender doesn't crash
     # and that it correctly handles the logic.
-    
+
     # In a real environment, we'd check if the message arrived in the 'logs' queue.
     # For this suite, we trigger a flow that we know generates a log (like an XSD rejection)
     # and verify the system remains stable.
-    
+
     from monitoring import monitor
     try:
         monitor.log("info", "session", "Integration test suite started")
@@ -312,7 +474,7 @@ def test_monitoring_log():
     except Exception as e:
         ok = False
         reason = f"Monitor log failed: {e}"
-    
+
     report_result("System: Monitoring Integration", ok, reason)
 
 
@@ -328,6 +490,10 @@ def main():
         test_profile_update()
         test_cancellation()
         test_pos_order_sync()
+        test_refund_flow()
+        test_invoice_flow()
+        test_wallet_payment_flow()
+        test_anonymous_order_flow()
         test_xsd_rejection()
         test_monitoring_log()
 
