@@ -70,7 +70,8 @@ MAX_RETRIES = 3
 
 # Performance optimization: Toggle success-level monitoring logs (high frequency)
 # This prevents bloating the monitoring queue during high-traffic events.
-MONITOR_SUCCESS_LOGS = get_env("MONITOR_SUCCESS_LOGS", "True").lower() == "true"
+_monitor_logs_env = get_env("MONITOR_SUCCESS_LOGS", "True") or "True"
+MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
 
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
