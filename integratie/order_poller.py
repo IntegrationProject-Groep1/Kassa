@@ -25,6 +25,7 @@ Offline resilience:
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
 import os
+import re
 import time
 import logging
 from pathlib import Path
@@ -65,8 +66,9 @@ def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
         - "Laarbeeklaan 121" → ("Laarbeeklaan", "121")
         - "Stationsstraat 5 bus B" → ("Stationsstraat", "5 bus B")
         - "Streetname 42/3" → ("Streetname", "42/3")
+        - "123b" → ("123b", "1") or "123 b" → ("123", "b")
 
-    If the street string is None, empty, or doesn't contain a number,
+    If the street string is None, empty, or doesn't contain a whitespace followed by a number,
     returns the full string as the street name and "1" as the default number.
 
     Args:
@@ -75,8 +77,6 @@ def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
     Returns:
         A tuple of (street_name, house_number).
     """
-    import re
-
     if not street_str or not isinstance(street_str, str):
         return ("Onbekend", "1")
 
@@ -86,11 +86,10 @@ def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
     if not street_str:
         return ("Onbekend", "1")
 
-    # Pattern: one or more non-digits/spaces, followed by whitespace,
-    # followed by digits (and optional suffixes like "bus B" or "/3").
-    # Using a greedy approach to capture everything before the number.
-    pattern = r'^(.+?)\s+(\d+(?:\s*[a-z]+\s*\w+)?(?:\s*/\s*\d+)?)$'
-    match = re.match(pattern, street_str, re.IGNORECASE)
+    # Pattern: Greedy match for street name, whitespace, then capture first digit onwards as house number.
+    # This handles complex cases like '123b', '5 bus B', '42/3', etc.
+    pattern = r'^(.+)\s+(\d.*)$'
+    match = re.match(pattern, street_str)
 
     if match:
         street_name = match.group(1).strip()
@@ -329,8 +328,9 @@ class OrderPoller:
 
             if order.get('amount_total', 0) < 0:
                 all_sent, payment_msg_id = self._process_refund(order, order_id, customer_info, is_anonymous)
+                consumption_msg_id = None
             else:
-                all_sent, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, consumption_msg_id, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
 
             # Story 7: Invoice Request logic
             if (order.get('to_invoice') or order.get('account_move')) and order.get('amount_total', 0) >= 0:
@@ -339,8 +339,8 @@ class OrderPoller:
                         "⚠️ Klant zonder account: geen invoice_request aangemaakt"
                     )
                 else:
-                    # Use payment_msg_id as correlation_id, fall back to existing x_payment_message_id
-                    corr_id = payment_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
+                    # Use consumption_msg_id as correlation_id per Flow 10 docs
+                    corr_id = consumption_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
                     inv_sent = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
                     all_sent = all_sent and inv_sent
 
@@ -427,20 +427,18 @@ class OrderPoller:
         """Build and send the invoice_request XML message for a linked partner."""
         country_code = customer_info.get('country_code') or "be"
 
-        # Attempt to split name into first/last if possible, or use defaults
-        name_parts = (customer_info.get('name') or "Unknown").split(' ', 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else "."
-
-        user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
+        # Story 7 Compliance: Only send invoice_request if partner has valid x_user_id
+        user_id = customer_info.get('x_user_id')
+        if not user_id:
+            logger.warning(f"⚠️ Partner {customer_info.get('id')} has no x_user_id: skipping invoice_request per Story 7")
+            return False
 
         # Split street address into street name and house number
         street_full = customer_info.get('street') or "Onbekend"
         street_name, house_number = split_street_and_number(street_full)
 
         invoice_data = {
-            "first_name": first_name,
-            "last_name": last_name,
+            "name": customer_info.get('name') or "Unknown",
             "email": customer_info.get('email') or "no-reply@example.com",
             "address": {
                 "street": street_name,
@@ -679,7 +677,7 @@ class OrderPoller:
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
 
-        return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
+        return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
 
     def poll_badge_assignments(self):
         """

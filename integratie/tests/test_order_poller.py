@@ -112,7 +112,7 @@ def test_process_order_routes_refund(mock_sender, poller):
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
         # Mocking return values for process_order to unpack
-        mock_consumption.return_value = (True, "msg-123")
+        mock_consumption.return_value = (True, "msg-123", "pay-msg-123")
         mock_refund.return_value = (True, "refund-msg-123")
         poller.process_order(order)
 
@@ -132,7 +132,7 @@ def test_process_order_routes_consumption(mock_sender, poller):
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
         # Mocking return values for process_order to unpack
-        mock_consumption.return_value = (True, "msg-123")
+        mock_consumption.return_value = (True, "msg-123", "pay-msg-123")
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -144,7 +144,7 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     order = {'id': 7, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
     with patch.object(poller, '_process_consumption') as mock_pc:
-        mock_pc.return_value = (True, "12345-msg-id")
+        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id")
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -163,7 +163,7 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
     """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
     order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
-    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id")):
+    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id", "buffered-pay-id")):
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -390,7 +390,7 @@ def test_process_consumption_sets_payment_link_fields(mock_sender, poller):
         'create_date': '2026-04-01 12:00:00',
     }
 
-    ok, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
         order, None, is_anonymous=True)
 
     assert ok is True
@@ -438,7 +438,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     )
     mock_sender.send_typed_message.side_effect = [True, True, True]
 
-    ok, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
         order, customer_info, is_anonymous=False)
 
     assert ok is True
