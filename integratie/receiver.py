@@ -68,6 +68,10 @@ RETRY_QUEUE = f"{QUEUE_NAME}.retry"
 RETRY_DELAY_MS = 5000  # 5 seconds
 MAX_RETRIES = 3
 
+# Performance optimization: Toggle success-level monitoring logs (high frequency)
+# This prevents bloating the monitoring queue during high-traffic events.
+MONITOR_SUCCESS_LOGS = get_env("MONITOR_SUCCESS_LOGS", "True").lower() == "true"
+
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
@@ -449,10 +453,14 @@ def process_message(ch, method, properties, body):
         if related_message_id:
             _remember_message_id(related_message_id)
         ch.basic_ack(delivery_tag=method.delivery_tag)
-        monitor.log(
-            "info", "xml_validation",
-            f"Successfully processed {msg_type} (ID: {related_message_id or 'unknown'})"
-        )
+
+        # Successful processing is logged locally always,
+        # but monitoring is optional to prevent queue bloat.
+        if MONITOR_SUCCESS_LOGS:
+            monitor.log(
+                "info", "xml_validation",
+                f"Successfully processed {msg_type} (ID: {related_message_id or 'unknown'})"
+            )
 
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
