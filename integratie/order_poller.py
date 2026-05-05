@@ -628,12 +628,26 @@ class OrderPoller:
 
         customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
 
+        # Split street address into street name and house number for non-anonymous customers
+        address = None
+        if not is_anonymous and customer_info:
+            street_full = customer_info.get('street') or "Onbekend"
+            street_name, house_number = split_street_and_number(street_full)
+            address = {
+                "street": street_name,
+                "number": house_number,
+                "postal_code": customer_info.get('zip') or "0000",
+                "city": customer_info.get('city') or "Onbekend",
+                "country": customer_info.get('country_code') or "be"
+            }
+
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
             user_id=customer_info.get('x_user_id') if customer_info else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
+            address=address,
             is_anonymous=is_anonymous)
 
         order_id = order['id']

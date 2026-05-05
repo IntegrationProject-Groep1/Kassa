@@ -536,3 +536,43 @@ def test_process_consumption_private_customer_type(mock_sender, poller):
 
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
     assert call_kwargs['customer_type'] == 'private'
+
+
+@patch('order_poller.sender')
+def test_process_consumption_passes_address_data(mock_sender, poller):
+    """Verify that _process_consumption splits and passes address data."""
+    customer_info = {
+        'id': 99,
+        'name': 'Jan Peeters',
+        'street': 'Kiekenmarkt 42',
+        'zip': '1000',
+        'city': 'Brussel',
+        'country_code': 'be',
+        'x_user_id': 'USR-1',
+        'email': 'jan@example.com',
+        'customer_type': 'private'
+    }
+    order = {
+        'id': 26,
+        'lines': [],
+        'amount_total': 10.0,
+        'payment_ids': [],
+        'create_date': '2026-04-01 12:00:00',
+    }
+    
+    # Mocking return values to allow the method to complete
+    mock_sender.build_consumption_order_xml.return_value = "<xml/>"
+    mock_sender.build_payment_registered_xml.return_value = "<xml/>"
+    mock_sender.send_typed_message.return_value = True
+
+    poller._process_consumption(order, customer_info, is_anonymous=False)
+
+    # Verify build_consumption_order_xml was called with the split address
+    call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
+    assert 'address' in call_kwargs
+    addr = call_kwargs['address']
+    assert addr['street'] == 'Kiekenmarkt'
+    assert addr['number'] == '42'
+    assert addr['postal_code'] == '1000'
+    assert addr['city'] == 'Brussel'
+    assert addr['country'] == 'be'
