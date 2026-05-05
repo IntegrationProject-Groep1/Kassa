@@ -33,6 +33,7 @@ TEST_ID = uuid.uuid4().hex[:8]
 TEST_USER_ID = f"kassa-test-{TEST_ID}"
 TEST_BADGE_ID = f"BADGE-{TEST_ID.upper()}"
 RESULTS = []
+GLOBAL_SESSION_ID = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -73,35 +74,68 @@ def report_result(name, ok, reason=""):
 
 def ensure_opened_session(uid, models):
     """Ensure at least one POS session is opened for testing."""
+    global GLOBAL_SESSION_ID
+    if GLOBAL_SESSION_ID:
+        return GLOBAL_SESSION_ID
+
+    # 1. Try to find any already opened session (any config)
     session_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
         [[["state", "=", "opened"]]], {"limit": 1}
     )
     if session_ids:
-        return session_ids[0]
+        print(f"  [ODOO] Reusing existing opened session: {session_ids[0]}")
+        GLOBAL_SESSION_ID = session_ids[0]
+        return GLOBAL_SESSION_ID
 
+    # 2. Resolve target config
     config_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
         [[["name", "=", "Bar Kassa"]]], {"limit": 1}
     )
     if not config_ids:
-        # Fallback to any config
-        config_ids = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
-            [[]], {"limit": 1}
-        )
-
+        config_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.config", "search", [[]], {"limit": 1})
     config_id = config_ids[0]
-    session_id = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
-        [{"config_id": config_id, "user_id": uid}]
+
+    # 3. Look for ANY non-closed session for this config
+    existing_session_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
+        [[["config_id", "=", config_id], ["state", "!=", "closed"]]], {"limit": 1}
     )
-    models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "pos.session",
-        "action_pos_session_open", [[session_id]]
-    )
-    print(f"  [ODOO] Opened new POS session: {session_id}")
-    return session_id
+
+    if existing_session_ids:
+        session_id = existing_session_ids[0]
+        # Try to push it to 'opened' state
+        try:
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.session", "action_pos_session_open", [[session_id]])
+        except Exception:
+            pass
+        GLOBAL_SESSION_ID = session_id
+        return GLOBAL_SESSION_ID
+
+    # 4. Create new session only if none exists
+    try:
+        session_id = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
+            [{"config_id": config_id, "user_id": uid}]
+        )
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "pos.session",
+            "action_pos_session_open", [[session_id]]
+        )
+        print(f"  [ODOO] Created and opened new POS session: {session_id}")
+        GLOBAL_SESSION_ID = session_id
+        return GLOBAL_SESSION_ID
+    except Exception as e:
+        if "Another session is already opened" in str(e):
+            retry_ids = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
+                [[["config_id", "=", config_id], ["state", "!=", "closed"]]], {"limit": 1}
+            )
+            if retry_ids:
+                GLOBAL_SESSION_ID = retry_ids[0]
+                return GLOBAL_SESSION_ID
+        raise e
 
 
 # ── XML Builders ──────────────────────────────────────────────────────────────
