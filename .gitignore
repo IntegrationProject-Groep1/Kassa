@@ -72,5 +72,5 @@ node_modules/
 # Misc
 .git/
 .gitattributes
-documentatie/
 integratie/out.txt
+.gemini/

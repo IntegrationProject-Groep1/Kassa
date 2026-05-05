@@ -7,6 +7,16 @@ import sys
 
 import pytest
 
+# Set dummy environment variables to allow modules to be imported during test collection
+# without failing the require_env() validation.
+os.environ.setdefault("RABBIT_HOST", "localhost")
+os.environ.setdefault("RABBIT_USER", "guest")
+os.environ.setdefault("RABBIT_PASS", "guest")
+os.environ.setdefault("ODOO_URL", "http://localhost:8069")
+os.environ.setdefault("ODOO_DB", "test_db")
+os.environ.setdefault("ODOO_USER", "admin")
+os.environ.setdefault("ODOO_PASS", "admin")
+
 INTEGRATIE_DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.abspath(INTEGRATIE_DIR))
 

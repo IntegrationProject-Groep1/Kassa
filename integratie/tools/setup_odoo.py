@@ -41,11 +41,11 @@ ODOO_PASS = os.environ.get("ODOO_PASS")
 # ── Field definitions grouped by Odoo model ───────────────────────────────────
 FIELDS_BY_MODEL: dict[str, dict[str, dict]] = {
     "res.partner": {
-        "x_user_id":        {"ttype": "char",    "string": "External User ID", "index": True},
-        "x_badge_id":       {"ttype": "char",    "string": "Badge ID",          "index": True},
-        "x_wallet_balance": {"ttype": "float",   "string": "Wallet Balance (EUR)"},
-        "x_date_of_birth":  {"ttype": "date",    "string": "Date of Birth"},
-        "x_age":            {
+        "x_user_id": {"ttype": "char", "string": "External User ID", "index": True},
+        "x_badge_id": {"ttype": "char", "string": "Badge ID", "index": True},
+        "x_wallet_balance": {"ttype": "float", "string": "Wallet Balance (EUR)"},
+        "x_date_of_birth": {"ttype": "date", "string": "Date of Birth"},
+        "x_age": {
             "ttype": "integer",
             "string": "Age",
             "compute": (
@@ -95,11 +95,11 @@ def _existing_field_names(models, model_name: str, field_names: list[str]) -> se
 
 def _create_field(models, model_id: int, fname: str, fdef: dict) -> int:
     vals = {
-        "model_id":          model_id,
-        "name":              fname,
+        "model_id": model_id,
+        "name": fname,
         "field_description": fdef["string"],
-        "ttype":             fdef["ttype"],
-        "store":             True,
+        "ttype": fdef["ttype"],
+        "store": True,
     }
     if "index" in fdef:
         vals["index"] = fdef["index"]

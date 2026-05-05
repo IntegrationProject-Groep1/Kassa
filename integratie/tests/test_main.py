@@ -42,38 +42,33 @@ class TestMainSetup:
         assert odoo_setup.setup_database("url", "db", "u", "p", "mp") is True
         mock_common.authenticate.assert_called_once()
 
-    @patch("odoo_setup.requests.post")
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
-    def test_setup_database_create_and_wait(self, mock_proxy, mock_post, mock_sleep):
+    def test_setup_database_create_and_wait(self, mock_proxy, mock_sleep):
+        mock_db_service = MagicMock()
         mock_common = MagicMock()
-        mock_proxy.return_value = mock_common
-        mock_common.authenticate.side_effect = [Exception("Not ready"), Exception("Not ready"), 1]
+        # mock_proxy is called twice: once for db_service and once for common
+        mock_proxy.side_effect = [mock_db_service, mock_common]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_post.return_value = mock_resp
+        mock_db_service.db_exist.return_value = False
+        mock_common.authenticate.side_effect = [Exception("Not ready"), Exception("Not ready"), 1]
 
         assert odoo_setup.setup_database("url", "db", "u", "p", "mp") is True
 
-        mock_post.assert_called_once()
-        assert mock_post.call_args[1]["data"]["name"] == "db"
-        assert mock_post.call_args[1]["data"]["demo"] == ""  # falsy string disables demo data
+        mock_db_service.create_database.assert_called_once_with("mp", "db", False, 'en_US', "p")
         assert mock_common.authenticate.call_count == 3
 
-    @patch("odoo_setup.requests.post")
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
-    def test_setup_database_create_with_demo_enabled(self, mock_proxy, mock_post, mock_sleep):
+    def test_setup_database_create_with_demo_enabled(self, mock_proxy, mock_sleep):
+        mock_db_service = MagicMock()
         mock_common = MagicMock()
-        mock_proxy.return_value = mock_common
-        mock_common.authenticate.side_effect = [Exception("Not ready"), Exception("Not ready"), 1]
+        mock_proxy.side_effect = [mock_db_service, mock_common]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_post.return_value = mock_resp
+        mock_db_service.db_exist.return_value = False
+        mock_common.authenticate.side_effect = [1]
 
         assert odoo_setup.setup_database("url", "db", "u", "p", "mp", odoo_load_demo=True) is True
 
-        assert mock_post.call_args[1]["data"]["demo"] == "1"  # truthy string enables demo data
+        mock_db_service.create_database.assert_called_once_with("mp", "db", True, 'en_US', "p")
 
     # ── ensure_custom_fields ─────────────────────────────────────────────────
 
@@ -98,9 +93,9 @@ class TestMainSetup:
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 4 fields, pos.order has 3, product.template has 2 → 9 creates
+        # res.partner has 12 fields, pos.order has 4, product.template has 1 → 17 creates
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 9
+        assert len(create_calls) == 17
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
