@@ -594,7 +594,7 @@ def test_get_customer_info_recursion_guard(poller):
         return []
 
     poller.models.execute_kw.side_effect = mock_execute_kw
-    
+
     # This should return the data for partner 1 instead of crashing with RecursionError
     info = poller.get_customer_info(1)
     assert info['id'] == 1

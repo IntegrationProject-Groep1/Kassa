@@ -155,22 +155,22 @@ class TestSenderPublishing:
 def test_send_typed_message_buffers_on_xsd_error():
     """XSD validation failure should still buffer the message to prevent data loss."""
     invalid_xml = "<message><invalid/></message>"
-    
+
     with patch('sender._validate_outgoing') as mock_val, \
          patch('sender._buffer_message') as mock_buffer, \
          patch('sender.send_error_to_queue') as mock_err:
-        
+
         mock_val.side_effect = ValueError("Mock XSD Error")
-        
+
         with pytest.raises(sender.XSDValidationError):
             sender.send_typed_message("consumption_order", invalid_xml, record_id=123)
-            
+
         # Verify it was buffered despite the validation error
         mock_buffer.assert_called_once()
         args = mock_buffer.call_args[0]
         assert args[0] == "kassa.payments.consumption"
         assert args[1] == invalid_xml
         assert mock_buffer.call_args[1]['record_id'] == 123
-        
+
         # Verify system error was sent
         mock_err.assert_called_once()
