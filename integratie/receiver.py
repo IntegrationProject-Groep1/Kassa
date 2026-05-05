@@ -163,6 +163,32 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
     logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)
 
 
+# ── Bus event publisher ────────────────────────────────────────────────────────
+
+def _publish_partner_bus_event(
+    uid: int, models, partner_id: int,
+    outstanding_amount: float, payment_status: str, name: str,
+) -> None:
+    """
+    Publish a kassa_partner_update bus event via the PosOrder XML-RPC wrapper.
+
+    In Odoo 17 the bus.bus._sendone method is private and cannot be called
+    directly from an external XML-RPC session.  The public wrapper
+    pos.order.send_partner_bus_event is defined in kassa_pos_custom and
+    provides the bridge.  A failure here is non-fatal — the partner data is
+    already written to Odoo, only the real-time POS update is delayed.
+    """
+    try:
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.order", "send_partner_bus_event",
+            [partner_id, outstanding_amount, payment_status, name],
+        )
+        logger.info("[BUS] ✓ Published partner update: partner_id=%s", partner_id)
+    except Exception as e:
+        logger.warning("[BUS] Could not publish bus event for partner_id=%s: %s", partner_id, e)
+
+
 # ── Business logic per message type ───────────────────────────────────────────
 
 def process_new_registration(root: Element, uid: int, models) -> None:
@@ -174,8 +200,16 @@ def process_new_registration(root: Element, uid: int, models) -> None:
     idempotent at the Odoo level as well — reprocessing the same message after
     a container restart does not create a duplicate partner.
 
-    The <payment_due> block is logged for audit purposes but not stored as a
-    separate Odoo record in this version.
+    Expected XML structure (contract v2.3, section 10.1):
+        <payment_due>
+            <amount currency="eur">50.00</amount>
+            <status>unpaid</status>
+        </payment_due>
+
+    The text content of <amount> is read via findtext(), which ignores
+    attributes — so the currency attribute is validated by XSD but not stored.
+    <status> is a free string; the XSD no longer restricts it to an enum so
+    that future status values from the CRM do not cause validation failures.
     """
     body = root.find("body")
     if body is None:
@@ -206,6 +240,10 @@ def process_new_registration(root: Element, uid: int, models) -> None:
 
     # amount is validated by XSD and no longer logged (PII)
     status = payment_due_el.findtext("status", "unpaid").strip()
+    try:
+        outstanding_amount = float(payment_due_el.findtext("amount", "0").strip())
+    except ValueError:
+        outstanding_amount = 0.0
 
     if not user_id:
         raise ValueError("new_registration: user_id missing in <customer>")
@@ -222,6 +260,8 @@ def process_new_registration(root: Element, uid: int, models) -> None:
         "email": email,
         "x_user_id": user_id,
         "is_company": ctype == "company",
+        "x_outstanding_amount": outstanding_amount,
+        "x_payment_status": status,
     }
     if dob_str:
         partner_vals["x_date_of_birth"] = dob_str
@@ -245,6 +285,10 @@ def process_new_registration(root: Element, uid: int, models) -> None:
         logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
+    _publish_partner_bus_event(
+        uid, models, partner_id,
+        outstanding_amount, status, partner_vals["name"],
+    )
 
 
 def process_profile_update(root: Element, uid: int, models) -> None:
@@ -295,6 +339,19 @@ def process_profile_update(root: Element, uid: int, models) -> None:
     if body.find("date_of_birth") is not None:
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
+    payment_due_el = body.find("payment_due")
+    if payment_due_el is not None:
+        try:
+            outstanding_amount = float(payment_due_el.findtext("amount", "0").strip())
+        except ValueError:
+            outstanding_amount = 0.0
+        payment_status = payment_due_el.findtext("status", "unpaid").strip()
+        update_vals["x_outstanding_amount"] = outstanding_amount
+        update_vals["x_payment_status"] = payment_status
+    else:
+        outstanding_amount = None
+        payment_status = None
+
     if existing:
         partner_id = existing[0]["id"]
         models.execute_kw(
@@ -311,6 +368,12 @@ def process_profile_update(root: Element, uid: int, models) -> None:
             [update_vals],
         )
         logger.warning("[PROFILE_UPDATE] ⚠ Customer not found – created new: Odoo ID=%s", partner_id)
+
+    if outstanding_amount is not None and payment_status is not None:
+        _publish_partner_bus_event(
+            uid, models, partner_id,
+            outstanding_amount, payment_status, update_vals.get("name", "Unknown"),
+        )
 
 
 def process_badge_scan(root: Element, uid: int, models) -> None:

@@ -82,6 +82,7 @@ class OrderPoller:
         self.odoo_uid = None
         self.models = None
         self.processed_orders = collections.OrderedDict()
+        self._session_config_cache: dict[int, str | None] = {}
 
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
@@ -539,7 +540,72 @@ class OrderPoller:
         ok_payment = sender.send_typed_message(
             'payment_registered_consumption', payment_xml, order_id=order_id)
         payment_msg_id = ET.fromstring(payment_xml).findtext('.//message_id')
+
+        # After a successful Inschrijvingskassa payment, mark the partner as fully paid.
+        if customer_info and not is_anonymous:
+            config_name = self._get_pos_config_name(order.get('session_id'))
+            if config_name == 'Inschrijvingskassa':
+                self._update_partner_registration_paid(
+                    customer_info['id'], customer_info.get('name', ''))
+
         return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
+
+    def _get_pos_config_name(self, session_id_val) -> "str | None":
+        """Return the pos.config name for a session, with per-session caching."""
+        if not session_id_val:
+            return None
+        session_id = session_id_val[0] if isinstance(session_id_val, (list, tuple)) else session_id_val
+        if session_id in self._session_config_cache:
+            return self._session_config_cache[session_id]
+        try:
+            sessions = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.session', 'read',
+                [[session_id], ['config_id']],
+            )
+            if not sessions or not sessions[0].get('config_id'):
+                self._session_config_cache[session_id] = None
+                return None
+            config_raw = sessions[0]['config_id']
+            config_id = config_raw[0] if isinstance(config_raw, (list, tuple)) else config_raw
+            configs = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.config', 'read',
+                [[config_id], ['name']],
+            )
+            name = configs[0]['name'] if configs else None
+            self._session_config_cache[session_id] = name
+            return name
+        except Exception as e:
+            logger.warning("[POLLER] Could not get POS config name for session %s: %s", session_id, e)
+            return None
+
+    def _update_partner_registration_paid(self, partner_id: int, partner_name: str) -> None:
+        """
+        After Inschrijvingskassa payment, mark the partner as fully paid and
+        notify the POS frontend in real time.
+
+        The partner write and the bus event are executed as two separate
+        XML-RPC calls.  If the bus event fails the partner data is already
+        correct in Odoo — only the live POS badge update is delayed.
+        The bus event uses the pos.order.send_partner_bus_event public wrapper
+        because bus.bus._sendone is private in Odoo 17 and cannot be called
+        directly via XML-RPC.
+        """
+        try:
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'res.partner', 'write',
+                [[partner_id], {'x_outstanding_amount': 0.0, 'x_payment_status': 'paid'}],
+            )
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'send_partner_bus_event',
+                [partner_id, 0.0, 'paid', partner_name],
+            )
+            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+        except Exception as e:
+            logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
 
     def poll(self, interval=5):
         """
