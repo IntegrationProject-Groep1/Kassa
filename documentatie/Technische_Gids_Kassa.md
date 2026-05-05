@@ -9,7 +9,7 @@ Integratieproject Desideriushogeschool 2026
 | **Veld** | **Waarde** |
 | Project | Integratieproject Desideriushogeschool 2026 |
 | Team | Kassa (Odoo POS) |
-| Versie | 3.5 — sender v3.5 (total_amount per item); poller v1.3 (is_topup_product categorie-check); XSD consumption_order → v2.3 |
+| Versie | 3.6 — Harmonistatie v2.3 (amount_due nesting, strict location enums, negative quantities) |
 | Tech stack | Odoo 17, PostgreSQL 15, Python 3.12, RabbitMQ, Docker, GitHub Actions |
 
 ## **1\. Het grote plaatje — hoe hangt alles samen?**
@@ -180,8 +180,11 @@ De integratie vereist een aantal custom velden op res.partner en pos.order. Deze
 | res.partner | x_badge_id | Char | Badge ID — aangemaakt bij Flow 12 (badge_assigned) |
 | res.partner | x_wallet_balance | Float | Badge saldo in EUR — Single Source of Truth |
 | res.partner | x_date_of_birth | Date | Geboortedatum bezoeker — voor alcoholcontrole (leeftijd berekend in code) |
-| res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<payment_due><amount>` in `new_registration` / `profile_update`. Gereset naar 0 door `order_poller.py` na succesvolle betaling via Inschrijvingskassa (Story 21). |
-| res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<payment_due><status>` (`unpaid` of `paid`). Gezet op `paid` door `order_poller.py` na succesvolle betaling (Story 21). |
+| res.partner | x_session_id | Char | Sessie ID van de inschrijving (sess-xxx) |
+| res.partner | x_session_title | Char | Naam van de sessie voor weergave in POS |
+| res.partner | x_company_id | Char | Extern CRM ID van het bedrijf |
+| res.partner | x_outstanding_amount | Float | Openstaand inschrijvingsbedrag in EUR — ingelezen uit `<amount_due><amount>` in `new_registration`. |
+| res.partner | x_payment_status | Char | Betaalstatus van de inschrijving — ingelezen uit `<amount_due><status>` (`unpaid` of `paid`). |
 | pos.order | x_rabbitmq_sent | Boolean | True als order al naar RabbitMQ is verstuurd — voor poller |
 | pos.order | x_wallet_updated | Boolean | Idempotentie-vlag voor wallet-mutaties: voorkomt dubbele saldo-update bij retries/herstart |
 | pos.order | x_payment_message_id | Char | Bewaart de message_id van `payment_registered` op de order, gebruikt als correlatie bij refunds |
@@ -952,7 +955,7 @@ poller.py draait als daemon-thread en bevraagt Odoo elke POLL_INTERVAL seconden 
 
 • Top-up identificatie: `is_topup_product()` helperfunctie toegevoegd. Identificeert Top-up producten via POS-categorie 'Top-ups' of custom veld `x_is_topup` op `product.product`. De eerdere detectie puur via `vat_rate=0` is vervangen — `vat_rate=0` wordt nu geforceerd ín de XML-export als gevolg van de categorie-check, niet meer als trigger ervoor.
 
-• `pos.order.line` query uitgebreid met `categ_id` in de fields-lijst voor categorie-lookup.
+• `pos.order.line` query uitgebreid met `pos_categ_ids` in de fields-lijst voor categorie-lookup.
 
 **Wijzigingen t.o.v. v1.1:**
 
@@ -983,7 +986,7 @@ Hoe het werkt:
 | **Stap** | **Actie** |
 | 1   | Kassamedewerker bevestigt betaling in Odoo POS → order krijgt state='done' |
 | 2   | poller.py detecteert de order via search_read op state='done' EN x_rabbitmq_sent=False |
-| 3   | poller.py haalt orderregels op met `tax_ids` en `categ_id`; roept `get_tax_rate()` aan per regel voor het BTW-percentage; roept `is_topup_product()` aan per regel voor Top-up identificatie |
+| 3   | poller.py haalt orderregels op met `tax_ids` en `pos_categ_ids`; roept `get_tax_rate()` aan per regel voor het BTW-percentage; roept `is_topup_product()` aan per regel voor Top-up identificatie |
 | 4   | poller.py detecteert betaalmethode via pos.payment → payment_method_id.name |
 | 5   | poller.py bouwt consumption_order XML via sender.py |
 | 6   | poller.py bouwt payment_registered XML (context: consumption) via sender.py |

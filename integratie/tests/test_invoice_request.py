@@ -530,4 +530,3 @@ class TestInvoiceRequestWithAddressSplitting:
 
             assert call_kwargs['invoice_data']['address']['street'] == 'Kiekenmarkt'
             assert call_kwargs['invoice_data']['address']['number'] == '42'
-

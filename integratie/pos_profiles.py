@@ -30,6 +30,7 @@ _PROFILES: list[dict[str, Any]] = [
             {"name": "Cash"},
             {"name": "Card"},
             {"name": "Badge Wallet"},
+            {"name": "Customer Account", "create_if_missing": {"is_cash_count": False}},
         ],
         "categ_names": ["Drinks", "Top-ups"],
     },
@@ -38,6 +39,7 @@ _PROFILES: list[dict[str, Any]] = [
         "payment_methods": [
             {"name": "Cash (Inschrijving)", "create_if_missing": {"is_cash_count": False}},
             {"name": "Card"},
+            {"name": "Customer Account", "create_if_missing": {"is_cash_count": False}},
         ],
         "categ_names": ["Top-ups"],
     },
@@ -254,6 +256,13 @@ def _upsert_pos_config(
         try:
             models.execute_kw(db, uid, password, "pos.config", "write", [[config_id], write_vals])
         except xmlrpc.client.Fault as fault:
+            if _is_pos_config_open_session_fault(fault):
+                print(
+                    f"   ⚠️  POS profile '{name}' already exists but is locked by an open session; "
+                    "skipping config write",
+                    flush=True,
+                )
+                return config_id
             if not (
                 "payment_method_ids" in write_vals
                 and _is_cash_method_conflict_fault(fault)
@@ -298,6 +307,12 @@ def _upsert_pos_config(
 
     print(f"   ✅ Created POS profile '{name}' (id={config_id})", flush=True)
     return config_id
+
+
+def _is_pos_config_open_session_fault(fault: xmlrpc.client.Fault) -> bool:
+    """Return True when Odoo blocks POS config changes because a session is open."""
+    message = fault.faultString.lower()
+    return "can't modify" in message and "while a session is open" in message
 
 
 def _is_cash_method_conflict_fault(fault: xmlrpc.client.Fault) -> bool:

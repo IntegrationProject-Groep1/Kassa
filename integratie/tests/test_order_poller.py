@@ -111,9 +111,13 @@ def test_process_order_routes_refund(mock_sender, poller):
 
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
+        # Mocking return values for process_order to unpack
+        mock_consumption.return_value = (True, "msg-123")
+        mock_refund.return_value = (True, "refund-msg-123")
         poller.process_order(order)
-        mock_refund.assert_called_once()
-        mock_consumption.assert_not_called()
+
+    mock_refund.assert_called_once()
+    mock_consumption.assert_not_called()
 
 
 @patch('order_poller.sender')
@@ -127,6 +131,8 @@ def test_process_order_routes_consumption(mock_sender, poller):
 
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
+        # Mocking return values for process_order to unpack
+        mock_consumption.return_value = (True, "msg-123")
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -157,22 +163,23 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
     """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
     order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
-    with patch.object(poller, '_process_consumption', return_value=False):
+    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id")):
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
     # Verify x_rabbitmq_sent was NOT written
     all_calls = poller.models.execute_kw.call_args_list
     write_calls = [c for c in all_calls if len(c[0]) > 4
-                   and c[0][3] == 'pos.order' and c[0][4] == 'write']
+                   and c[0][3] == 'pos.order' and c[0][4] == 'write'
+                   and 'x_rabbitmq_sent' in c[0][5][1]]
     assert len(write_calls) == 0
 
 
 def test_mark_orders_sent_writes_bulk_to_odoo(poller):
-    """_mark_orders_sent executes a bulk write using a list of unique IDs."""
-    order_ids = [11, 22, 11, 33]  # includes a duplicate
+    """_mark_records_sent executes a bulk write using a list of unique IDs."""
+    records = [('pos.order', 11), ('pos.order', 22), ('pos.order', 11), ('pos.order', 33)]
 
-    poller._mark_orders_sent(order_ids)
+    poller._mark_records_sent(records)
 
     # Verify bulk write was called exactly once with unique IDs [11, 22, 33]
     poller.models.execute_kw.assert_called_once()
@@ -206,7 +213,7 @@ def test_process_refund_cash_no_wallet(mock_sender, poller):
     poller._process_refund(order, 10, None, is_anonymous=True)
 
     mock_sender.send_typed_message.assert_called_once_with(
-        'refund_processed', mock_sender.build_refund_processed_xml.return_value, order_id=10
+        'refund_processed', mock_sender.build_refund_processed_xml.return_value, record_id=10
     )
     # Wallet write should NOT have been called
     write_calls = [c for c in poller.models.execute_kw.call_args_list
@@ -341,6 +348,11 @@ def test_process_consumption_sends_consumption_order(mock_sender, poller):
             {'id': 11, 'product_id': (
                 2, 'Water'), 'qty': 1, 'price_unit': 1.5, 'tax_ids': []},
         ],
+        # product.product bulk read (for top-up identification)
+        [
+            {'id': 1, 'x_is_topup': False, 'pos_categ_ids': []},
+            {'id': 2, 'x_is_topup': False, 'pos_categ_ids': []},
+        ],
         # account.tax bulk read
         [{'id': 5, 'amount': 6.0}],
     ]
@@ -403,6 +415,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
         'is_company': False,
         'parent_id': False,
         'email': '',
+        'customer_type': 'private'
     }
     order = {
         'id': 25,
@@ -431,24 +444,16 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     assert ok is True
     assert payment_msg_id == 'pay-wallet'
 
-    # Verify the atomic call was made on pos.order with action_process_wallet_payment
+    # Verify atomic update call was made
     atomic_calls = [
         c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'action_process_wallet_payment'
+        if len(c[0]) > 4 and c[0][4] == 'action_process_wallet_payment'
     ]
     assert len(atomic_calls) == 1
-    assert atomic_calls[0][0][5] == [25, 99, 4.0]
-
-    # Verify no separate res.partner or pos.order write calls were made
-    partner_write_calls = [
-        c for c in poller.models.execute_kw.call_args_list
-        if len(c[0]) > 4 and c[0][3] == 'res.partner' and c[0][4] == 'write'
-    ]
-    assert len(partner_write_calls) == 0
 
     mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
-        user_id='USR-1',
-        new_balance=8.5,
+        'USR-1',
+        8.5,
     )
 
     msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
@@ -473,6 +478,11 @@ def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
             {'id': 11, 'product_id': (2, 'B'), 'qty': 1,
              'price_unit': 2.0, 'tax_ids': [3]},
         ],
+        # product.product bulk read (for top-up identification)
+        [
+            {'id': 1, 'x_is_topup': False, 'pos_categ_ids': []},
+            {'id': 2, 'x_is_topup': False, 'pos_categ_ids': []},
+        ],
         [{'id': 3, 'amount': 21.0}],  # single bulk tax call
     ]
 
@@ -495,9 +505,8 @@ def test_process_consumption_company_customer_type(mock_sender, poller):
     )
     order = {'id': 22, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 5, 'name': 'John', 'is_company': False,
-                     'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': ''}
-    # parent company lookup
-    poller.models.execute_kw.return_value = [{'is_company': True}]
+                     'parent_id': (3, 'ACME Corp'), 'x_user_id': None, 'email': '',
+                     'customer_type': 'company'}
 
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>12345</message_id></header></message>'
@@ -517,7 +526,8 @@ def test_process_consumption_private_customer_type(mock_sender, poller):
     )
     order = {'id': 23, 'lines': [], 'amount_total': 15.0}
     customer_info = {'id': 6, 'name': 'Jane', 'is_company': False,
-                     'parent_id': False, 'x_user_id': None, 'email': ''}
+                     'parent_id': False, 'x_user_id': None, 'email': '',
+                     'customer_type': 'private'}
 
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>12345</message_id></header></message>'

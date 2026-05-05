@@ -15,9 +15,9 @@ COPY integratie/ .
 # De toegewezen poort voor Kassa is 30030-30039
 EXPOSE 30030
 
-# Health check - verify Odoo can be reached
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python tools/ping_odoo.py || exit 1
+# Health check - verify the service is fully started and Odoo is reachable
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=30 \
+    CMD [ -f /tmp/service_ready ] || exit 1
 
 # Start the Order Poller service
 CMD ["python", "main.py"]

@@ -19,6 +19,7 @@ import receiver
 import sender
 from order_poller import OrderPoller
 from pos_profiles import ensure_pos_profiles
+from config_utils import get_env
 from odoo_setup import (
     wait_for_odoo,
     setup_database,
@@ -57,12 +58,12 @@ def main():
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
 
-    odoo_url = os.environ.get("ODOO_URL")
-    odoo_db = os.environ.get("ODOO_DB")
-    odoo_user = os.environ.get("ODOO_USER")
-    odoo_pass = os.environ.get("ODOO_PASS")
-    odoo_master_pass = os.environ.get("ODOO_MASTER_PASS")
-    odoo_load_demo_data = os.environ.get("ODOO_LOAD_DEMO_DATA", "false").strip().lower() in {
+    odoo_url = get_env("ODOO_URL")
+    odoo_db = get_env("ODOO_DB")
+    odoo_user = get_env("ODOO_USER")
+    odoo_pass = get_env("ODOO_PASS")
+    odoo_master_pass = get_env("ODOO_MASTER_PASS")
+    odoo_load_demo_data = get_env("ODOO_LOAD_DEMO_DATA", "false").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -142,6 +143,14 @@ def main():
     poller_thread.daemon = True
     poller_thread.start()
     print("✅ Poller thread started", flush=True)
+
+    # Create marker file for healthcheck to indicate the service is fully ready
+    try:
+        with open("/tmp/service_ready", "w") as f:  # nosec B108
+            f.write("ready")
+        print("✅ Service ready marker created", flush=True)
+    except Exception as e:
+        print(f"⚠️ Could not create ready marker: {e}", flush=True)
 
     print("✅ All services running. Press Ctrl+C to stop.", flush=True)
 

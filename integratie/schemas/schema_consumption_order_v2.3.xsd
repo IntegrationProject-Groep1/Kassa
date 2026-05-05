@@ -13,7 +13,7 @@ Wijzigingen t.o.v. v2.0:
 <xs:complexType name="HeaderType"><xs:sequence>
 <xs:element name="message_id" type="xs:string"/>
 <xs:element name="type" type="xs:string" fixed="consumption_order"/>
-<xs:element name="source" type="xs:string"/>
+<xs:element name="source" type="xs:string" fixed="kassa"/>
 <xs:element name="timestamp" type="xs:dateTime"/>
 <xs:element name="version" type="xs:string"/>
 </xs:sequence></xs:complexType>
@@ -43,8 +43,7 @@ afgedwongen in code, niet door XSD. -->
 <!-- sku: fysiek product-ID uit Odoo (voorheen de waarde van <id>). -->
 <xs:element name="sku" type="xs:string"/>
 <xs:element name="description" type="xs:string"/>
-<xs:element name="quantity" type="xs:positiveInteger"/>
-<xs:element name="unit_price">
+<xs:element name="quantity" type="xs:integer"/><xs:element name="unit_price">
 <xs:complexType><xs:simpleContent>
 <xs:extension base="xs:decimal">
 <xs:attribute name="currency" type="xs:string" use="required"/>
