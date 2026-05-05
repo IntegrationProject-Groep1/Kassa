@@ -44,16 +44,19 @@ logger = logging.getLogger(__name__)
 
 
 # ── Environment ────────────────────────────────────────────────────────────────
-RABBIT_HOST = os.environ.get("RABBIT_HOST")
+_rabbit_env = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
+RABBIT_HOST = _rabbit_env["RABBIT_HOST"]
+RABBIT_USER = _rabbit_env["RABBIT_USER"]
+RABBIT_PASS = _rabbit_env["RABBIT_PASS"]
+
 RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
-RABBIT_USER = os.environ.get("RABBIT_USER")
-RABBIT_PASS = os.environ.get("RABBIT_PASS")
 
-ODOO_URL = get_env("ODOO_URL")
-ODOO_DB = get_env("ODOO_DB")
-ODOO_USER = get_env("ODOO_USER")
-ODOO_PASS = get_env("ODOO_PASS")
+_odoo_env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
+ODOO_URL = _odoo_env["ODOO_URL"]
+ODOO_DB = _odoo_env["ODOO_DB"]
+ODOO_USER = _odoo_env["ODOO_USER"]
+ODOO_PASS = _odoo_env["ODOO_PASS"]
 
 QUEUE_NAME = get_env("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 DLX_NAME = get_env("RABBIT_DLX", EXCHANGE_NAME)
