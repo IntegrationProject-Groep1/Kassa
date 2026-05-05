@@ -426,6 +426,9 @@ def process_message(ch, method, properties, body):
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
+        if msg_type not in SCHEMA_MAP:
+            raise ValueError(f"Unknown message type: '{msg_type}'")
+
         uid, models = get_odoo_connection()
 
         if msg_type == "new_registration":
@@ -436,8 +439,6 @@ def process_message(ch, method, properties, body):
             process_badge_scan(root, uid, models)
         elif msg_type == "cancel_registration":
             process_cancel_registration(root, uid, models)
-        else:
-            raise ValueError(f"Unknown message type: '{msg_type}'")
 
         if related_message_id:
             _remember_message_id(related_message_id)
