@@ -34,7 +34,7 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
-from config_utils import get_env, require_env
+from config_utils import require_env
 
 defusedxml.xmlrpc.monkey_patch()
 
