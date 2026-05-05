@@ -277,25 +277,31 @@ The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
 <table>
   <tr>
     <td align="center" width="240">
-      <img src="https://ui-avatars.com/api/?name=J+L&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <a href="https://github.com/Jeremy-Luyckfasseel">
+        <img src="https://ui-avatars.com/api/?name=J+L&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      </a>
       <br/><br/>
-      <b>Jeremy Luyckfasseel</b>
+      <a href="https://github.com/Jeremy-Luyckfasseel"><b>Jeremy Luyckfasseel</b></a>
       <br/><br/>
       <img src="https://img.shields.io/badge/Team%20Lead-58A6FF?style=for-the-badge&amp;labelColor=0d1117"/>
     </td>
     <td width="40"></td>
     <td align="center" width="240">
-      <img src="https://ui-avatars.com/api/?name=A+T&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <a href="https://github.com/Ahmeedddddd">
+        <img src="https://ui-avatars.com/api/?name=A+T&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      </a>
       <br/><br/>
-      <b>Ahmed Takadoumi</b>
+      <a href="https://github.com/Ahmeedddddd"><b>Ahmed Takadoumi</b></a>
       <br/><br/>
       <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
     </td>
     <td width="40"></td>
     <td align="center" width="240">
-      <img src="https://ui-avatars.com/api/?name=Z+N&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      <a href="https://github.com/zenoemvn">
+        <img src="https://ui-avatars.com/api/?name=Z+N&amp;background=0d1117&amp;color=58A6FF&amp;size=160&amp;bold=true&amp;rounded=true" width="110" height="110"/>
+      </a>
       <br/><br/>
-      <b>Zeno Van Neygen</b>
+      <a href="https://github.com/zenoemvn"><b>Zeno Van Neygen</b></a>
       <br/><br/>
       <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
     </td>
