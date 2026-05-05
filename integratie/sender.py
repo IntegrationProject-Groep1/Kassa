@@ -98,17 +98,27 @@ _cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
 
-def _buffer_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order") -> None:
+def _buffer_message(
+    routing_key: str,
+    message_xml: str,
+    record_id: int | None = None,
+    model: str = "pos.order",
+    exchange: str | None = None
+) -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
     record_id and model, when provided, are stored in the entry so that
     flush_buffer() can report which Odoo records were successfully flushed
     and the poller can then write x_rabbitmq_sent=True for them.
+    The exchange is also stored to ensure correct routing during replay.
     """
     with _buffer_lock:
-        entry: dict[str, str | int] = {
-            "routing_key": routing_key, "xml": message_xml}
+        entry: dict[str, str | int | None] = {
+            "routing_key": routing_key,
+            "xml": message_xml,
+            "exchange": exchange
+        }
         if record_id is not None:
             entry["record_id"] = record_id
             entry["model"] = model
@@ -158,7 +168,12 @@ def flush_buffer() -> list[tuple[str, int]]:
 
     for entry in entries:
         try:
-            _publish_or_raise(entry["routing_key"], entry["xml"])
+            # Replay with the original exchange stored in the buffer entry
+            _publish_or_raise(
+                routing_key=entry["routing_key"],
+                message_xml=entry["xml"],
+                exchange=entry.get("exchange")
+            )
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
@@ -287,7 +302,13 @@ def send_message(
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
+        _buffer_message(
+            routing_key,
+            message_xml,
+            record_id=record_id,
+            model=model,
+            exchange=exchange
+        )
         return False
 
 
@@ -374,7 +395,13 @@ def send_typed_message(
         # This allows manual recovery or re-processing if the contract is updated later.
         if buffer_on_fail:
             routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-            _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
+            _buffer_message(
+                routing_key,
+                message_xml,
+                record_id=record_id,
+                model=model,
+                exchange=exchange
+            )
 
         # Send a system_error with the extracted related_id
         send_error_to_queue("invalid_xml_format", related_id, error_msg[:500])
