@@ -43,7 +43,7 @@ class TestSenderBuffer:
         try:
             sender._buffer_message("r.1", "<1/>")
             sender._buffer_message("r.2", "<2/>")
-            # 3rd should fail
+            # 3rd should fail and create error notification
             with pytest.raises(sender.BufferFullError):
                 sender._buffer_message("r.3", "<3/>")
 
@@ -60,6 +60,26 @@ class TestSenderBuffer:
             # Verify the 3rd message itself was NOT buffered
             assert entries[0]["xml"] == "<1/>"
             assert entries[1]["xml"] == "<2/>"
+
+            # Verify deduplication: requesting another buffer when full
+            # should not create a duplicate error notification
+            error_count_before = sum(
+                1 for e in entries if e.get("routing_key") == "kassa.errors"
+            )
+            assert error_count_before == 1
+
+            with pytest.raises(sender.BufferFullError):
+                sender._buffer_message("r.4", "<4/>")
+
+            # Reload entries from file
+            entries_after = json.loads(tmp_buffer.read_text())
+
+            # Verify no duplicate error was added (still only 1 error + 2 originals)
+            error_count_after = sum(
+                1 for e in entries_after if e.get("routing_key") == "kassa.errors"
+            )
+            assert error_count_after == 1
+            assert len(entries_after) == 3  # Still 2 original + 1 error
         finally:
             sender.BUFFER_MAX_MESSAGES = original_max
 
