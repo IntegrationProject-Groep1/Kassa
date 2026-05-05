@@ -13,11 +13,7 @@
           <xs:complexType>
             <xs:sequence>
               <xs:element name="message_id" type="UUIDType"/>
-              <xs:element name="type">
-                <xs:simpleType><xs:restriction base="xs:string">
-                  <xs:enumeration value="log"/>
-                </xs:restriction></xs:simpleType>
-              </xs:element>
+              <xs:element name="timestamp"  type="xs:dateTime"/>
               <xs:element name="source">
                 <xs:simpleType><xs:restriction base="xs:string">
                   <xs:enumeration value="crm"/>
@@ -29,7 +25,11 @@
                   <xs:enumeration value="identity-service"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
-              <xs:element name="timestamp"  type="xs:dateTime"/>
+              <xs:element name="type">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="log"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
               <xs:element name="version">
                 <xs:simpleType><xs:restriction base="xs:string">
                   <xs:enumeration value="2.0"/>
