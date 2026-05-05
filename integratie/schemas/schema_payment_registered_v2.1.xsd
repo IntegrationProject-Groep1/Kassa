@@ -2,17 +2,16 @@
 <!-- Wijzigingen t.o.v. v2.0:
      - payment_context toegevoegd (registration | consumption) - verplicht
      - <invoice><id> optioneel (minOccurs=0): afwezig bij registration
-     - <user_id> op body-niveau optioneel: aanwezig bij registration
-     - payment_method enum conform PM-standaard: company_link, on_site, online
-     - due_date: datum van de aankoop zelf (order date_order) bij consumption -->
+     - <transaction><id> is het unieke transactie-ID van de provider (of kassa-transactie-ID)
+-->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 
   <xs:complexType name="HeaderType">
     <xs:sequence>
       <xs:element name="message_id" type="xs:string"/>
-      <xs:element name="type" type="xs:string" fixed="payment_registered"/>
-      <xs:element name="source" type="xs:string" fixed="kassa"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="source" type="xs:string" fixed="kassa"/>
+      <xs:element name="type" type="xs:string" fixed="payment_registered"/>
       <xs:element name="version" type="xs:string"/>
       <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
     </xs:sequence>

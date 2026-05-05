@@ -435,12 +435,12 @@ def now_utc() -> str:
 
 
 def _make_header(root, msg_type, correlation_id=None):
-    """Build standard message header"""
+    """Build standard message header in the exact order required by the contract"""
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
-    ET.SubElement(header, "type").text = msg_type
-    ET.SubElement(header, "source").text = "kassa"
     ET.SubElement(header, "timestamp").text = now_utc()
+    ET.SubElement(header, "source").text = "kassa"
+    ET.SubElement(header, "type").text = msg_type
     ET.SubElement(header, "version").text = "2.0"
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
