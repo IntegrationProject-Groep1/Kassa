@@ -576,3 +576,28 @@ def test_process_consumption_passes_address_data(mock_sender, poller):
     assert addr['postal_code'] == '1000'
     assert addr['city'] == 'Brussel'
     assert addr['country'] == 'be'
+
+
+def test_get_customer_info_recursion_guard(poller):
+    """Verify that get_customer_info detects and breaks circular parent loops."""
+    # Mocking circular link: Partner 1 parent is Partner 2, Partner 2 parent is Partner 1
+    # We use a side_effect function to handle multiple calls predictably
+    def mock_execute_kw(*args, **kwargs):
+        model = args[3]
+        params = args[5]
+        if model == 'res.partner':
+            pid = params[0]
+            if pid == 1:
+                return [{'id': 1, 'name': 'A', 'parent_id': (2, 'B'), 'is_company': False}]
+            if pid == 2:
+                return [{'id': 2, 'name': 'B', 'parent_id': (1, 'A'), 'is_company': False}]
+        return []
+
+    poller.models.execute_kw.side_effect = mock_execute_kw
+    
+    # This should return the data for partner 1 instead of crashing with RecursionError
+    info = poller.get_customer_info(1)
+    assert info['id'] == 1
+    # Circular parent info should be None or gracefully handled
+    # (In our case, get_customer_info(2) will return data for B, but B's parent lookup for A will return None)
+    assert info['parent_id'] == (2, 'B')

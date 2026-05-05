@@ -361,6 +361,11 @@ def send_typed_message(
             f"❌ MESSAGE BLOCKED: {error_msg}\n"
             f"Message content (first 500 chars): {message_xml[:500]}..."
         )
+        # BEST PRACTICE: Buffer the message even on XSD failure to prevent data loss.
+        # This allows manual recovery or re-processing if the contract is updated later.
+        if buffer_on_fail:
+            _buffer_message(ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}"), message_xml, record_id=record_id, model=model)
+
         # Send a system_error with the extracted related_id
         send_error_to_queue("invalid_xml_format", related_id, error_msg[:500])
         raise XSDValidationError(error_msg)

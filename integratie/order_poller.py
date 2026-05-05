@@ -182,7 +182,7 @@ class OrderPoller:
             logger.error(f"❌ Error fetching orders: {e}")
             return []
 
-    def get_customer_info(self, partner_id, country_map=None):
+    def get_customer_info(self, partner_id, country_map=None, visited=None):
         """Fetch customer data from Odoo, including parent company info if needed."""
         if not partner_id:
             return None
@@ -190,6 +190,14 @@ class OrderPoller:
         # Ensure partner_id is an integer (Odoo ID)
         if isinstance(partner_id, (list, tuple)):
             partner_id = partner_id[0]
+
+        # Prevent infinite recursion for circular parent references
+        if visited is None:
+            visited = set()
+        if partner_id in visited:
+            logger.warning(f"⚠️ Circular parent reference detected for partner {partner_id}")
+            return None
+        visited.add(partner_id)
 
         # Return cached result if available
         if hasattr(self, '_customer_cache') and partner_id in self._customer_cache:
