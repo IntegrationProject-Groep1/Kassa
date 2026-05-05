@@ -146,9 +146,9 @@ def build_msg(msg_type, body_xml, message_id=None):
 <message>
   <header>
     <message_id>{m_id}</message_id>
-    <type>{msg_type}</type>
-    <source>test-suite</source>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
+    <source>test-suite</source>
+    <type>{msg_type}</type>
     <version>2.0</version>
   </header>
   <body>{body_xml}</body>
