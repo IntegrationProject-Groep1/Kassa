@@ -380,6 +380,19 @@ class OrderPoller:
 
     def _process_invoice_request(self, order, customer_info, correlation_id: str) -> bool:
         """Build and send the invoice_request XML message for a linked partner."""
+        # Contract Section 11.1: VAT number is mandatory for companies
+        if customer_info.get('customer_type') == 'company' and not (customer_info.get('vat') or "").strip():
+            logger.error(
+                "🚫 Invoice request blocked: Company customer (ID=%s) missing VAT number per contract Section 11.1",
+                customer_info.get('id')
+            )
+            sender.send_error_to_queue(
+                "invalid_xml_format",
+                None,
+                f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
+            )
+            return False
+
         country_code = customer_info.get('country_code') or "be"
 
         # Attempt to split name into first/last if possible, or use defaults
