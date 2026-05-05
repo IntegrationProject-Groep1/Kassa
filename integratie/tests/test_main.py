@@ -98,9 +98,9 @@ class TestMainSetup:
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 4 fields, pos.order has 3, product.template has 2 → 9 creates
+        # res.partner has 6 fields, pos.order has 3, product.template has 2 → 11 creates
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 9
+        assert len(create_calls) == 11
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
@@ -117,6 +117,8 @@ class TestMainSetup:
                     {"name": "x_badge_id"},
                     {"name": "x_wallet_balance"},
                     {"name": "x_date_of_birth"},
+                    {"name": "x_outstanding_amount"},
+                    {"name": "x_payment_status"},
                     {"name": "x_rabbitmq_sent"},
                     {"name": "x_wallet_updated"},
                     {"name": "x_is_topup"},

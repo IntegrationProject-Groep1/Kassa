@@ -309,10 +309,12 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 # The runtime service uses x_date_of_birth directly and does not need x_age.
 _CUSTOM_FIELDS: dict[str, dict[str, tuple[str, str, dict]]] = {
     "res.partner": {
-        "x_user_id":        ("char",    "External User ID",             {"index": True}),
-        "x_badge_id":       ("char",    "Badge ID",                     {"index": True}),
-        "x_wallet_balance": ("float",   "Wallet Balance (EUR)",         {}),
-        "x_date_of_birth":  ("date",    "Date of Birth",                {}),
+        "x_user_id":            ("char",    "External User ID",             {"index": True}),
+        "x_badge_id":           ("char",    "Badge ID",                     {"index": True}),
+        "x_wallet_balance":     ("float",   "Wallet Balance (EUR)",         {}),
+        "x_date_of_birth":      ("date",    "Date of Birth",                {}),
+        "x_outstanding_amount": ("float",   "Outstanding Amount (EUR)",     {}),
+        "x_payment_status":     ("char",    "Payment Status",               {}),
     },
     "pos.order": {
         "x_rabbitmq_sent":      ("boolean", "Sent to RabbitMQ",             {}),
@@ -657,6 +659,15 @@ def ensure_demo_products(
                 "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
                 "available_in_pos": True, "type": "service", "x_is_topup": True,
                 "pos_categ_ids": [(6, 0, [topup_cat_id])] if topup_cat_id else [],
+            },
+            {
+                # Generic registration fee product used by the POS frontend (Story 21).
+                # list_price=0 because the actual price is set dynamically from
+                # the partner's x_outstanding_amount — the cashier never types a price.
+                "name": "Inschrijving", "list_price": 0.00,
+                "taxes_id": [(6, 0, [tax_0])] if tax_0 else [],
+                "available_in_pos": True, "type": "service",
+                "pos_categ_ids": [],
             },
         ]
 

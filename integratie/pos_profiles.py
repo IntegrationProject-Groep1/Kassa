@@ -254,6 +254,12 @@ def _upsert_pos_config(
         try:
             models.execute_kw(db, uid, password, "pos.config", "write", [[config_id], write_vals])
         except xmlrpc.client.Fault as fault:
+            if _is_open_session_fault(fault):
+                print(
+                    f"   ⚠️  '{name}' has an open session — skipping config update (safe to ignore)",
+                    flush=True,
+                )
+                return config_id
             if not (
                 "payment_method_ids" in write_vals
                 and _is_cash_method_conflict_fault(fault)
@@ -298,6 +304,12 @@ def _upsert_pos_config(
 
     print(f"   ✅ Created POS profile '{name}' (id={config_id})", flush=True)
     return config_id
+
+
+def _is_open_session_fault(fault: xmlrpc.client.Fault) -> bool:
+    """Return True if the fault is caused by an active POS session blocking config changes."""
+    msg = fault.faultString.lower()
+    return "session is open" in msg or "while a session is open" in msg
 
 
 def _is_cash_method_conflict_fault(fault: xmlrpc.client.Fault) -> bool:
