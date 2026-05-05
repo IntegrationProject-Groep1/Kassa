@@ -546,7 +546,7 @@ class OrderPoller:
         refund_msg_id = self._extract_message_id(refund_xml)
         return (ok_wallet and ok_refund), refund_msg_id
 
-    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None]:
         """Handle regular sales orders."""
         items = []
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
