@@ -137,7 +137,7 @@ class OrderPoller:
                 return False
         except Exception as e:
             logger.error(f"❌ Odoo connection error: {e}")
-            monitor.log("error", "identity", f"OrderPoller: Odoo connection error: {e}")
+            monitor.log("error", "identity", f"OrderPoller: Odoo connection error: {str(e)[:500]}")
             return False
 
     def get_pending_orders(self):
@@ -184,7 +184,7 @@ class OrderPoller:
             return orders
         except Exception as e:
             logger.error(f"❌ Error fetching orders: {e}")
-            monitor.log("error", "system_error", f"OrderPoller: Error fetching orders from Odoo: {e}")
+            monitor.log("error", "system_error", f"OrderPoller: Error fetching orders from Odoo: {str(e)[:500]}")
             return []
 
     def get_customer_info(self, partner_id, country_map=None, visited=None):
@@ -685,7 +685,7 @@ class OrderPoller:
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
-                monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {e}")
+                monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
                 ok_wallet = False
 
         # Story 7: B2B vs B2C Invoice Logic
@@ -755,7 +755,10 @@ class OrderPoller:
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
-                    monitor.log("error", "xml_validation", f"Outgoing badge_assigned validation failed: {ve}")
+                    monitor.log(
+                        "error", "xml_validation",
+                        f"Outgoing badge_assigned validation failed for Partner {p['id']}: {str(ve)[:500]}"
+                    )
                     try:
                         self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -829,7 +832,7 @@ class OrderPoller:
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
-                monitor.log("error", "system_error", f"OrderPoller main loop failure: {e}")
+                monitor.log("error", "system_error", f"OrderPoller main loop failure: {str(e)[:500]}")
                 time.sleep(interval)
 
     def _mark_records_sent(self, records: list[tuple[str, int]]) -> None:
