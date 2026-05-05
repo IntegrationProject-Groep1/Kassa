@@ -22,6 +22,7 @@ Routing key map (see ROUTING_KEYS):
     payment_status                 → kassa.frontend.payment
     wallet_balance_update          → kassa.frontend.wallet
     system_error                   → kassa.errors
+    log                            → logs
 
 Public API:
     send_message(routing_key, xml)      — send with an explicit routing key
@@ -84,6 +85,7 @@ ROUTING_KEYS = {
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
     "system_error": "kassa.errors",
+    "log": "logs",
 }
 
 
@@ -220,13 +222,14 @@ def connect_to_rabbitmq():
     return _connection, _channel
 
 
-def _publish_or_raise(routing_key: str, message_xml: str) -> None:
+def _publish_or_raise(routing_key: str, message_xml: str, exchange: str | None = None) -> None:
     """Publish with one retry and backoff on transient failures."""
+    target_exchange = exchange if exchange is not None else EXCHANGE_NAME
     for attempt in range(2):
         try:
             _, channel = connect_to_rabbitmq()
             channel.basic_publish(
-                exchange=EXCHANGE_NAME,
+                exchange=target_exchange,
                 routing_key=routing_key,
                 body=message_xml.encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
@@ -261,17 +264,18 @@ def send_message(
     message_xml: str,
     record_id: int | None = None,
     model: str = "pos.order",
-    buffer_on_fail: bool = True
+    buffer_on_fail: bool = True,
+    exchange: str | None = None
 ) -> bool:
     """
-    Publish xml to kassa.exchange with the given routing_key.
+    Publish xml to the specified exchange (default: EXCHANGE_NAME) with the given routing_key.
 
     On any exception the message is written to the local outbox buffer instead of
     being lost, unless buffer_on_fail is set to False.
     Returns True if successfully sent, False if failed (and possibly buffered).
     """
     try:
-        _publish_or_raise(routing_key, message_xml)
+        _publish_or_raise(routing_key, message_xml, exchange=exchange)
         logger.info(f"✅ Sent: routing_key={routing_key}")
         return True
     except Exception as e:
@@ -300,6 +304,7 @@ _OUTGOING_SCHEMA_MAP = {
     "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
     "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
+    "log": _SCHEMA_DIR / "schema_log.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -337,7 +342,8 @@ def send_typed_message(
     message_xml: str,
     record_id: int | None = None,
     model: str = "pos.order",
-    buffer_on_fail: bool = True
+    buffer_on_fail: bool = True,
+    exchange: str | None = None
 ) -> bool:
     """
     Validate against XSD and send the message.
@@ -380,7 +386,8 @@ def send_typed_message(
         message_xml,
         record_id=record_id,
         model=model,
-        buffer_on_fail=buffer_on_fail
+        buffer_on_fail=buffer_on_fail,
+        exchange=exchange
     )
 
 
@@ -711,3 +718,14 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+
+
+def build_log_xml(level: str, action: str, message: str) -> str:
+    """Build a log XML message."""
+    root = ET.Element("message")
+    _make_header(root, "log")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "level").text = level
+    ET.SubElement(body, "action").text = action
+    ET.SubElement(body, "message").text = message
+    return _to_xml(root)
