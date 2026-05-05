@@ -138,9 +138,6 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
 
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a new_registration message (Flow 1)."""
-    # local vars to satisfy mypy about non-None env
-    db, pw = str(ODOO_DB), str(ODOO_PASS)
-
     body = root.find("body")
     if body is None:
         raise ValueError("new_registration: <body> missing")
@@ -178,7 +175,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         raise ValueError("new_registration: user_id missing in <customer>")
 
     existing: List[OdooRecord] = models.execute_kw(
-        db, uid, pw,
+        ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
         {"fields": ["id", "name", "x_user_id"], "limit": 1},
@@ -207,14 +204,14 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     if existing:
         partner_id = existing[0]["id"]
         models.execute_kw(
-            db, uid, pw,
+            ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
             [[partner_id], partner_vals],
         )
         logger.info("[NEW_REGISTRATION] ✓ Customer updated: Odoo ID=%s", partner_id)
     else:
         partner_id = models.execute_kw(
-            db, uid, pw,
+            ODOO_DB, uid, ODOO_PASS,
             "res.partner", "create",
             [partner_vals],
         )
@@ -225,7 +222,6 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
 
 def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a profile_update message (Flow 3)."""
-    db, pw = str(ODOO_DB), str(ODOO_PASS)
     body = root.find("body")
     if body is None:
         raise ValueError("profile_update: <body> missing")
@@ -252,7 +248,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         raise ValueError("profile_update: user_id missing in <body>")
 
     existing: List[OdooRecord] = models.execute_kw(
-        db, uid, pw,
+        ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
         {"fields": ["id", "name"], "limit": 1},
@@ -280,7 +276,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     if existing:
         partner_id = existing[0]["id"]
         models.execute_kw(
-            db, uid, pw,
+            ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
             [[partner_id], update_vals],
         )
@@ -288,7 +284,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     else:
         update_vals["x_user_id"] = user_id
         partner_id = models.execute_kw(
-            db, uid, pw,
+            ODOO_DB, uid, ODOO_PASS,
             "res.partner", "create",
             [update_vals],
         )
@@ -297,7 +293,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a badge_scanned message (Flow 2)."""
-    db, pw = str(ODOO_DB), str(ODOO_PASS)
     body = root.find("body")
     if body is None:
         raise ValueError("badge_scanned: <body> missing")
@@ -312,7 +307,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
     logger.info("[BADGE_SCANNED] Processing scan from %s at %s", location, scanned_at)
 
     existing: List[OdooRecord] = models.execute_kw(
-        db, uid, pw,
+        ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_badge_id", "=", badge_id]]],
         {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
@@ -339,7 +334,6 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a cancel_registration message (Flow 4)."""
-    db, pw = str(ODOO_DB), str(ODOO_PASS)
     body = root.find("body")
     if body is None:
         raise ValueError("cancel_registration: <body> missing")
@@ -352,7 +346,7 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
         raise ValueError("cancel_registration: user_id missing in <body>")
 
     existing: List[OdooRecord] = models.execute_kw(
-        db, uid, pw,
+        ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", user_id]]],
         {"fields": ["id", "name"], "limit": 1},
@@ -361,7 +355,7 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
     if existing:
         partner_id = existing[0]["id"]
         models.execute_kw(
-            db, uid, pw,
+            ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
             [[partner_id], {"active": False}],
         )
@@ -478,9 +472,10 @@ def process_message(ch, method, properties, body):
 
 def connect_to_rabbitmq():
     """Open a new blocking connection to RabbitMQ using environment credentials."""
-    credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    required = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
+    credentials = pika.PlainCredentials(required["RABBIT_USER"], required["RABBIT_PASS"])
     params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=RABBIT_PORT, virtual_host=RABBIT_VHOST, credentials=credentials,
+        host=required["RABBIT_HOST"], port=RABBIT_PORT, virtual_host=RABBIT_VHOST, credentials=credentials,
     )
     return pika.BlockingConnection(params)
 
@@ -539,7 +534,7 @@ def start_listening():
         if flushed_ids:
             uid, models = get_odoo_connection()
             models.execute_kw(
-                str(ODOO_DB), uid, str(ODOO_PASS), 'pos.order', 'write',
+                ODOO_DB, uid, ODOO_PASS, 'pos.order', 'write',
                 [list(set(flushed_ids)), {'x_rabbitmq_sent': True}]
             )
     except Exception as e:

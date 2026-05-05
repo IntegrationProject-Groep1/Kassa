@@ -46,7 +46,7 @@ import xml.etree.ElementTree as ET
 import logging
 from lxml import etree
 
-from config_utils import parse_rabbit_port
+from config_utils import parse_rabbit_port, require_env
 
 
 class BufferFullError(RuntimeError):
@@ -200,9 +200,10 @@ def connect_to_rabbitmq():
     if _connection and not _connection.is_closed:
         return _connection, _channel
 
-    credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    required = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
+    credentials = pika.PlainCredentials(required["RABBIT_USER"], required["RABBIT_PASS"])
     params = pika.ConnectionParameters(
-        host=RABBIT_HOST,
+        host=required["RABBIT_HOST"],
         port=RABBIT_PORT,
         virtual_host=RABBIT_VHOST,
         credentials=credentials,
