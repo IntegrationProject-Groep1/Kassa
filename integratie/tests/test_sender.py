@@ -117,6 +117,17 @@ class TestSenderPublishing:
         sender._publish_or_raise("route.key", "<msg/>")
         mock_chan.basic_publish.assert_called_once()
         assert mock_chan.basic_publish.call_args[1]["routing_key"] == "route.key"
+        assert mock_chan.basic_publish.call_args[1]["exchange"] == sender.EXCHANGE_NAME
+
+    @patch("sender.connect_to_rabbitmq")
+    def test_publish_or_raise_custom_exchange(self, mock_connect):
+        mock_conn = MagicMock()
+        mock_chan = MagicMock()
+        mock_connect.return_value = (mock_conn, mock_chan)
+
+        sender._publish_or_raise("route.key", "<msg/>", exchange="my.exchange")
+        mock_chan.basic_publish.assert_called_once()
+        assert mock_chan.basic_publish.call_args[1]["exchange"] == "my.exchange"
 
     @patch("sender.connect_to_rabbitmq")
     def test_send_error_to_queue(self, mock_connect):
@@ -142,14 +153,14 @@ class TestSenderPublishing:
         # Known type => predefined routing key
         sender.send_typed_message("refund_processed", "<xml/>")
         mock_send.assert_called_once_with("kassa.payments.refund", "<xml/>",
-                                          record_id=None, model='pos.order', buffer_on_fail=True)
+                                          record_id=None, model='pos.order', buffer_on_fail=True, exchange=None)
 
         mock_send.reset_mock()
 
         # Unknown type => kassa.misc.{type}
         sender.send_typed_message("unknown_type", "<xml/>")
         mock_send.assert_called_once_with("kassa.misc.unknown_type", "<xml/>",
-                                          record_id=None, model='pos.order', buffer_on_fail=True)
+                                          record_id=None, model='pos.order', buffer_on_fail=True, exchange=None)
 
 
 def test_send_typed_message_buffers_on_xsd_error():
