@@ -330,7 +330,9 @@ class OrderPoller:
                 all_sent, payment_msg_id = self._process_refund(order, order_id, customer_info, is_anonymous)
                 consumption_msg_id = None
             else:
-                all_sent, consumption_msg_id, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, consumption_msg_id, payment_msg_id = (
+                    self._process_consumption(order, customer_info, is_anonymous)
+                )
 
             # Story 7: Invoice Request logic
             if (order.get('to_invoice') or order.get('account_move')) and order.get('amount_total', 0) >= 0:
@@ -430,7 +432,10 @@ class OrderPoller:
         # Story 7 Compliance: Only send invoice_request if partner has valid x_user_id
         user_id = customer_info.get('x_user_id')
         if not user_id:
-            logger.warning(f"⚠️ Partner {customer_info.get('id')} has no x_user_id: skipping invoice_request per Story 7")
+            logger.warning(
+                f"⚠️ Partner {customer_info.get('id')} has no x_user_id: "
+                "skipping invoice_request per Story 7"
+            )
             return False
 
         # Split street address into street name and house number
