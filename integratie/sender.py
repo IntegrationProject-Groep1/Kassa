@@ -22,6 +22,7 @@ Routing key map (see ROUTING_KEYS):
     payment_status                 → kassa.frontend.payment
     wallet_balance_update          → kassa.frontend.wallet
     system_error                   → kassa.errors
+    log                            → logs
 
 Public API:
     send_message(routing_key, xml)      — send with an explicit routing key
@@ -84,6 +85,7 @@ ROUTING_KEYS = {
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
     "system_error": "kassa.errors",
+    "log": "logs",
 }
 
 
@@ -96,17 +98,27 @@ _cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
 
-def _buffer_message(routing_key: str, message_xml: str, record_id: int | None = None, model: str = "pos.order") -> None:
+def _buffer_message(
+    routing_key: str,
+    message_xml: str,
+    record_id: int | None = None,
+    model: str = "pos.order",
+    exchange: str | None = None
+) -> None:
     """
     Append a message to the local JSON outbox when the broker is unreachable.
 
     record_id and model, when provided, are stored in the entry so that
     flush_buffer() can report which Odoo records were successfully flushed
     and the poller can then write x_rabbitmq_sent=True for them.
+    The exchange is also stored to ensure correct routing during replay.
     """
     with _buffer_lock:
-        entry: dict[str, str | int] = {
-            "routing_key": routing_key, "xml": message_xml}
+        entry: dict[str, str | int | None] = {
+            "routing_key": routing_key,
+            "xml": message_xml,
+            "exchange": exchange
+        }
         if record_id is not None:
             entry["record_id"] = record_id
             entry["model"] = model
@@ -156,7 +168,12 @@ def flush_buffer() -> list[tuple[str, int]]:
 
     for entry in entries:
         try:
-            _publish_or_raise(entry["routing_key"], entry["xml"])
+            # Replay with the original exchange stored in the buffer entry
+            _publish_or_raise(
+                routing_key=entry["routing_key"],
+                message_xml=entry["xml"],
+                exchange=entry.get("exchange")
+            )
             succeeded.append(entry)
         except Exception as e:
             logger.warning(
@@ -220,13 +237,14 @@ def connect_to_rabbitmq():
     return _connection, _channel
 
 
-def _publish_or_raise(routing_key: str, message_xml: str) -> None:
+def _publish_or_raise(routing_key: str, message_xml: str, exchange: str | None = None) -> None:
     """Publish with one retry and backoff on transient failures."""
+    target_exchange = exchange if exchange is not None else EXCHANGE_NAME
     for attempt in range(2):
         try:
             _, channel = connect_to_rabbitmq()
             channel.basic_publish(
-                exchange=EXCHANGE_NAME,
+                exchange=target_exchange,
                 routing_key=routing_key,
                 body=message_xml.encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
@@ -261,17 +279,18 @@ def send_message(
     message_xml: str,
     record_id: int | None = None,
     model: str = "pos.order",
-    buffer_on_fail: bool = True
+    buffer_on_fail: bool = True,
+    exchange: str | None = None
 ) -> bool:
     """
-    Publish xml to kassa.exchange with the given routing_key.
+    Publish xml to the specified exchange (default: EXCHANGE_NAME) with the given routing_key.
 
     On any exception the message is written to the local outbox buffer instead of
     being lost, unless buffer_on_fail is set to False.
     Returns True if successfully sent, False if failed (and possibly buffered).
     """
     try:
-        _publish_or_raise(routing_key, message_xml)
+        _publish_or_raise(routing_key, message_xml, exchange=exchange)
         logger.info(f"✅ Sent: routing_key={routing_key}")
         return True
     except Exception as e:
@@ -283,7 +302,13 @@ def send_message(
         # Buffer on any error (connection refused, timeout, etc.)
         logger.warning(
             f"⚠️  Send failed ({type(e).__name__}), buffering message...")
-        _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
+        _buffer_message(
+            routing_key,
+            message_xml,
+            record_id=record_id,
+            model=model,
+            exchange=exchange
+        )
         return False
 
 
@@ -300,6 +325,7 @@ _OUTGOING_SCHEMA_MAP = {
     "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
     "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
+    "log": _SCHEMA_DIR / "schema_log.xsd",
 }
 
 # Cache parsed schemas to avoid re-parsing on every message
@@ -337,7 +363,8 @@ def send_typed_message(
     message_xml: str,
     record_id: int | None = None,
     model: str = "pos.order",
-    buffer_on_fail: bool = True
+    buffer_on_fail: bool = True,
+    exchange: str | None = None
 ) -> bool:
     """
     Validate against XSD and send the message.
@@ -368,7 +395,13 @@ def send_typed_message(
         # This allows manual recovery or re-processing if the contract is updated later.
         if buffer_on_fail:
             routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-            _buffer_message(routing_key, message_xml, record_id=record_id, model=model)
+            _buffer_message(
+                routing_key,
+                message_xml,
+                record_id=record_id,
+                model=model,
+                exchange=exchange
+            )
 
         # Send a system_error with the extracted related_id
         send_error_to_queue("invalid_xml_format", related_id, error_msg[:500])
@@ -380,7 +413,8 @@ def send_typed_message(
         message_xml,
         record_id=record_id,
         model=model,
-        buffer_on_fail=buffer_on_fail
+        buffer_on_fail=buffer_on_fail,
+        exchange=exchange
     )
 
 
@@ -711,3 +745,14 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+
+
+def build_log_xml(level: str, action: str, message: str) -> str:
+    """Build a log XML message."""
+    root = ET.Element("message")
+    _make_header(root, "log")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "level").text = level
+    ET.SubElement(body, "action").text = action
+    ET.SubElement(body, "message").text = message
+    return _to_xml(root)

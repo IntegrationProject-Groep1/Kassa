@@ -33,6 +33,7 @@ TEST_ID = uuid.uuid4().hex[:8]
 TEST_USER_ID = f"kassa-test-{TEST_ID}"
 TEST_BADGE_ID = f"BADGE-{TEST_ID.upper()}"
 RESULTS = []
+GLOBAL_SESSION_ID = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -73,35 +74,68 @@ def report_result(name, ok, reason=""):
 
 def ensure_opened_session(uid, models):
     """Ensure at least one POS session is opened for testing."""
+    global GLOBAL_SESSION_ID
+    if GLOBAL_SESSION_ID:
+        return GLOBAL_SESSION_ID
+
+    # 1. Try to find any already opened session (any config)
     session_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
         [[["state", "=", "opened"]]], {"limit": 1}
     )
     if session_ids:
-        return session_ids[0]
+        print(f"  [ODOO] Reusing existing opened session: {session_ids[0]}")
+        GLOBAL_SESSION_ID = session_ids[0]
+        return GLOBAL_SESSION_ID
 
+    # 2. Resolve target config
     config_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
         [[["name", "=", "Bar Kassa"]]], {"limit": 1}
     )
     if not config_ids:
-        # Fallback to any config
-        config_ids = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS, "pos.config", "search",
-            [[]], {"limit": 1}
-        )
-
+        config_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.config", "search", [[]], {"limit": 1})
     config_id = config_ids[0]
-    session_id = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
-        [{"config_id": config_id, "user_id": uid}]
+
+    # 3. Look for ANY non-closed session for this config
+    existing_session_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
+        [[["config_id", "=", config_id], ["state", "!=", "closed"]]], {"limit": 1}
     )
-    models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "pos.session",
-        "action_pos_session_open", [[session_id]]
-    )
-    print(f"  [ODOO] Opened new POS session: {session_id}")
-    return session_id
+
+    if existing_session_ids:
+        session_id = existing_session_ids[0]
+        # Try to push it to 'opened' state
+        try:
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.session", "action_pos_session_open", [[session_id]])
+        except Exception:
+            pass
+        GLOBAL_SESSION_ID = session_id
+        return GLOBAL_SESSION_ID
+
+    # 4. Create new session only if none exists
+    try:
+        session_id = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "pos.session", "create",
+            [{"config_id": config_id, "user_id": uid}]
+        )
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "pos.session",
+            "action_pos_session_open", [[session_id]]
+        )
+        print(f"  [ODOO] Created and opened new POS session: {session_id}")
+        GLOBAL_SESSION_ID = session_id
+        return GLOBAL_SESSION_ID
+    except Exception as e:
+        if "Another session is already opened" in str(e):
+            retry_ids = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "pos.session", "search",
+                [[["config_id", "=", config_id], ["state", "!=", "closed"]]], {"limit": 1}
+            )
+            if retry_ids:
+                GLOBAL_SESSION_ID = retry_ids[0]
+                return GLOBAL_SESSION_ID
+        raise e
 
 
 # ── XML Builders ──────────────────────────────────────────────────────────────
@@ -270,6 +304,168 @@ def test_pos_order_sync():
     )
 
 
+def test_refund_flow():
+    section("TEST 8: Refund Flow (Negative Order)")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create NEGATIVE order
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id,
+        "amount_total": -10.0, "amount_paid": -10.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": -1, "price_unit": 10.0,
+        "price_subtotal": -10.0, "price_subtotal_incl": -10.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Refund ID: {order_id}")
+
+    wait(12, "order poller to pick up refund")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Refund Processing", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_invoice_flow():
+    section("TEST 9: Invoice Request Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order with to_invoice=True
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id, "to_invoice": True,
+        "amount_total": 20.0, "amount_paid": 20.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 20.0,
+        "price_subtotal": 20.0, "price_subtotal_incl": 20.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Invoice Order ID: {order_id}")
+
+    wait(12, "order poller to pick up invoice request")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Invoice Request", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_wallet_payment_flow():
+    section("TEST 10: Wallet Payment Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    # Find Badge Wallet payment method
+    pm_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.payment.method", "search",
+        [[["name", "ilike", "Badge Wallet"]]]
+    )
+    if not pm_ids:
+        # Fallback to any PM if Badge Wallet is missing in this environment
+        pm_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.payment.method", "search", [[]])
+
+    pm_id = pm_ids[0]
+    partner_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
+        [[["x_user_id", "=", TEST_USER_ID]]]
+    )
+    partner_id = partner_ids[0]
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": partner_id,
+        "amount_total": 5.0, "amount_paid": 5.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 5.0,
+        "price_subtotal": 5.0, "price_subtotal_incl": 5.0,
+    }])
+
+    # Add payment via Wallet
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.payment", "create", [{
+        "pos_order_id": order_id, "payment_method_id": pm_id, "amount": 5.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Wallet Order ID: {order_id}")
+
+    wait(12, "order poller to pick up wallet payment")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Wallet Payment Update", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
+def test_anonymous_order_flow():
+    section("TEST 11: Anonymous Order Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Create order WITHOUT partner_id
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": False,
+        "amount_total": 7.5, "amount_paid": 7.5, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 7.5,
+        "price_subtotal": 7.5, "price_subtotal_incl": 7.5,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
+    print(f"  [ODOO] Created Anonymous Order ID: {order_id}")
+
+    wait(12, "order poller to pick up anonymous order")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+    )[0]
+    ok = order["x_rabbitmq_sent"] is True
+    report_result("Sender: Anonymous Order", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+
+
 # ── TEST CATEGORY: SYSTEM (Validation & Resilience) ──────────────────────────
 
 def test_xsd_rejection():
@@ -294,6 +490,28 @@ def test_xsd_rejection():
     report_result("System: XSD Rejection", ok, "Invalid XML was correctly blocked")
 
 
+def test_monitoring_log():
+    section("TEST 7: Monitoring Log (Direct to Default Exchange)")
+    # Since we can't easily "listen" to the default exchange 'logs' queue without
+    # setting up a new consumer in this script, we'll verify the sender doesn't crash
+    # and that it correctly handles the logic.
+
+    # In a real environment, we'd check if the message arrived in the 'logs' queue.
+    # For this suite, we trigger a flow that we know generates a log (like an XSD rejection)
+    # and verify the system remains stable.
+
+    from monitoring import monitor
+    try:
+        monitor.log("info", "session", "Integration test suite started")
+        ok = True
+        reason = "Monitor log triggered successfully without exceptions"
+    except Exception as e:
+        ok = False
+        reason = f"Monitor log failed: {e}"
+
+    report_result("System: Monitoring Integration", ok, reason)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -306,7 +524,12 @@ def main():
         test_profile_update()
         test_cancellation()
         test_pos_order_sync()
+        test_refund_flow()
+        test_invoice_flow()
+        test_wallet_payment_flow()
+        test_anonymous_order_flow()
         test_xsd_rejection()
+        test_monitoring_log()
 
         section("SUMMARY")
         all_pass = True
