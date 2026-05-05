@@ -294,6 +294,28 @@ def test_xsd_rejection():
     report_result("System: XSD Rejection", ok, "Invalid XML was correctly blocked")
 
 
+def test_monitoring_log():
+    section("TEST 7: Monitoring Log (Direct to Default Exchange)")
+    # Since we can't easily "listen" to the default exchange 'logs' queue without 
+    # setting up a new consumer in this script, we'll verify the sender doesn't crash
+    # and that it correctly handles the logic.
+    
+    # In a real environment, we'd check if the message arrived in the 'logs' queue.
+    # For this suite, we trigger a flow that we know generates a log (like an XSD rejection)
+    # and verify the system remains stable.
+    
+    from monitoring import monitor
+    try:
+        monitor.log("info", "session", "Integration test suite started")
+        ok = True
+        reason = "Monitor log triggered successfully without exceptions"
+    except Exception as e:
+        ok = False
+        reason = f"Monitor log failed: {e}"
+    
+    report_result("System: Monitoring Integration", ok, reason)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -307,6 +329,7 @@ def main():
         test_cancellation()
         test_pos_order_sync()
         test_xsd_rejection()
+        test_monitoring_log()
 
         section("SUMMARY")
         all_pass = True
