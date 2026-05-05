@@ -559,7 +559,7 @@ def test_process_consumption_passes_address_data(mock_sender, poller):
         'payment_ids': [],
         'create_date': '2026-04-01 12:00:00',
     }
-    
+
     # Mocking return values to allow the method to complete
     mock_sender.build_consumption_order_xml.return_value = "<xml/>"
     mock_sender.build_payment_registered_xml.return_value = "<xml/>"
