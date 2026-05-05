@@ -4,9 +4,9 @@
   <xs:complexType name="HeaderType">
     <xs:sequence>
       <xs:element name="message_id" type="xs:string"/>
-      <xs:element name="type" type="xs:string" fixed="profile_update"/>
-      <xs:element name="source" type="xs:string"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="source" type="xs:string"/>
+      <xs:element name="type" type="xs:string" fixed="profile_update"/>
       <xs:element name="version" type="xs:string" fixed="2.0"/>
     </xs:sequence>
   </xs:complexType>
@@ -33,11 +33,9 @@
                   <xs:enumeration value="company"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
-              <!-- Velden toegevoegd conform v2.3 Contract -->
               <xs:element name="company_name" type="xs:string" minOccurs="0"/>
               <xs:element name="vat_number" type="xs:string" minOccurs="0"/>
               <xs:element name="company_id" type="xs:string" minOccurs="0"/>
-              <!-- Hernoemd naar payment_due conform Sectie 10.2 XSD Wet -->
               <xs:element name="payment_due" minOccurs="0">
                 <xs:complexType><xs:sequence>
                   <xs:element name="amount">
