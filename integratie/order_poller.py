@@ -34,6 +34,7 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+from monitoring import monitor
 from config_utils import require_env
 
 defusedxml.xmlrpc.monkey_patch()
@@ -132,6 +133,7 @@ class OrderPoller:
                 return True
             else:
                 logger.error("❌ Odoo authentication failed")
+                monitor.log("error", "identity", "OrderPoller: Odoo authentication failed")
                 return False
         except Exception as e:
             logger.error(f"❌ Odoo connection error: {e}")
@@ -380,6 +382,7 @@ class OrderPoller:
                 )
                 status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
                 logger.info(f"📦 Order {order_id}: {status_text} (SENT)")
+                monitor.log("info", "payment", f"Order {order_id} processed for {status_text}")
             else:
                 logger.info(f"📁 Order {order_id} buffered")
 

@@ -35,6 +35,7 @@ from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
 from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
+from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
 
 defusedxml.xmlrpc.monkey_patch()
@@ -422,6 +423,7 @@ def process_message(ch, method, properties, body):
             validate_xml(xml_text, msg_type)
         except ValueError as e:
             logger.error("[RECEIVER] ❌ Validation failure for '%s': %s", msg_type, e)
+            monitor.log("error", "xml_validation", f"Validation failure for {msg_type}: {e}")
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -443,6 +445,7 @@ def process_message(ch, method, properties, body):
         if related_message_id:
             _remember_message_id(related_message_id)
         ch.basic_ack(delivery_tag=method.delivery_tag)
+        monitor.log("info", "xml_validation", f"Successfully processed {msg_type}")
 
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"

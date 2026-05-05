@@ -17,6 +17,7 @@ import defusedxml.xmlrpc
 
 import receiver
 import sender
+import monitoring
 from order_poller import OrderPoller
 from pos_profiles import ensure_pos_profiles
 from config_utils import get_env, require_env
@@ -154,6 +155,9 @@ def main():
         print(f"⚠️ Could not create ready marker: {e}", flush=True)
 
     print("✅ All services running. Press Ctrl+C to stop.", flush=True)
+
+    # Step 8: Start Monitoring (Startup Log)
+    monitoring.monitor.log("info", "session", "Kassa Integration Service started and monitoring active.")
 
     # Keep main thread alive
     try:
