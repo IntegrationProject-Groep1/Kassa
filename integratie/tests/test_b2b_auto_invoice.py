@@ -1,5 +1,4 @@
-"""
-B2B Auto-Invoice Tests
+"""B2B Auto-Invoice Tests
 
 Story: B2B Auto-Invoice automation
 When a company customer places an order, an invoice_request should be automatically
@@ -39,7 +38,9 @@ def mock_sender():
     mock = MagicMock()
     mock.send_typed_message = MagicMock(return_value=True)
     mock.send_error_to_queue = MagicMock()
-    mock.build_invoice_request_xml = MagicMock(return_value="<message><header><message_id>test-id</message_id></header></message>")
+    mock.build_invoice_request_xml = MagicMock(
+        return_value="<message><header><message_id>test-id</message_id></header></message>"
+    )
     mock.extract_message_id = MagicMock(return_value=str(uuid.uuid4()))
     return mock
 
@@ -134,7 +135,6 @@ class TestB2BAutoInvoice:
 
         with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
              patch.object(poller, '_process_invoice_request', return_value=(True, str(uuid.uuid4()))) as mock_invoice:
-            
             poller.process_order(order)
 
             # Verify _process_invoice_request was called (auto-invoice for company)
@@ -168,7 +168,6 @@ class TestB2BAutoInvoice:
 
         with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
              patch.object(poller, '_process_invoice_request') as mock_invoice:
-            
             poller.process_order(order)
 
             # Verify _process_invoice_request was NOT called (already sent)
@@ -199,7 +198,6 @@ class TestB2BAutoInvoice:
 
         with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
              patch.object(poller, '_process_invoice_request') as mock_invoice:
-            
             poller.process_order(order)
 
             # Verify _process_invoice_request was NOT called (private without flag)
@@ -230,7 +228,6 @@ class TestB2BAutoInvoice:
 
         with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
              patch.object(poller, '_process_invoice_request', return_value=(True, str(uuid.uuid4()))) as mock_invoice:
-            
             poller.process_order(order)
 
             # Verify _process_invoice_request was called (to_invoice flag honored)
@@ -259,11 +256,10 @@ class TestB2BAutoInvoice:
         customer_data = make_company_customer(11, '')  # No VAT
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-        # Mock send_error_to_queue to prevent RabbitMQ connection attempts
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
-             patch('integratie.order_poller.sender.send_error_to_queue'):
-            
-            poller.process_order(order)
+           # Mock send_error_to_queue to prevent RabbitMQ connection attempts
+           with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
+               patch('integratie.order_poller.sender.send_error_to_queue'):
+              poller.process_order(order)
 
-            # VAT check is tested in test_vat_validation.py
-            # This test just verifies the auto-invoice logic doesn't break when VAT is missing
+              # VAT check is tested in test_vat_validation.py
+              # This test just verifies the auto-invoice logic doesn't break when VAT is missing

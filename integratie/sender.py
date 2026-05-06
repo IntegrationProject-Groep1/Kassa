@@ -783,6 +783,8 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+
+
 def build_log_xml(level: str, action: str, message: str) -> str:
     """Build a log XML message."""
     root = ET.Element("message")

@@ -374,7 +374,7 @@ class OrderPoller:
                     else:
                         inv_sent, inv_msg_id = invoice_result, None
                     all_sent = all_sent and inv_sent
-                    
+
                     # Store invoice_message_id for future de-duplication
                     if inv_msg_id:
                         try:
@@ -385,7 +385,7 @@ class OrderPoller:
                             )
                         except Exception as e:
                             logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
-                    
+
                     if is_company:
                         logger.info(f"📄 B2B Auto-Invoice triggered for company order {order_id}")
             elif order.get('amount_total', 0) >= 0 and is_anonymous:
@@ -506,7 +506,7 @@ class OrderPoller:
                 f"⚠️ Partner {customer_info.get('id')} has no x_user_id: "
                 "skipping invoice_request per Story 7"
             )
-            return False
+            return False, None
 
         # Split street address into street name and house number
         street_full = customer_info.get('street') or "Onbekend"
@@ -531,10 +531,10 @@ class OrderPoller:
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
-        
+
         # Extract message_id for de-duplication tracking
         invoice_msg_id = sender.extract_message_id(xml_str)
-        
+
         # Send the message and return result with message_id
         success = sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
         return success, invoice_msg_id
