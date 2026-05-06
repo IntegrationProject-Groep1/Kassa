@@ -262,6 +262,8 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
     ]
 
+    fields_to_create = []
+
     for model, name, field_description, field_type, field_kwargs in fields_to_check:
         existing = _rpc(
             models,
@@ -298,9 +300,14 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
             "state": "manual",
         }
         create_vals.update(field_kwargs)
-        _rpc(models, odoo_db, uid, odoo_pass, "ir.model.fields", "create", [create_vals])
+        fields_to_create.append(create_vals)
+
+    if fields_to_create:
+        print(f"Creating {len(fields_to_create)} missing custom fields in batch...", flush=True)
+        _rpc(models, odoo_db, uid, odoo_pass, "ir.model.fields", "create", [fields_to_create])
 
     return True
+
 
 
 def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> dict[float, int]:
