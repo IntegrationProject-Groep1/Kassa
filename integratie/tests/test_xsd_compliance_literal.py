@@ -63,7 +63,7 @@ class TestXSDCompliance:
         assert valid, f"XSD Error in wallet_balance_update: {errors}"
 
     def test_badge_assigned_compliance(self):
-        xml = sender.build_badge_assigned_xml("BADGE1", str(uuid.uuid4()))
+        xml = sender.build_badge_assigned_xml("BADGE1", "user@example.com")
         valid, errors = validate_xml(xml, "schema_badge_assigned.xsd")
         assert valid, f"XSD Error in badge_assigned: {errors}"
 

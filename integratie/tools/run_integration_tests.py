@@ -142,25 +142,32 @@ def ensure_opened_session(uid, models):
 
 def build_msg(msg_type, body_xml, message_id=None):
     m_id = message_id or str(uuid.uuid4())
-    # Literal XSDs have fixed source enums:
-    # frontend (registration, cancellation), crm (profile), iot_gateway (badge)
-    source = "frontend"
-    if msg_type == "profile_update":
+    source = "crm"
+    if msg_type in ("new_registration", "profile_update", "cancel_registration"):
         source = "crm"
     elif msg_type == "badge_scanned":
         source = "iot_gateway"
-    elif msg_type == "cancel_registration":
-        source = "frontend"
+
+    if msg_type == "new_registration":
+        header = (
+            f"<message_id>{m_id}</message_id>"
+            f"<type>{msg_type}</type>"
+            f"<source>{source}</source>"
+            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
+            "<version>2.0</version>"
+        )
+    else:
+        header = (
+            f"<message_id>{m_id}</message_id>"
+            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
+            f"<source>{source}</source>"
+            f"<type>{msg_type}</type>"
+            "<version>2.0</version>"
+        )
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
-  <header>
-    <message_id>{m_id}</message_id>
-    <timestamp>2026-03-31T10:00:00Z</timestamp>
-    <source>{source}</source>
-    <type>{msg_type}</type>
-    <version>2.0</version>
-  </header>
+  <header>{header}</header>
   <body>{body_xml}</body>
 </message>"""
 
@@ -170,8 +177,7 @@ def build_msg(msg_type, body_xml, message_id=None):
 def test_registration_and_idempotency():
     section("TEST 1 & 2: new_registration & Idempotency")
     msg_id = str(uuid.uuid4())
-    # Literal XSD for new_registration: user_id, email, dob, contact, [company_id], session_id, payment_due
-    # NOT ALLOWED: <type>, <badge_id>
+    # new_registration XSD: customer plus sibling payment_due in body.
     xml = f"""
     <customer>
       <user_id>{TEST_USER_ID}</user_id>
@@ -182,11 +188,11 @@ def test_registration_and_idempotency():
         <last_name>User</last_name>
       </contact>
       <session_id>sess-001</session_id>
-      <payment_due>
-        <amount currency="eur">10.00</amount>
-        <status>unpaid</status>
-      </payment_due>
     </customer>
+    <payment_due>
+      <amount currency="eur">10.00</amount>
+      <status>unpaid</status>
+    </payment_due>
     """
     full_xml = build_msg("new_registration", xml, message_id=msg_id)
 

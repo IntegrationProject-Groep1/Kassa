@@ -434,7 +434,7 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
 
 
-def _make_header(root, msg_type, correlation_id=None, order="B"):
+def _make_header(root, msg_type, correlation_id=None, order="B", source="kassa"):
     """
     Build standard message header in the exact order required by the contract.
     Two orders are used in the literal documentation:
@@ -446,11 +446,11 @@ def _make_header(root, msg_type, correlation_id=None, order="B"):
 
     if order == "A":
         ET.SubElement(header, "timestamp").text = now_utc()
-        ET.SubElement(header, "source").text = "kassa"
+        ET.SubElement(header, "source").text = source
         ET.SubElement(header, "type").text = msg_type
     else:  # Order B
         ET.SubElement(header, "type").text = msg_type
-        ET.SubElement(header, "source").text = "kassa"
+        ET.SubElement(header, "source").text = source
         ET.SubElement(header, "timestamp").text = now_utc()
 
     ET.SubElement(header, "version").text = "2.0"
@@ -530,7 +530,7 @@ def build_consumption_order_xml(
 def build_payment_registered_xml(
     payment_context, invoice_status, amount_paid,
     due_date, trx_id, payment_method,
-    invoice_id=None, user_id=None, correlation_id=None
+    invoice_id=None, user_id=None, correlation_id=None, email=None
 ) -> str:
     """
     Build a payment_registered message confirming a payment was processed.
@@ -551,6 +551,8 @@ def build_payment_registered_xml(
     root = ET.Element("message")
     _make_header(root, "payment_registered", correlation_id, order="B")
     body = ET.SubElement(root, "body")
+    if email:
+        ET.SubElement(body, "email").text = str(email)
     ET.SubElement(body, "payment_context").text = payment_context
 
     if user_id:
@@ -599,7 +601,7 @@ def build_invoice_request_xml(
         raise ValueError("correlation_id is required for invoice_request")
 
     root = ET.Element("message")
-    _make_header(root, "invoice_request", correlation_id, order="B")
+    _make_header(root, "invoice_request", correlation_id, order="B", source="crm")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = user_id
 
@@ -622,8 +624,13 @@ def build_invoice_request_xml(
     ET.SubElement(inv, "email").text = str(invoice_data.get("email") or "")
 
     addr = ET.SubElement(inv, "address")
-    for k, v in invoice_data.get("address", {}).items():
-        ET.SubElement(addr, k).text = str(v) if v is not None else ""
+    address = invoice_data.get("address", {})
+    for k in ("street", "number", "postal_code", "city", "country"):
+        if k in address:
+            ET.SubElement(addr, k).text = str(address[k]) if address[k] is not None else ""
+
+    if invoice_data.get("company_name"):
+        ET.SubElement(inv, "company_name").text = str(invoice_data["company_name"])
 
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
@@ -631,18 +638,18 @@ def build_invoice_request_xml(
     return _to_xml(root)
 
 
-def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
+def build_badge_assigned_xml(badge_id: str, email: str) -> str:
     """
     Build a badge_assigned message notifying the CRM that a badge was linked.
 
     Args:
         badge_id: Physical badge/RFID identifier (e.g. 'BADGE-RF-00142').
-        user_id:  CRM x_user_id of the customer the badge was assigned to.
+        email:    Customer email address the badge was assigned to.
     """
     root = ET.Element("message")
     _make_header(root, "badge_assigned", order="A")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "email").text = email
     ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "assigned_at").text = now_utc()
     return _to_xml(root)
@@ -668,7 +675,7 @@ def build_refund_processed_xml(
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
     user_id=None, description=None, new_wallet_balance=None,
-    is_anonymous=False
+    is_anonymous=False, email=None
 ) -> str:
     """
     Build a refund_processed message confirming a refund was issued.
@@ -693,6 +700,9 @@ def build_refund_processed_xml(
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id, order="B")
     body = ET.SubElement(root, "body")
+
+    if email:
+        ET.SubElement(body, "email").text = str(email)
 
     if not is_anonymous and user_id:
         ET.SubElement(body, "user_id").text = user_id

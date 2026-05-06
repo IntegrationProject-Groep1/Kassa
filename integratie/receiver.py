@@ -85,6 +85,34 @@ SCHEMA_MAP = {
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
 
+
+def _normalize_for_validation(xml_text: str, msg_type: str) -> str:
+    """
+    Keep validation strict for the current XSD, with a compatibility bridge for
+    CRM main's new_registration payload where payment_due is still nested under
+    customer instead of body.
+    """
+    if msg_type != "new_registration":
+        return xml_text
+
+    try:
+        root = ET.fromstring(xml_text)
+        body = root.find("body")
+        customer = body.find("customer") if body is not None else None
+        if body is None or customer is None or body.find("payment_due") is not None:
+            return xml_text
+
+        payment_due = customer.find("payment_due")
+        if payment_due is None:
+            return xml_text
+
+        customer.remove(payment_due)
+        body.append(payment_due)
+        return ET.tostring(root, encoding="unicode")
+    except Exception:
+        return xml_text
+
+
 # ── Idempotency cache ──────────────────────────────────────────────────────────
 MAX_CACHE_SIZE = 10_000
 seen_message_ids: OrderedDict = OrderedDict()
@@ -134,7 +162,8 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         schema_doc = etree.parse(schema_path)
         _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
 
-    xml_doc = etree.fromstring(xml_text.encode("utf-8"))
+    validation_xml = _normalize_for_validation(xml_text, msg_type)
+    xml_doc = etree.fromstring(validation_xml.encode("utf-8"))
 
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
@@ -199,9 +228,11 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     session_id = (customer.findtext("session_id") or "").strip()
     session_title = (customer.findtext("session_title") or "").strip()
 
-    payment_due_el = customer.find("payment_due")
+    payment_due_el = body.find("payment_due")
     if payment_due_el is None:
-        raise ValueError("new_registration: <payment_due> missing in <customer>")
+        payment_due_el = customer.find("payment_due")
+    if payment_due_el is None:
+        raise ValueError("new_registration: <payment_due> missing in <body>")
 
     status = (payment_due_el.findtext("status") or "unpaid").strip()
     amount = parse_xml_float(payment_due_el.find("amount"))
@@ -356,7 +387,9 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         raise ValueError("badge_scanned: <body> missing")
 
     badge_id = (body.findtext("badge_id") or "").strip()
-    location = (body.findtext("location") or "unknown").strip()
+    email = (body.findtext("email") or "").strip()
+    scan_type = (body.findtext("scan_type") or "").strip()
+    location = (body.findtext("location") or scan_type or "unknown").strip()
     scanned_at = (body.findtext("scanned_at") or "").strip()
 
     if not badge_id:
@@ -371,6 +404,15 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
                     "x_date_of_birth", "is_company"], "limit": 1},
     )
+
+    if not existing and email:
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["email", "=", email]]],
+            {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
+                        "x_date_of_birth", "is_company"], "limit": 1},
+        )
 
     message_id = root.findtext("header/message_id")
 

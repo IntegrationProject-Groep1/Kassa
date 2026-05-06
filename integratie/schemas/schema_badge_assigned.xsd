@@ -22,9 +22,9 @@
       </xs:element>
       <xs:element name="body">
         <xs:complexType><xs:sequence>
-          <xs:element name="user_id"     type="xs:string"/>
+          <xs:element name="email"       type="xs:string"/>
           <xs:element name="badge_id"    type="xs:string"/>
-          <xs:element name="assigned_at" type="xs:dateTime"/>
+          <xs:element name="assigned_at" type="xs:dateTime" minOccurs="0"/>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>

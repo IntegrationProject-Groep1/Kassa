@@ -54,19 +54,20 @@ NEW_REGISTRATION_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
   </header>
   <body>
     <customer>
+      <user_id>{TEST_USER_ID}</user_id>
       <email>{TEST_EMAIL}</email>
+      <date_of_birth>1996-01-01</date_of_birth>
       <contact>
         <first_name>Test e2e</first_name>
         <last_name>Janssen</last_name>
       </contact>
-      <company_name>{TEST_COMPANY}</company_name>
       <type>company</type>
+      <company_name>{TEST_COMPANY}</company_name>
       <vat_number>{TEST_VAT}</vat_number>
-      <user_id>{TEST_USER_ID}</user_id>
-            <date_of_birth>1996-01-01</date_of_birth>
+      <session_id>sess-001</session_id>
     </customer>
     <payment_due>
-      <amount>50.00</amount>
+      <amount currency="eur">50.00</amount>
       <status>unpaid</status>
     </payment_due>
   </body>
