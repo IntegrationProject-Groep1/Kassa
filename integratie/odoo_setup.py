@@ -309,7 +309,6 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
     return True
 
 
-
 def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> dict[float, int]:
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
