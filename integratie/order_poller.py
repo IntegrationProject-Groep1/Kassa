@@ -25,6 +25,7 @@ Offline resilience:
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
 import os
+import re
 import time
 import logging
 from pathlib import Path
@@ -33,7 +34,8 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
-from config_utils import get_env
+from monitoring import monitor
+from config_utils import require_env
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -56,17 +58,62 @@ DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
 DEFAULT_REFUND_REASON = "customer_request"
 
 
+def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
+    """
+    Split a street address into street name and house number components.
+
+    Handles formats like:
+        - "Kiekenmarkt 42" → ("Kiekenmarkt", "42")
+        - "Laarbeeklaan 121" → ("Laarbeeklaan", "121")
+        - "Stationsstraat 5 bus B" → ("Stationsstraat", "5 bus B")
+        - "Streetname 42/3" → ("Streetname", "42/3")
+        - "123b" → ("123b", "1") or "123 b" → ("123", "b")
+
+    If the street string is None, empty, or doesn't contain a whitespace followed by a number,
+    returns the full string as the street name and "1" as the default number.
+
+    Args:
+        street_str: The combined street name and number (e.g., "Kiekenmarkt 42").
+
+    Returns:
+        A tuple of (street_name, house_number).
+    """
+    if not street_str or not isinstance(street_str, str):
+        return ("Onbekend", "1")
+
+    street_str = street_str.strip()
+
+    # After stripping, check if empty
+    if not street_str:
+        return ("Onbekend", "1")
+
+    # Pattern: Greedy match for street name, whitespace, then capture first digit onwards as house number.
+    # This handles complex cases like '123b', '5 bus B', '42/3', etc.
+    pattern = r'^(.+)\s+(\d.*)$'
+    match = re.match(pattern, street_str)
+
+    if match:
+        street_name = match.group(1).strip()
+        house_number = match.group(2).strip()
+        return (street_name, house_number)
+
+    # If no match, return the whole string as street name with default number
+    return (street_str, "1")
+
+
 class OrderPoller:
     def __init__(self):
         """Read Odoo credentials from the environment and prepare internal state."""
-        self.odoo_url = get_env("ODOO_URL")
-        self.odoo_db = get_env("ODOO_DB")
-        self.odoo_user = get_env("ODOO_USER")
-        self.odoo_pass = get_env("ODOO_PASS")
+        env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
+        self.odoo_url = env["ODOO_URL"]
+        self.odoo_db = env["ODOO_DB"]
+        self.odoo_user = env["ODOO_USER"]
+        self.odoo_pass = env["ODOO_PASS"]
 
         self.odoo_uid = None
         self.models = None
         self.processed_orders = collections.OrderedDict()
+        self._session_config_cache: dict[int, str | None] = {}
 
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
@@ -87,9 +134,11 @@ class OrderPoller:
                 return True
             else:
                 logger.error("❌ Odoo authentication failed")
+                monitor.log("error", "identity", "OrderPoller: Odoo authentication failed")
                 return False
         except Exception as e:
             logger.error(f"❌ Odoo connection error: {e}")
+            monitor.log("error", "identity", f"OrderPoller: Odoo connection error: {str(e)[:500]}")
             return False
 
     def get_pending_orders(self):
@@ -136,9 +185,10 @@ class OrderPoller:
             return orders
         except Exception as e:
             logger.error(f"❌ Error fetching orders: {e}")
+            monitor.log("error", "system_error", f"OrderPoller: Error fetching orders from Odoo: {str(e)[:500]}")
             return []
 
-    def get_customer_info(self, partner_id, country_map=None):
+    def get_customer_info(self, partner_id, country_map=None, visited=None):
         """Fetch customer data from Odoo, including parent company info if needed."""
         if not partner_id:
             return None
@@ -146,6 +196,14 @@ class OrderPoller:
         # Ensure partner_id is an integer (Odoo ID)
         if isinstance(partner_id, (list, tuple)):
             partner_id = partner_id[0]
+
+        # Prevent infinite recursion for circular parent references
+        if visited is None:
+            visited = set()
+        if partner_id in visited:
+            logger.warning(f"⚠️ Circular parent reference detected for partner {partner_id}")
+            return None
+        visited.add(partner_id)
 
         # Return cached result if available
         if hasattr(self, '_customer_cache') and partner_id in self._customer_cache:
@@ -238,7 +296,8 @@ class OrderPoller:
                     categories = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.category', 'read',
-                        [pos_categ_ids, ['name']]
+                        [pos_categ_ids, ['name']],
+                        {'context': {}}
                     )
                     for cat in categories:
                         if cat.get('name') == 'Top-ups':
@@ -284,8 +343,11 @@ class OrderPoller:
 
             if order.get('amount_total', 0) < 0:
                 all_sent, payment_msg_id = self._process_refund(order, order_id, customer_info, is_anonymous)
+                consumption_msg_id = None
             else:
-                all_sent, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
+                all_sent, consumption_msg_id, payment_msg_id = (
+                    self._process_consumption(order, customer_info, is_anonymous)
+                )
 
             # Story 7 & B2B Auto-Invoice: Invoice Request logic
             should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous
@@ -303,10 +365,14 @@ class OrderPoller:
                         f"(msg_id: {order.get('x_invoice_message_id')})"
                     )
                 else:
-                    # Use payment_msg_id as correlation_id (Contract Section 11.1)
-                    # This ensures correlation_id matches the consumption_order message_id
-                    corr_id = payment_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
-                    inv_sent, inv_msg_id = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    # Use consumption_msg_id as correlation_id per Flow 10 docs.
+                    # This keeps invoice_request correlated to the original consumption_order.
+                    corr_id = consumption_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
+                    invoice_result = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    if isinstance(invoice_result, tuple):
+                        inv_sent, inv_msg_id = invoice_result
+                    else:
+                        inv_sent, inv_msg_id = invoice_result, None
                     all_sent = all_sent and inv_sent
                     
                     # Store invoice_message_id for future de-duplication
@@ -351,6 +417,7 @@ class OrderPoller:
                 )
                 status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
                 logger.info(f"📦 Order {order_id}: {status_text} (SENT)")
+                monitor.log("info", "payment", f"Order {order_id} processed for {status_text}")
             else:
                 logger.info(f"📁 Order {order_id} buffered")
 
@@ -426,24 +493,31 @@ class OrderPoller:
                 None,
                 f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
             )
-            return False, None
+            raise sender.XSDValidationError(
+                f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
+            )
 
         country_code = customer_info.get('country_code') or "be"
 
-        # Attempt to split name into first/last if possible, or use defaults
-        name_parts = (customer_info.get('name') or "Unknown").split(' ', 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else "."
+        # Story 7 Compliance: Only send invoice_request if partner has valid x_user_id
+        user_id = customer_info.get('x_user_id')
+        if not user_id:
+            logger.warning(
+                f"⚠️ Partner {customer_info.get('id')} has no x_user_id: "
+                "skipping invoice_request per Story 7"
+            )
+            return False
 
-        user_id = customer_info.get('x_user_id') or f"ODOO-{customer_info.get('id')}"
+        # Split street address into street name and house number
+        street_full = customer_info.get('street') or "Onbekend"
+        street_name, house_number = split_street_and_number(street_full)
 
         invoice_data = {
-            "first_name": first_name,
-            "last_name": last_name,
+            "name": customer_info.get('name') or "Unknown",
             "email": customer_info.get('email') or "no-reply@example.com",
             "address": {
-                "street": customer_info.get('street') or "Onbekend",
-                "number": customer_info.get('street2') or "1",
+                "street": street_name,
+                "number": house_number,
                 "postal_code": customer_info.get('zip') or "0000",
                 "city": customer_info.get('city') or "Onbekend",
                 "country": country_code
@@ -553,7 +627,7 @@ class OrderPoller:
         refund_msg_id = self._extract_message_id(refund_xml)
         return (ok_wallet and ok_refund), refund_msg_id
 
-    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None]:
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None]:
         """Handle regular sales orders."""
         items = []
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
@@ -630,12 +704,26 @@ class OrderPoller:
 
         customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
 
+        # Split street address into street name and house number for non-anonymous customers
+        address = None
+        if not is_anonymous and customer_info:
+            street_full = customer_info.get('street') or "Onbekend"
+            street_name, house_number = split_street_and_number(street_full)
+            address = {
+                "street": street_name,
+                "number": house_number,
+                "postal_code": customer_info.get('zip') or "0000",
+                "city": customer_info.get('city') or "Onbekend",
+                "country": customer_info.get('country_code') or "be"
+            }
+
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
             user_id=customer_info.get('x_user_id') if customer_info else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
+            address=address,
             is_anonymous=is_anonymous)
 
         order_id = order['id']
@@ -658,6 +746,7 @@ class OrderPoller:
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
+                monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
                 ok_wallet = False
 
         # Story 7: B2B vs B2C Invoice Logic
@@ -684,7 +773,14 @@ class OrderPoller:
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
 
-        return (ok_consumption and ok_payment and ok_wallet), payment_msg_id
+        # After a successful Inschrijvingskassa payment, mark the partner as fully paid.
+        if customer_info and not is_anonymous:
+            config_name = self._get_pos_config_name(order.get('session_id'))
+            if config_name == 'Inschrijvingskassa':
+                self._update_partner_registration_paid(
+                    customer_info['id'], customer_info.get('name', ''))
+
+        return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
 
     def poll_badge_assignments(self):
         """
@@ -727,6 +823,10 @@ class OrderPoller:
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
+                    monitor.log(
+                        "error", "xml_validation",
+                        f"Outgoing badge_assigned validation failed for Partner {p['id']}: {str(ve)[:500]}"
+                    )
                     try:
                         self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -750,6 +850,63 @@ class OrderPoller:
 
         except Exception as e:
             logger.error(f"❌ Error in poll_badge_assignments: {e}")
+
+    def _get_pos_config_name(self, session_id_val) -> "str | None":
+        """Return the pos.config name for a session, with per-session caching."""
+        if not session_id_val:
+            return None
+        session_id = session_id_val[0] if isinstance(session_id_val, (list, tuple)) else session_id_val
+        if session_id in self._session_config_cache:
+            return self._session_config_cache[session_id]
+        try:
+            sessions = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.session', 'read',
+                [[session_id], ['config_id']],
+            )
+            if not sessions or not sessions[0].get('config_id'):
+                self._session_config_cache[session_id] = None
+                return None
+            config_raw = sessions[0]['config_id']
+            config_id = config_raw[0] if isinstance(config_raw, (list, tuple)) else config_raw
+            configs = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.config', 'read',
+                [[config_id], ['name']],
+            )
+            name = configs[0]['name'] if configs else None
+            self._session_config_cache[session_id] = name
+            return name
+        except Exception as e:
+            logger.warning("[POLLER] Could not get POS config name for session %s: %s", session_id, e)
+            return None
+
+    def _update_partner_registration_paid(self, partner_id: int, partner_name: str) -> None:
+        """
+        After Inschrijvingskassa payment, mark the partner as fully paid and
+        notify the POS frontend in real time.
+
+        The partner write and the bus event are executed as two separate
+        XML-RPC calls.  If the bus event fails the partner data is already
+        correct in Odoo — only the live POS badge update is delayed.
+        The bus event uses the pos.order.send_partner_bus_event public wrapper
+        because bus.bus._sendone is private in Odoo 17 and cannot be called
+        directly via XML-RPC.
+        """
+        try:
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'res.partner', 'write',
+                [[partner_id], {'x_outstanding_amount': 0.0, 'x_payment_status': 'paid'}],
+            )
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'send_partner_bus_event',
+                [partner_id, 0.0, 'paid', partner_name],
+            )
+            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+        except Exception as e:
+            logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
 
     def poll(self, interval=5):
         """Run the polling loop indefinitely."""
@@ -800,6 +957,7 @@ class OrderPoller:
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
+                monitor.log("error", "system_error", f"OrderPoller main loop failure: {str(e)[:500]}")
                 time.sleep(interval)
 
     def _mark_records_sent(self, records: list[tuple[str, int]]) -> None:

@@ -227,7 +227,7 @@ class TestOrderPollerInvoiceRequestDetection:
         }
 
         # Process the order
-        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-123')):
+        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-123', 'payment-msg-456')):
             with patch.object(poller, '_process_invoice_request', return_value=(True, 'inv-msg-123')) as mock_inv:
                 with patch.object(poller, 'get_customer_info', return_value=customer_info):
                     poller.process_order(order)
@@ -260,7 +260,7 @@ class TestOrderPollerInvoiceRequestDetection:
 
         poller.models.execute_kw.return_value = []
 
-        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-124')):
+        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-124', 'payment-msg-457')):
             with patch.object(poller, '_process_invoice_request') as mock_inv:
                 poller.process_order(order)
 
@@ -385,3 +385,148 @@ class TestInvoiceRequestDoD:
         # This is part of the order_poller.process_order() logic
         # which sets x_rabbitmq_sent=True when all_sent is True
         pass
+
+
+# ---------------------------------------------------------------------------
+# Address Splitting Tests (Adres-Splitting for v2.3 compliance)
+# ---------------------------------------------------------------------------
+
+class TestAddressSplitting:
+    """Test the split_street_and_number function for v2.3 compliance."""
+
+    def test_split_street_and_number_basic(self):
+        """Split basic street name with number: 'Kiekenmarkt 42' → ('Kiekenmarkt', '42')"""
+        street, number = order_poller.split_street_and_number("Kiekenmarkt 42")
+        assert street == "Kiekenmarkt"
+        assert number == "42"
+
+    def test_split_street_and_number_complex_name(self):
+        """Split street with multi-word name: 'Laarbeeklaan 121' → ('Laarbeeklaan', '121')"""
+        street, number = order_poller.split_street_and_number("Laarbeeklaan 121")
+        assert street == "Laarbeeklaan"
+        assert number == "121"
+
+    def test_split_street_and_number_with_suffix(self):
+        """Split with bus/apt suffix: 'Stationsstraat 5 bus B' → ('Stationsstraat', '5 bus B')"""
+        street, number = order_poller.split_street_and_number("Stationsstraat 5 bus B")
+        assert street == "Stationsstraat"
+        assert number == "5 bus B"
+
+    def test_split_street_and_number_with_slash(self):
+        """Split with apartment notation: 'Streetname 42/3' → ('Streetname', '42/3')"""
+        street, number = order_poller.split_street_and_number("Streetname 42/3")
+        assert street == "Streetname"
+        assert number == "42/3"
+
+    def test_split_street_and_number_no_number(self):
+        """Street without number defaults to number '1': 'Unknown Street' → ('Unknown Street', '1')"""
+        street, number = order_poller.split_street_and_number("Unknown Street")
+        assert street == "Unknown Street"
+        assert number == "1"
+
+    def test_split_street_and_number_empty_string(self):
+        """Empty string defaults: '' → ('Onbekend', '1')"""
+        street, number = order_poller.split_street_and_number("")
+        assert street == "Onbekend"
+        assert number == "1"
+
+    def test_split_street_and_number_none(self):
+        """None value defaults: None → ('Onbekend', '1')"""
+        street, number = order_poller.split_street_and_number(None)
+        assert street == "Onbekend"
+        assert number == "1"
+
+    def test_split_street_and_number_whitespace_only(self):
+        """Whitespace-only string defaults: '   ' → ('Onbekend', '1')"""
+        street, number = order_poller.split_street_and_number("   ")
+        assert street == "Onbekend"
+        assert number == "1"
+
+    def test_split_street_and_number_multi_word_street(self):
+        """Multi-word street name: 'Rue de la Paix 42' → ('Rue de la Paix', '42')"""
+        street, number = order_poller.split_street_and_number("Rue de la Paix 42")
+        assert street == "Rue de la Paix"
+        assert number == "42"
+
+    def test_split_street_and_number_uppercase(self):
+        """Case-insensitive matching: 'KIEKENMARKT 42' → ('KIEKENMARKT', '42')"""
+        street, number = order_poller.split_street_and_number("KIEKENMARKT 42")
+        assert street == "KIEKENMARKT"
+        assert number == "42"
+
+    def test_split_street_and_number_leading_trailing_spaces(self):
+        """Trim leading/trailing spaces: '  Kiekenmarkt 42  ' → ('Kiekenmarkt', '42')"""
+        street, number = order_poller.split_street_and_number("  Kiekenmarkt 42  ")
+        assert street == "Kiekenmarkt"
+        assert number == "42"
+
+    def test_split_street_and_number_multiple_spaces_between_name_and_number(self):
+        """Multiple spaces between name and number: 'Kiekenmarkt   42' → ('Kiekenmarkt', '42')"""
+        street, number = order_poller.split_street_and_number("Kiekenmarkt   42")
+        assert street == "Kiekenmarkt"
+        assert number == "42"
+
+
+class TestInvoiceRequestWithAddressSplitting:
+    """Test invoice_request generation with address splitting."""
+
+    def test_invoice_request_splits_street_and_number(self):
+        """Verify invoice_request properly splits street address."""
+        invoice_data = {
+            "first_name": "Jan",
+            "last_name": "Peeters",
+            "email": "jan@example.com",
+            "address": {
+                "street": "Kiekenmarkt",  # Already split by split_street_and_number
+                "number": "42",
+                "postal_code": "1000",
+                "city": "Brussel",
+                "country": "be"
+            },
+            "vat_number": "BE0123456789"
+        }
+
+        xml_str = sender.build_invoice_request_xml(
+            user_id="user-123",
+            invoice_data=invoice_data,
+            correlation_id="test-corr-456"
+        )
+
+        root = etree.fromstring(xml_str.encode('utf-8'))
+        addr = root.find("body/invoice_data/address")
+
+        assert addr.find("street").text == "Kiekenmarkt"
+        assert addr.find("number").text == "42"
+
+    def test_process_invoice_request_with_address_splitting(self):
+        """Verify _process_invoice_request applies split_street_and_number."""
+        poller = order_poller.OrderPoller()
+        poller.models = MagicMock()
+
+        customer_info = {
+            'id': 1,
+            'name': 'Jan Peeters',
+            'email': 'jan@example.com',
+            'street': 'Kiekenmarkt 42',  # Combined street + number
+            'street2': '',  # Not used anymore with new logic
+            'city': 'Brussel',
+            'zip': '1000',
+            'country_id': [1, 'Belgium'],
+            'x_user_id': 'user-123',
+            'vat': 'BE0123456789'
+        }
+
+        order = {'id': 100}
+
+        with patch('order_poller.sender') as mock_sender:
+            mock_sender.send_typed_message.return_value = True
+            mock_sender.build_invoice_request_xml.return_value = "<xml/>"
+
+            poller._process_invoice_request(order, customer_info, correlation_id="test-corr-789")
+
+            # Verify address was split correctly
+            mock_sender.build_invoice_request_xml.assert_called_once()
+            call_kwargs = mock_sender.build_invoice_request_xml.call_args[1]
+
+            assert call_kwargs['invoice_data']['address']['street'] == 'Kiekenmarkt'
+            assert call_kwargs['invoice_data']['address']['number'] == '42'

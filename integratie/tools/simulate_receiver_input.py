@@ -66,14 +66,15 @@ def send(xml_text: str, label: str) -> None:
 
 def build_new_registration(company: bool = False) -> str:
     msg_id = str(uuid.uuid4())
+    timestamp = now_utc()
     if company:
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>new_registration</type>
+    <timestamp>{timestamp}</timestamp>
     <source>crm</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>new_registration</type>
     <version>2.0</version>
   </header>
   <body>
@@ -95,9 +96,9 @@ def build_new_registration(company: bool = False) -> str:
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>new_registration</type>
+    <timestamp>{timestamp}</timestamp>
     <source>crm</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>new_registration</type>
     <version>2.0</version>
   </header>
   <body>
@@ -121,13 +122,14 @@ def build_new_registration(company: bool = False) -> str:
 
 def build_profile_update() -> str:
     msg_id = str(uuid.uuid4())
+    timestamp = now_utc()
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>profile_update</type>
+    <timestamp>{timestamp}</timestamp>
     <source>crm</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>profile_update</type>
     <version>2.0</version>
   </header>
   <body>
@@ -151,33 +153,35 @@ def build_profile_update() -> str:
 
 def build_badge_scanned(known: bool = True) -> str:
     msg_id = str(uuid.uuid4())
+    timestamp = now_utc()
     badge = "BADGE-RF-00142" if known else "BADGE-RF-99999"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>badge_scanned</type>
+    <timestamp>{timestamp}</timestamp>
     <source>iot_gateway</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>badge_scanned</type>
     <version>2.0</version>
   </header>
   <body>
     <badge_id>{badge}</badge_id>
     <location>bar</location>
-    <scanned_at>{now_utc()}</scanned_at>
+    <scanned_at>{timestamp}</scanned_at>
   </body>
 </message>"""
 
 
 def build_cancel_registration() -> str:
     msg_id = str(uuid.uuid4())
+    timestamp = now_utc()
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>cancel_registration</type>
+    <timestamp>{timestamp}</timestamp>
     <source>crm</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>cancel_registration</type>
     <version>2.0</version>
   </header>
   <body>
@@ -195,13 +199,14 @@ def build_invalid_xml() -> str:
 def build_unknown_type() -> str:
     """Simulate an unknown message type."""
     msg_id = str(uuid.uuid4())
+    timestamp = now_utc()
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{msg_id}</message_id>
-    <type>unknown_type</type>
+    <timestamp>{timestamp}</timestamp>
     <source>test</source>
-    <timestamp>{now_utc()}</timestamp>
+    <type>unknown_type</type>
     <version>2.0</version>
   </header>
   <body><data>test</data></body>

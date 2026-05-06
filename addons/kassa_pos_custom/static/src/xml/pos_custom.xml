@@ -1,7 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <templates id="template" xml:space="preserve">
 
-    <!-- Placeholder for custom XML templates (OWL) -->
-    <!-- Examples include custom popups for age verification or modifications to the payment screen. -->
+    <!--
+        Story 21 — Outstanding amount badge in the partner list.
+        Extends PartnerLine to show a warning badge when a customer has an
+        unpaid registration amount.  The badge is rendered below the partner
+        name, before the existing email/phone info so it is clearly visible.
+
+        kassaHasOutstanding / kassaOutstandingAmount / kassaPaymentStatus are
+        computed getters added via the PartnerLine patch in pos_custom.js.
+    -->
+    <t t-inherit="point_of_sale.PartnerLine" t-inherit-mode="extension">
+        <xpath expr="//tr[hasclass('partner-line')]/td[1]/b" position="after">
+            <t t-if="kassaHasOutstanding">
+                <div class="kassa-outstanding-info d-flex gap-1 mt-1">
+                    <span class="badge bg-warning text-dark">
+                        Openstaand: €<t t-esc="kassaOutstandingAmount"/>
+                    </span>
+                    <span
+                        t-if="kassaPaymentStatus === 'unpaid'"
+                        class="badge bg-danger"
+                    >
+                        Onbetaald
+                    </span>
+                </div>
+            </t>
+        </xpath>
+    </t>
 
 </templates>

@@ -140,11 +140,11 @@ class TestVATValidationOutgoing:
         }
 
         with patch("order_poller.sender.send_error_to_queue") as mock_send_error:
-            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr123")
+            with pytest.raises(order_poller.sender.XSDValidationError) as exc_info:
+                poller._process_invoice_request(order, customer_info, correlation_id="corr123")
 
-        # Verify invoice_request was not sent (returns False, None)
-        assert success is False
-        assert msg_id is None
+        # Verify invoice_request was blocked by a contract violation exception
+        assert "VAT number" in str(exc_info.value)
 
         # Verify error was sent to kassa.errors
         mock_send_error.assert_called_once()
@@ -174,10 +174,9 @@ class TestVATValidationOutgoing:
         }
 
         with patch("order_poller.sender.send_error_to_queue") as mock_send_error:
-            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr456")
+            with pytest.raises(order_poller.sender.XSDValidationError):
+                poller._process_invoice_request(order, customer_info, correlation_id="corr456")
 
-        assert success is False
-        assert msg_id is None
         mock_send_error.assert_called_once()
 
     def test_invoice_request_sent_for_company_with_vat(self):
@@ -280,7 +279,8 @@ class TestVATValidationCentralizedLogging:
         }
 
         with patch("order_poller.sender.send_error_to_queue") as mock_send_error:
-            poller._process_invoice_request(order, customer_info, correlation_id="debug_corr")
+            with pytest.raises(order_poller.sender.XSDValidationError):
+                poller._process_invoice_request(order, customer_info, correlation_id="debug_corr")
 
         # Verify error message contains useful debugging info
         error_code, msg_id, description = mock_send_error.call_args[0]

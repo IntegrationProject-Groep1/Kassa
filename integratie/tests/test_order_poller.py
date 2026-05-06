@@ -112,7 +112,7 @@ def test_process_order_routes_refund(mock_sender, poller):
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
         # Mocking return values for process_order to unpack
-        mock_consumption.return_value = (True, "msg-123")
+        mock_consumption.return_value = (True, "msg-123", "pay-msg-123")
         mock_refund.return_value = (True, "refund-msg-123")
         poller.process_order(order)
 
@@ -132,7 +132,7 @@ def test_process_order_routes_consumption(mock_sender, poller):
     with patch.object(poller, '_process_refund') as mock_refund, \
             patch.object(poller, '_process_consumption') as mock_consumption:
         # Mocking return values for process_order to unpack
-        mock_consumption.return_value = (True, "msg-123")
+        mock_consumption.return_value = (True, "msg-123", "pay-msg-123")
         poller.process_order(order)
         mock_consumption.assert_called_once()
         mock_refund.assert_not_called()
@@ -144,7 +144,7 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     order = {'id': 7, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
     with patch.object(poller, '_process_consumption') as mock_pc:
-        mock_pc.return_value = (True, "12345-msg-id")
+        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id")
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -163,7 +163,7 @@ def test_process_order_does_not_mark_rabbitmq_sent_when_buffered(mock_sender, po
     """If processing returns False (buffered), x_rabbitmq_sent is NOT written to Odoo."""
     order = {'id': 8, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
-    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id")):
+    with patch.object(poller, '_process_consumption', return_value=(False, "buffered-id", "buffered-pay-id")):
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -390,7 +390,7 @@ def test_process_consumption_sets_payment_link_fields(mock_sender, poller):
         'create_date': '2026-04-01 12:00:00',
     }
 
-    ok, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
         order, None, is_anonymous=True)
 
     assert ok is True
@@ -438,7 +438,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     )
     mock_sender.send_typed_message.side_effect = [True, True, True]
 
-    ok, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
         order, customer_info, is_anonymous=False)
 
     assert ok is True
@@ -536,3 +536,234 @@ def test_process_consumption_private_customer_type(mock_sender, poller):
 
     call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
     assert call_kwargs['customer_type'] == 'private'
+
+
+@patch('order_poller.sender')
+def test_process_consumption_passes_address_data(mock_sender, poller):
+    """Verify that _process_consumption splits and passes address data."""
+    customer_info = {
+        'id': 99,
+        'name': 'Jan Peeters',
+        'street': 'Kiekenmarkt 42',
+        'zip': '1000',
+        'city': 'Brussel',
+        'country_code': 'be',
+        'x_user_id': 'USR-1',
+        'email': 'jan@example.com',
+        'customer_type': 'private'
+    }
+    order = {
+        'id': 26,
+        'lines': [],
+        'amount_total': 10.0,
+        'payment_ids': [],
+        'create_date': '2026-04-01 12:00:00',
+    }
+
+    # Mocking return values to allow the method to complete
+    mock_sender.build_consumption_order_xml.return_value = "<xml/>"
+    mock_sender.build_payment_registered_xml.return_value = "<xml/>"
+    mock_sender.send_typed_message.return_value = True
+
+    poller._process_consumption(order, customer_info, is_anonymous=False)
+
+    # Verify build_consumption_order_xml was called with the split address
+    call_kwargs = mock_sender.build_consumption_order_xml.call_args[1]
+    assert 'address' in call_kwargs
+    addr = call_kwargs['address']
+    assert addr['street'] == 'Kiekenmarkt'
+    assert addr['number'] == '42'
+    assert addr['postal_code'] == '1000'
+    assert addr['city'] == 'Brussel'
+    assert addr['country'] == 'be'
+
+
+def test_get_customer_info_recursion_guard(poller):
+    """Verify that get_customer_info detects and breaks circular parent loops."""
+    # Mocking circular link: Partner 1 parent is Partner 2, Partner 2 parent is Partner 1
+    # We use a side_effect function to handle multiple calls predictably
+    def mock_execute_kw(*args, **kwargs):
+        model = args[3]
+        params = args[5]
+        if model == 'res.partner':
+            pid = params[0]
+            if pid == 1:
+                return [{'id': 1, 'name': 'A', 'parent_id': (2, 'B'), 'is_company': False}]
+            if pid == 2:
+                return [{'id': 2, 'name': 'B', 'parent_id': (1, 'A'), 'is_company': False}]
+        return []
+
+    poller.models.execute_kw.side_effect = mock_execute_kw
+
+    # This should return the data for partner 1 instead of crashing with RecursionError
+    info = poller.get_customer_info(1)
+    assert info['id'] == 1
+    # Circular parent info should be None or gracefully handled
+    # (In our case, get_customer_info(2) will return data for B, but B's parent lookup for A will return None)
+    assert info['parent_id'] == (2, 'B')
+
+
+# ---------------------------------------------------------------------------
+# _get_pos_config_name
+# ---------------------------------------------------------------------------
+
+def test_get_pos_config_name_returns_name(poller):
+    """Resolves session → config → name and caches the result."""
+    poller.models.execute_kw.side_effect = [
+        [{'config_id': (7, 'Inschrijvingskassa')}],   # pos.session read
+        [{'name': 'Inschrijvingskassa'}],               # pos.config read
+    ]
+    name = poller._get_pos_config_name((3, 'Session/2026'))
+    assert name == 'Inschrijvingskassa'
+    # Second call must use cache — no extra RPC
+    poller.models.execute_kw.side_effect = Exception("should not be called")
+    assert poller._get_pos_config_name((3, 'Session/2026')) == 'Inschrijvingskassa'
+
+
+def test_get_pos_config_name_returns_none_for_missing_session(poller):
+    """Returns None gracefully when session has no config_id."""
+    poller.models.execute_kw.return_value = [{'config_id': False}]
+    assert poller._get_pos_config_name(99) is None
+
+
+def test_get_pos_config_name_returns_none_on_error(poller):
+    """Returns None without raising when Odoo call fails."""
+    poller.models.execute_kw.side_effect = Exception('Odoo down')
+    assert poller._get_pos_config_name(1) is None
+
+
+def test_get_pos_config_name_returns_none_for_falsy_input(poller):
+    assert poller._get_pos_config_name(None) is None
+    assert poller._get_pos_config_name(False) is None
+
+
+# ---------------------------------------------------------------------------
+# _update_partner_registration_paid
+# ---------------------------------------------------------------------------
+
+def test_update_partner_registration_paid_writes_fields(poller):
+    """Writes x_outstanding_amount=0 and x_payment_status='paid' to Odoo."""
+    poller.models.execute_kw.return_value = True
+    poller._update_partner_registration_paid(99, 'Alice')
+
+    calls = poller.models.execute_kw.call_args_list
+    partner_write = next(
+        c for c in calls
+        if len(c[0]) > 4 and c[0][3] == 'res.partner' and c[0][4] == 'write'
+    )
+    payload = partner_write[0][5]
+    assert payload[0] == [99]
+    assert payload[1]['x_outstanding_amount'] == 0.0
+    assert payload[1]['x_payment_status'] == 'paid'
+
+
+def test_update_partner_registration_paid_publishes_bus_event(poller):
+    """Publishes a kassa_partner_update bus event via pos.order.send_partner_bus_event."""
+    poller.models.execute_kw.return_value = True
+    poller._update_partner_registration_paid(99, 'Alice')
+
+    calls = poller.models.execute_kw.call_args_list
+    bus_call = next(
+        c for c in calls
+        if len(c[0]) > 4 and c[0][3] == 'pos.order' and c[0][4] == 'send_partner_bus_event'
+    )
+    args = bus_call[0][5]
+    assert args[0] == 99        # partner_id
+    assert args[1] == 0.0       # x_outstanding_amount
+    assert args[2] == 'paid'    # x_payment_status
+    assert args[3] == 'Alice'   # name
+
+
+def test_update_partner_registration_paid_does_not_raise_on_error(poller):
+    """Errors are logged but never propagate to the caller."""
+    poller.models.execute_kw.side_effect = Exception('Odoo down')
+    poller._update_partner_registration_paid(99, 'Alice')  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _process_consumption — Inschrijvingskassa payment status update
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_process_consumption_marks_partner_paid_for_inschrijvingskassa(mock_sender, poller):
+    """Partner is marked paid when the order comes from Inschrijvingskassa."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-1</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-1</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    customer_info = {
+        'id': 55, 'name': 'Eve', 'is_company': False,
+        'parent_id': False, 'x_user_id': 'u-55', 'email': '',
+    }
+    order = {
+        'id': 30, 'lines': [], 'amount_total': 10.0,
+        'payment_ids': [], 'create_date': '2026-04-29 10:00:00',
+        'session_id': (5, 'POS/2026/00001'),
+    }
+    # Session lookup → config id 7; config lookup → name 'Inschrijvingskassa'
+    poller.models.execute_kw.side_effect = [
+        [{'config_id': (7, 'Inschrijvingskassa')}],
+        [{'name': 'Inschrijvingskassa'}],
+        True,   # res.partner write (x_outstanding_amount / x_payment_status)
+        True,   # bus.bus sendone
+    ]
+
+    with patch.object(poller, '_update_partner_registration_paid') as mock_update:
+        poller._process_consumption(order, customer_info, is_anonymous=False)
+        mock_update.assert_called_once_with(55, 'Eve')
+
+
+@patch('order_poller.sender')
+def test_process_consumption_does_not_mark_paid_for_bar_kassa(mock_sender, poller):
+    """Partner is NOT updated when order comes from Bar Kassa."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-2</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-2</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    customer_info = {
+        'id': 56, 'name': 'Frank', 'is_company': False,
+        'parent_id': False, 'x_user_id': 'u-56', 'email': '',
+    }
+    order = {
+        'id': 31, 'lines': [], 'amount_total': 5.0,
+        'payment_ids': [], 'create_date': '2026-04-29 10:00:00',
+        'session_id': (6, 'POS/2026/00002'),
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'config_id': (8, 'Bar Kassa')}],
+        [{'name': 'Bar Kassa'}],
+    ]
+
+    with patch.object(poller, '_update_partner_registration_paid') as mock_update:
+        poller._process_consumption(order, customer_info, is_anonymous=False)
+        mock_update.assert_not_called()
+
+
+@patch('order_poller.sender')
+def test_process_consumption_does_not_mark_paid_for_anonymous(mock_sender, poller):
+    """Anonymous orders never trigger partner payment status update."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-3</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-3</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 32, 'lines': [], 'amount_total': 7.0,
+        'payment_ids': [], 'create_date': '2026-04-29 10:00:00',
+        'session_id': (5, 'POS/2026/00001'),
+    }
+
+    with patch.object(poller, '_update_partner_registration_paid') as mock_update:
+        poller._process_consumption(order, None, is_anonymous=True)
+        mock_update.assert_not_called()

@@ -112,6 +112,8 @@ class TestMainSetup:
                     {"name": "x_badge_id"},
                     {"name": "x_wallet_balance"},
                     {"name": "x_date_of_birth"},
+                    {"name": "x_outstanding_amount"},
+                    {"name": "x_payment_status"},
                     {"name": "x_rabbitmq_sent"},
                     {"name": "x_wallet_updated"},
                     {"name": "x_is_topup"},
