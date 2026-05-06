@@ -35,6 +35,7 @@ from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
 from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
+from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
 
 defusedxml.xmlrpc.monkey_patch()
@@ -66,6 +67,11 @@ DLQ_ROUTING_KEY = get_env("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
 RETRY_QUEUE = f"{QUEUE_NAME}.retry"
 RETRY_DELAY_MS = 5000  # 5 seconds
 MAX_RETRIES = 3
+
+# Performance optimization: Toggle success-level monitoring logs (high frequency)
+# This prevents bloating the monitoring queue during high-traffic events.
+_monitor_logs_env = get_env("MONITOR_SUCCESS_LOGS", "True") or "True"
+MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
 
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
@@ -135,6 +141,32 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         raise ValueError(f"XSD validation failed for '{msg_type}':\n{errors}")
 
     logger.info("[VALIDATION] ✓ XSD validation passed for type '%s'", msg_type)
+
+
+# ── Bus event publisher ────────────────────────────────────────────────────────
+
+def _publish_partner_bus_event(
+    uid: int, models, partner_id: int,
+    outstanding_amount: float, payment_status: str, name: str,
+) -> None:
+    """
+    Publish a kassa_partner_update bus event via the PosOrder XML-RPC wrapper.
+
+    In Odoo 17 the bus.bus._sendone method is private and cannot be called
+    directly from an external XML-RPC session.  The public wrapper
+    pos.order.send_partner_bus_event is defined in kassa_pos_custom and
+    provides the bridge.  A failure here is non-fatal — the partner data is
+    already written to Odoo, only the real-time POS update is delayed.
+    """
+    try:
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.order", "send_partner_bus_event",
+            [partner_id, outstanding_amount, payment_status, name],
+        )
+        logger.info("[BUS] ✓ Published partner update: partner_id=%s", partner_id)
+    except Exception as e:
+        logger.warning("[BUS] Could not publish bus event for partner_id=%s: %s", partner_id, e)
 
 
 # ── Business logic per message type ───────────────────────────────────────────
@@ -221,6 +253,10 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
+    _publish_partner_bus_event(
+        uid, models, partner_id,
+        amount, status, partner_vals["name"],
+    )
 
 
 def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -276,6 +312,19 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     if body.find("date_of_birth") is not None:
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
+    payment_due_el = body.find("payment_due")
+    if payment_due_el is not None:
+        try:
+            outstanding_amount = float(payment_due_el.findtext("amount", "0").strip())
+        except ValueError:
+            outstanding_amount = 0.0
+        payment_status = payment_due_el.findtext("status", "unpaid").strip()
+        update_vals["x_outstanding_amount"] = outstanding_amount
+        update_vals["x_payment_status"] = payment_status
+    else:
+        outstanding_amount = None
+        payment_status = None
+
     if existing:
         partner_id = existing[0]["id"]
         models.execute_kw(
@@ -292,6 +341,12 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
             [update_vals],
         )
         logger.warning("[PROFILE_UPDATE] ⚠ Customer not found – created new: Odoo ID=%s", partner_id)
+
+    if outstanding_amount is not None and payment_status is not None:
+        _publish_partner_bus_event(
+            uid, models, partner_id,
+            outstanding_amount, payment_status, update_vals.get("name", "Unknown"),
+        )
 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -399,6 +454,7 @@ def process_message(ch, method, properties, body):
             root = ET.fromstring(xml_text)
         except ET.ParseError as e:
             logger.error("[RECEIVER] ❌ XML parse error: %s", e)
+            monitor.log("error", "xml_validation", f"Unparseable XML received: {str(e)[:500]}")
             send_error_to_queue("invalid_xml_format", None, f"XML could not be parsed: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -422,6 +478,10 @@ def process_message(ch, method, properties, body):
             validate_xml(xml_text, msg_type)
         except ValueError as e:
             logger.error("[RECEIVER] ❌ Validation failure for '%s': %s", msg_type, e)
+            monitor.log(
+                "error", "xml_validation",
+                f"Validation failure for {msg_type} (ID: {related_message_id or 'unknown'}): {str(e)[:500]}"
+            )
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -444,6 +504,14 @@ def process_message(ch, method, properties, body):
             _remember_message_id(related_message_id)
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
+        # Successful processing is logged locally always,
+        # but monitoring is optional to prevent queue bloat.
+        if MONITOR_SUCCESS_LOGS:
+            monitor.log(
+                "info", "xml_validation",
+                f"Successfully processed {msg_type} (ID: {related_message_id or 'unknown'})"
+            )
+
     except ValueError as e:
         code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
         logger.error("[RECEIVER] ❌ %s: %s", code, e)
@@ -463,11 +531,19 @@ def process_message(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
         else:
             logger.error("[RECEIVER] ❌ Max retries reached: %s", e)
+            monitor.log(
+                "error", "system_error",
+                f"Receiver: Max retries reached for message {related_message_id}: {str(e)[:500]}"
+            )
             send_error_to_queue("odoo_api_error", related_message_id, f"Max retries reached: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
         logger.error("[RECEIVER] ❌ Unexpected error: %s", e)
+        monitor.log(
+            "error", "system_error",
+            f"Unexpected receiver error for {related_message_id or 'unknown'}: {str(e)[:500]}"
+        )
         send_error_to_queue("odoo_api_error", related_message_id, str(e))
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
@@ -543,6 +619,7 @@ def start_listening():
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
+        monitor.log("warning", "system_error", f"Startup flush failure: {str(e)[:500]}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

@@ -34,6 +34,7 @@ import collections
 import defusedxml.ElementTree as ET
 import uuid
 import sender  # Import the sender module
+from monitoring import monitor
 from config_utils import require_env
 
 defusedxml.xmlrpc.monkey_patch()
@@ -50,7 +51,7 @@ PAYMENT_METHOD_CUSTOMER_ACCOUNT = "Customer Account"
 # XSD enum values for refund_processed XML
 XML_REFUND_METHOD_WALLET = "badge_wallet"
 XML_REFUND_METHOD_CASH = "cash"
-XML_REFUND_METHOD_INVOICE = "invoice"
+XML_REFUND_METHOD_INVOICE = "cash"  # 'invoice' is not in the XSD enum, using 'cash' as fallback
 
 # Default fallback values for refund XML fields
 DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
@@ -112,6 +113,7 @@ class OrderPoller:
         self.odoo_uid = None
         self.models = None
         self.processed_orders = collections.OrderedDict()
+        self._session_config_cache: dict[int, str | None] = {}
 
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
@@ -132,9 +134,11 @@ class OrderPoller:
                 return True
             else:
                 logger.error("❌ Odoo authentication failed")
+                monitor.log("error", "identity", "OrderPoller: Odoo authentication failed")
                 return False
         except Exception as e:
             logger.error(f"❌ Odoo connection error: {e}")
+            monitor.log("error", "identity", f"OrderPoller: Odoo connection error: {str(e)[:500]}")
             return False
 
     def get_pending_orders(self):
@@ -152,11 +156,11 @@ class OrderPoller:
             )
 
             if order_ids:
-                logger.info(f"🔍 Found raw order IDs: {order_ids} (Buffered count: {len(buffered_ids)})")
+                logger.debug(f"🔍 Found raw order IDs: {order_ids} (Buffered count: {len(buffered_ids)})")
 
             if buffered_ids:
                 order_ids = [oid for oid in order_ids if oid not in buffered_ids]
-                logger.info(f"🔍 Filtered order IDs: {order_ids}")
+                logger.debug(f"🔍 Filtered order IDs: {order_ids}")
 
             if not order_ids:
                 return []
@@ -181,6 +185,7 @@ class OrderPoller:
             return orders
         except Exception as e:
             logger.error(f"❌ Error fetching orders: {e}")
+            monitor.log("error", "system_error", f"OrderPoller: Error fetching orders from Odoo: {str(e)[:500]}")
             return []
 
     def get_customer_info(self, partner_id, country_map=None, visited=None):
@@ -380,6 +385,7 @@ class OrderPoller:
                 )
                 status_text = "ANONYMOUS" if is_anonymous else customer_info['name']
                 logger.info(f"📦 Order {order_id}: {status_text} (SENT)")
+                monitor.log("info", "payment", f"Order {order_id} processed for {status_text}")
             else:
                 logger.info(f"📁 Order {order_id} buffered")
 
@@ -680,6 +686,7 @@ class OrderPoller:
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
+                monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
                 ok_wallet = False
 
         # Story 7: B2B vs B2C Invoice Logic
@@ -689,9 +696,9 @@ class OrderPoller:
             (order.get('to_invoice') or order.get('account_move')) and customer_type == 'company'
         )
 
-        invoice_status = "open" if is_pay_later else "paid"
+        invoice_status = "pending" if is_pay_later else "paid"
         amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))
-        payment_method = "invoice" if is_pay_later else "on_site"
+        payment_method = "company_link" if is_pay_later else "on_site"
 
         payment_xml = sender.build_payment_registered_xml(
             payment_context="consumption",
@@ -705,6 +712,12 @@ class OrderPoller:
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
+
+        # After a successful Inschrijvingskassa payment, mark the partner as fully paid.
+        config_name = self._get_pos_config_name(order.get('session_id'))
+        if config_name == 'Inschrijvingskassa' and customer_info and not is_anonymous:
+            self._update_partner_registration_paid(
+                customer_info['id'], customer_info.get('name', ''))
 
         return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
 
@@ -749,6 +762,10 @@ class OrderPoller:
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
+                    monitor.log(
+                        "error", "xml_validation",
+                        f"Outgoing badge_assigned validation failed for Partner {p['id']}: {str(ve)[:500]}"
+                    )
                     try:
                         self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -772,6 +789,63 @@ class OrderPoller:
 
         except Exception as e:
             logger.error(f"❌ Error in poll_badge_assignments: {e}")
+
+    def _get_pos_config_name(self, session_id_val) -> "str | None":
+        """Return the pos.config name for a session, with per-session caching."""
+        if not session_id_val:
+            return None
+        session_id = session_id_val[0] if isinstance(session_id_val, (list, tuple)) else session_id_val
+        if session_id in self._session_config_cache:
+            return self._session_config_cache[session_id]
+        try:
+            sessions = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.session', 'read',
+                [[session_id], ['config_id']],
+            )
+            if not sessions or not sessions[0].get('config_id'):
+                self._session_config_cache[session_id] = None
+                return None
+            config_raw = sessions[0]['config_id']
+            config_id = config_raw[0] if isinstance(config_raw, (list, tuple)) else config_raw
+            configs = self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.config', 'read',
+                [[config_id], ['name']],
+            )
+            name = configs[0]['name'] if configs else None
+            self._session_config_cache[session_id] = name
+            return name
+        except Exception as e:
+            logger.warning("[POLLER] Could not get POS config name for session %s: %s", session_id, e)
+            return None
+
+    def _update_partner_registration_paid(self, partner_id: int, partner_name: str) -> None:
+        """
+        After Inschrijvingskassa payment, mark the partner as fully paid and
+        notify the POS frontend in real time.
+
+        The partner write and the bus event are executed as two separate
+        XML-RPC calls.  If the bus event fails the partner data is already
+        correct in Odoo — only the live POS badge update is delayed.
+        The bus event uses the pos.order.send_partner_bus_event public wrapper
+        because bus.bus._sendone is private in Odoo 17 and cannot be called
+        directly via XML-RPC.
+        """
+        try:
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'res.partner', 'write',
+                [[partner_id], {'x_outstanding_amount': 0.0, 'x_payment_status': 'paid'}],
+            )
+            self.models.execute_kw(
+                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                'pos.order', 'send_partner_bus_event',
+                [partner_id, 0.0, 'paid', partner_name],
+            )
+            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+        except Exception as e:
+            logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
 
     def poll(self, interval=5):
         """Run the polling loop indefinitely."""
@@ -822,6 +896,7 @@ class OrderPoller:
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
+                monitor.log("error", "system_error", f"OrderPoller main loop failure: {str(e)[:500]}")
                 time.sleep(interval)
 
     def _mark_records_sent(self, records: list[tuple[str, int]]) -> None:

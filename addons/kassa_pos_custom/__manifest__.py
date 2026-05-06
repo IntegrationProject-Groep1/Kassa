@@ -15,7 +15,6 @@
     'depends': ['point_of_sale', 'bus'],
     'data': [],
     'assets': {
-        # Odoo 16/17 uses point_of_sale._assets_pos for POS frontend code
         'point_of_sale._assets_pos': [
             'kassa_pos_custom/static/src/js/pos_custom.js',
             'kassa_pos_custom/static/src/xml/pos_custom.xml',

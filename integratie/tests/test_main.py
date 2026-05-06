@@ -93,9 +93,10 @@ class TestMainSetup:
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 12 fields, pos.order has 4, product.template has 1 → 17 creates
+        # All missing fields are now created in a single batched 'create' call
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 17
+        assert len(create_calls) == 1
+        assert len(create_calls[0][0][5][0]) == 17
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
@@ -112,6 +113,8 @@ class TestMainSetup:
                     {"name": "x_badge_id"},
                     {"name": "x_wallet_balance"},
                     {"name": "x_date_of_birth"},
+                    {"name": "x_outstanding_amount"},
+                    {"name": "x_payment_status"},
                     {"name": "x_rabbitmq_sent"},
                     {"name": "x_wallet_updated"},
                     {"name": "x_is_topup"},
@@ -203,12 +206,12 @@ class TestMainSetup:
     # ── ensure_pos_categories ────────────────────────────────────────────────
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
-    def test_ensure_pos_categories_creates_two(self, mock_proxy, mock_sleep):
+    def test_ensure_pos_categories_creates_three(self, mock_proxy, mock_sleep):
         mock_common, mock_models = MagicMock(), MagicMock()
         mock_common.authenticate.return_value = 1
         mock_proxy.side_effect = [mock_common, mock_models]
 
-        create_ids = iter([101, 102])
+        create_ids = iter([101, 102, 103])
 
         def execute_kw(db, uid, pwd, obj, method, args, kw=None):
             if obj == "pos.category" and method == "search_read":
@@ -219,8 +222,8 @@ class TestMainSetup:
 
         mock_models.execute_kw.side_effect = execute_kw
 
-        topup_id, drinks_id = odoo_setup.ensure_pos_categories("url", "db", "u", "p")
-        assert (topup_id, drinks_id) == (101, 102)
+        topup_id, drinks_id, sessions_id = odoo_setup.ensure_pos_categories("url", "db", "u", "p")
+        assert (topup_id, drinks_id, sessions_id) == (101, 102, 103)
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_pos_categories_no_image_in_create(self, mock_proxy, mock_sleep):
@@ -229,7 +232,7 @@ class TestMainSetup:
         mock_common.authenticate.return_value = 1
         mock_proxy.side_effect = [mock_common, mock_models]
 
-        create_ids = iter([101, 102])
+        create_ids = iter([101, 102, 103])
 
         def execute_kw(db, uid, pwd, obj, method, args, kw=None):
             if obj == "pos.category" and method == "search_read":

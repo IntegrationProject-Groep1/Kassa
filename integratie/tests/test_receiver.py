@@ -56,9 +56,9 @@ def _xml_bytes(msg_type: str, body_xml: str, message_id: str = "test-msg-001") -
         "<message>"
         "<header>"
         f"<message_id>{message_id}</message_id>"
-        f"<type>{msg_type}</type>"
-        f"<source>{source}</source>"
         "<timestamp>2026-03-28T12:00:00Z</timestamp>"
+        f"<source>{source}</source>"
+        f"<type>{msg_type}</type>"
         "<version>2.0</version>"
         "</header>"
         f"<body>{body_xml}</body>"
@@ -116,9 +116,9 @@ class TestValidateXml:
             "<message>"
             "<header>"
             "<message_id>550e8400-e29b-41d4-a716-446655440000</message_id>"
-            "<type>badge_scanned</type>"
-            "<source>kassa</source>"
             "<timestamp>2026-03-28T12:00:00Z</timestamp>"
+            "<source>kassa</source>"
+            "<type>badge_scanned</type>"
             "<version>2.0</version>"
             "</header>"
             "<body><badge_id>BADGE-001</badge_id><location>bar</location>"
@@ -134,9 +134,9 @@ class TestValidateXml:
             "<message>"
             "<header>"
             "<message_id>x</message_id>"
-            "<type>badge_scanned</type>"
-            "<source>s</source>"
             "<timestamp>2026-03-28T12:00:00Z</timestamp>"
+            "<source>s</source>"
+            "<type>badge_scanned</type>"
             "<version>2.0</version>"
             "</header>"
             "<body><location>bar</location></body>"
@@ -522,3 +522,163 @@ class TestProcessMessage:
             related_message_id="test-msg-001",
             error_description=expected_msg,
         )
+
+
+# ── _publish_partner_bus_event ─────────────────────────────────────────────────
+
+class TestPublishPartnerBusEvent:
+    def test_calls_pos_order_send_partner_bus_event(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 42, 25.0, "unpaid", "Alice")
+
+        call = models.execute_kw.call_args
+        assert call[0][3] == "pos.order"
+        assert call[0][4] == "send_partner_bus_event"
+        args = call[0][5]
+        assert args[0] == 42          # partner_id
+        assert args[1] == 25.0        # outstanding_amount
+        assert args[2] == "unpaid"    # payment_status
+        assert args[3] == "Alice"     # name
+
+    def test_does_not_raise_on_error(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = Exception("bus down")
+        # Must not raise — best-effort publish
+        receiver._publish_partner_bus_event(uid, models, 1, 0.0, "paid", "Bob")
+
+
+# ── process_new_registration — payment fields ──────────────────────────────────
+
+class TestProcessNewRegistrationPaymentFields:
+    NEW_REG_BODY = (
+        "<customer>"
+        "<email>test@example.com</email>"
+        "<name>Alice</name>"
+        "<type>private</type>"
+        "<user_id>uid-001</user_id>"
+        "<payment_due><amount>25.00</amount><status>unpaid</status></payment_due>"
+        "</customer>"
+    )
+
+    def _root(self):
+        return ET.fromstring(
+            "<message><header/><body>" + self.NEW_REG_BODY + "</body></message>"
+        )
+
+    def test_payment_fields_included_in_create(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[], 99, True]  # search, create, bus sendone
+        receiver.process_new_registration(self._root(), uid, models)
+
+        create_call = models.execute_kw.call_args_list[1]
+        vals = create_call[0][5][0]
+        assert vals["x_outstanding_amount"] == 25.0
+        assert vals["x_payment_status"] == "unpaid"
+
+    def test_payment_fields_included_in_update(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 5, "name": "Alice", "x_user_id": "uid-001"}],
+            True, True,  # write, bus sendone
+        ]
+        receiver.process_new_registration(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 25.0
+        assert vals["x_payment_status"] == "unpaid"
+
+    def test_bus_event_published_after_create(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[], 99, True]
+        receiver.process_new_registration(self._root(), uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+
+    def test_zero_amount_on_invalid_float(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[], 99, True]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer><email>a@b.com</email><name>X</name><type>private</type>"
+            "<user_id>uid-x</user_id>"
+            "<payment_due><amount>not-a-number</amount><status>unpaid</status></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+        create_call = models.execute_kw.call_args_list[1]
+        vals = create_call[0][5][0]
+        assert vals["x_outstanding_amount"] == 0.0
+
+
+# ── process_profile_update — payment_due handling ─────────────────────────────
+
+class TestProcessProfileUpdatePaymentDue:
+    BASE_BODY = (
+        "<user_id>uid-003</user_id>"
+        "<email>new@example.com</email>"
+        "<name>Bob</name>"
+        "<type>private</type>"
+    )
+
+    def _root(self, extra: str = ""):
+        return ET.fromstring(
+            "<message><header/><body>" + self.BASE_BODY + extra + "</body></message>"
+        )
+
+    def test_payment_fields_written_when_payment_due_present(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Bob Old"}],
+            True, True,  # write, bus sendone
+        ]
+        root = self._root("<payment_due><amount>50.00</amount><status>unpaid</status></payment_due>")
+        receiver.process_profile_update(root, uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 50.0
+        assert vals["x_payment_status"] == "unpaid"
+
+    def test_payment_fields_absent_when_no_payment_due(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Bob Old"}],
+            True,  # write only — no bus call expected
+        ]
+        receiver.process_profile_update(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert "x_outstanding_amount" not in vals
+        assert "x_payment_status" not in vals
+
+    def test_bus_event_published_when_payment_due_present(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Bob"}],
+            True, True,
+        ]
+        root = self._root("<payment_due><amount>10.00</amount><status>paid</status></payment_due>")
+        receiver.process_profile_update(root, uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+        args = bus_call[0][5]
+        assert args[2] == "paid"  # payment_status is the 3rd positional arg
+
+    def test_no_bus_event_without_payment_due(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Bob"}],
+            True,
+        ]
+        receiver.process_profile_update(self._root(), uid, models)
+
+        all_models_calls = [c[0][3] for c in models.execute_kw.call_args_list]
+        assert "bus.bus" not in all_models_calls
