@@ -142,12 +142,22 @@ def ensure_opened_session(uid, models):
 
 def build_msg(msg_type, body_xml, message_id=None):
     m_id = message_id or str(uuid.uuid4())
+    # Literal XSDs have fixed source enums: 
+    # frontend (registration, cancellation), crm (profile), iot_gateway (badge)
+    source = "frontend"
+    if msg_type == "profile_update":
+        source = "crm"
+    elif msg_type == "badge_scanned":
+        source = "iot_gateway"
+    elif msg_type == "cancel_registration":
+        source = "frontend"
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{m_id}</message_id>
     <timestamp>2026-03-31T10:00:00Z</timestamp>
-    <source>test-suite</source>
+    <source>{source}</source>
     <type>{msg_type}</type>
     <version>2.0</version>
   </header>
@@ -160,23 +170,29 @@ def build_msg(msg_type, body_xml, message_id=None):
 def test_registration_and_idempotency():
     section("TEST 1 & 2: new_registration & Idempotency")
     msg_id = str(uuid.uuid4())
+    # Literal XSD for new_registration: user_id, email, dob, contact, [company_id], session_id, payment_due
+    # NOT ALLOWED: <type>, <badge_id>
     xml = f"""
     <customer>
       <user_id>{TEST_USER_ID}</user_id>
       <email>test@{TEST_ID}.be</email>
       <date_of_birth>1990-01-01</date_of_birth>
-      <contact><first_name>Test</first_name><last_name>User</last_name></contact>
-      <type>private</type>
-      <badge_id>{TEST_BADGE_ID}</badge_id>
+      <contact>
+        <first_name>Test</first_name>
+        <last_name>User</last_name>
+      </contact>
       <session_id>sess-001</session_id>
-      <payment_due><amount currency="eur">10.00</amount><status>unpaid</status></payment_due>
+      <payment_due>
+        <amount currency="eur">10.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
     """
     full_xml = build_msg("new_registration", xml, message_id=msg_id)
 
     # Send first time
     publish(full_xml, "kassa.incoming.registration")
-    wait(8, "receiver processing creation")
+    wait(10, "receiver processing creation")
 
     uid, models = get_rpc()
     partners = models.execute_kw(
@@ -202,23 +218,31 @@ def test_registration_and_idempotency():
 def test_profile_update():
     section("TEST 3: profile_update")
     new_email = f"updated-{TEST_ID}@test.be"
-    # Profile update XSD does NOT include <type>, it must be removed to pass validation
+    # Literal XSD for profile_update: user_id, email, dob, contact, type, company_name, vat_number, company_id, payment_due
     xml = f"""
       <user_id>{TEST_USER_ID}</user_id>
       <email>{new_email}</email>
       <date_of_birth>1990-01-01</date_of_birth>
-      <contact><first_name>Test</first_name><last_name>Updated</last_name></contact>
+      <contact>
+        <first_name>Test</first_name>
+        <last_name>Updated</last_name>
+      </contact>
       <type>private</type>
     """
     publish(build_msg("profile_update", xml), "kassa.incoming.profile")
-    wait(8, "receiver processing update")
+    wait(10, "receiver processing update")
 
     uid, models = get_rpc()
-    partner = models.execute_kw(
+    partner_list = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [[["x_user_id", "=", TEST_USER_ID]]], {"fields": ["email", "name"]}
-    )[0]
+    )
+    
+    if not partner_list:
+        report_result("Receiver: profile_update", False, "Partner not found in Odoo after update")
+        return
 
+    partner = partner_list[0]
     ok = partner["email"] == new_email and partner["name"] == "Test Updated"
     report_result(
         "Receiver: profile_update", ok,
