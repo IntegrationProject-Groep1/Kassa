@@ -50,15 +50,15 @@ def method():
 
 def _xml_bytes(msg_type: str, body_xml: str, message_id: str = "test-msg-001") -> bytes:
     """Build a minimal valid message XML for tests."""
-    source = "kassa" if msg_type == "badge_scanned" else "test"
+    source = "iot_gateway" if msg_type == "badge_scanned" else "crm"
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<message>"
         "<header>"
         f"<message_id>{message_id}</message_id>"
-        "<timestamp>2026-03-28T12:00:00Z</timestamp>"
-        f"<source>{source}</source>"
         f"<type>{msg_type}</type>"
+        f"<source>{source}</source>"
+        "<timestamp>2026-03-28T12:00:00Z</timestamp>"
         "<version>2.0</version>"
         "</header>"
         f"<body>{body_xml}</body>"
@@ -121,7 +121,8 @@ class TestValidateXml:
             "<type>badge_scanned</type>"
             "<version>2.0</version>"
             "</header>"
-            "<body><badge_id>BADGE-001</badge_id><location>bar</location>"
+            "<body><email>scan@example.com</email><badge_id>BADGE-001</badge_id>"
+            "<scan_type>bar</scan_type><location>Main bar</location>"
             "<scanned_at>2026-03-28T12:00:00Z</scanned_at></body>"
             "</message>"
         )
@@ -135,7 +136,7 @@ class TestValidateXml:
             "<header>"
             "<message_id>x</message_id>"
             "<timestamp>2026-03-28T12:00:00Z</timestamp>"
-            "<source>s</source>"
+            "<source>iot_gateway</source>"
             "<type>badge_scanned</type>"
             "<version>2.0</version>"
             "</header>"

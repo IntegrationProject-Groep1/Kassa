@@ -100,10 +100,10 @@ class TestSenderXMLBuilders:
         assert '<wallet_balance currency="eur">15.50</wallet_balance>' in xml_out
 
     def test_build_badge_assigned_xml(self):
-        xml_out = sender.build_badge_assigned_xml("B-01", "uid-1")
+        xml_out = sender.build_badge_assigned_xml("B-01", "user@example.com")
         assert "<type>badge_assigned</type>" in xml_out
         assert "<badge_id>B-01</badge_id>" in xml_out
-        assert "<user_id>uid-1</user_id>" in xml_out
+        assert "<email>user@example.com</email>" in xml_out
 
 
 class TestSenderPublishing:
