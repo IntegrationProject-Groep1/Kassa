@@ -557,8 +557,8 @@ class TestProcessNewRegistrationPaymentFields:
         "<name>Alice</name>"
         "<type>private</type>"
         "<user_id>uid-001</user_id>"
-        "</customer>"
         "<payment_due><amount>25.00</amount><status>unpaid</status></payment_due>"
+        "</customer>"
     )
 
     def _root(self):
@@ -604,8 +604,9 @@ class TestProcessNewRegistrationPaymentFields:
         root = ET.fromstring(
             "<message><header/><body>"
             "<customer><email>a@b.com</email><name>X</name><type>private</type>"
-            "<user_id>uid-x</user_id></customer>"
+            "<user_id>uid-x</user_id>"
             "<payment_due><amount>not-a-number</amount><status>unpaid</status></payment_due>"
+            "</customer>"
             "</body></message>"
         )
         receiver.process_new_registration(root, uid, models)
