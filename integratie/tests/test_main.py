@@ -93,9 +93,10 @@ class TestMainSetup:
 
         assert odoo_setup.ensure_custom_fields("url", "db", "u", "p") is True
 
-        # res.partner has 12 fields, pos.order has 4, product.template has 1 → 17 creates
+        # All missing fields are now created in a single batched 'create' call
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
-        assert len(create_calls) == 17
+        assert len(create_calls) == 1
+        assert len(create_calls[0][0][5][0]) == 17
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):
