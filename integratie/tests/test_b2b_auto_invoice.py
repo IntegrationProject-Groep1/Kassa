@@ -256,10 +256,9 @@ class TestB2BAutoInvoice:
         customer_data = make_company_customer(11, '')  # No VAT
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-           # Mock send_error_to_queue to prevent RabbitMQ connection attempts
-           with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
-               patch('integratie.order_poller.sender.send_error_to_queue'):
-              poller.process_order(order)
-
-              # VAT check is tested in test_vat_validation.py
-              # This test just verifies the auto-invoice logic doesn't break when VAT is missing
+        # Mock send_error_to_queue to prevent RabbitMQ connection attempts
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
+             patch('integratie.order_poller.sender.send_error_to_queue'):
+            poller.process_order(order)
+            # VAT check is tested in test_vat_validation.py
+            # This test just verifies the auto-invoice logic doesn't break when VAT is missing

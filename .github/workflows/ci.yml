@@ -39,7 +39,9 @@ jobs:
         run: flake8 integratie/ --max-line-length=120
 
       - name: Type Checking
-        run: mypy integratie/
+        run: |
+          cd integratie
+          mypy .
 
       - name: Unit Tests
         run: pytest integratie/tests/ -v
