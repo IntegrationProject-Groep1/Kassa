@@ -210,7 +210,6 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
         return False
-
     for addon_name in ["kassa_pos_custom"]:
         module_ids = _rpc(
             models,
