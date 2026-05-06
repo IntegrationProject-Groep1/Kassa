@@ -561,7 +561,8 @@ class OrderPoller:
             refund_reason=DEFAULT_REFUND_REASON,
             original_transaction_id=str(order['id']),
             user_id=customer_info.get('x_user_id') if customer_info else None,
-            is_anonymous=is_anonymous
+            is_anonymous=is_anonymous,
+            email=customer_info.get('email') if customer_info else None
         )
         ok_refund = sender.send_typed_message('refund_processed', refund_xml, record_id=order_id)
         refund_msg_id = self._extract_message_id(refund_xml)
@@ -708,7 +709,8 @@ class OrderPoller:
             trx_id=str(order['id']),
             payment_method=payment_method,
             user_id=customer_info.get('x_user_id') if customer_info else None,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
+            email=customer_info.get('email') if customer_info else None
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
@@ -735,7 +737,7 @@ class OrderPoller:
                 'res.partner', 'search',
                 [[['x_badge_id', '!=', False],
                   ['x_badge_sent', '=', False],
-                  ['x_user_id', '!=', False]]]
+                  ['email', '!=', False]]]
             )
 
             if buffered_ids:
@@ -747,17 +749,19 @@ class OrderPoller:
             partners = self.models.execute_kw(
                 self.odoo_db, self.odoo_uid, self.odoo_pass,
                 'res.partner', 'read',
-                [partner_ids, ['id', 'x_badge_id', 'x_user_id']]
+                [partner_ids, ['id', 'x_badge_id', 'email', 'x_user_id']]
             )
 
             success_ids = []
             for p in partners:
                 try:
                     badge_id = p['x_badge_id']
-                    user_id = p['x_user_id']
-                    logger.info(f"🏷️ Badge {badge_id} assigned to user {user_id} — sending badge_assigned")
+                    email = p.get('email') or p.get('x_user_id')
+                    if not email:
+                        raise ValueError("badge_assigned: email missing on partner")
+                    logger.info(f"🏷️ Badge {badge_id} assigned to {email} — sending badge_assigned")
 
-                    badge_xml = sender.build_badge_assigned_xml(badge_id, user_id)
+                    badge_xml = sender.build_badge_assigned_xml(badge_id, email)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
