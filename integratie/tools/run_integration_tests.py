@@ -142,7 +142,7 @@ def ensure_opened_session(uid, models):
 
 def build_msg(msg_type, body_xml, message_id=None):
     m_id = message_id or str(uuid.uuid4())
-    # Literal XSDs have fixed source enums: 
+    # Literal XSDs have fixed source enums:
     # frontend (registration, cancellation), crm (profile), iot_gateway (badge)
     source = "frontend"
     if msg_type == "profile_update":
@@ -218,7 +218,7 @@ def test_registration_and_idempotency():
 def test_profile_update():
     section("TEST 3: profile_update")
     new_email = f"updated-{TEST_ID}@test.be"
-    # Literal XSD for profile_update: user_id, email, dob, contact, type, company_name, vat_number, company_id, payment_due
+    # profile_update XSD: user_id, email, dob, contact, type, company_name, vat_number, company_id, payment_due
     xml = f"""
       <user_id>{TEST_USER_ID}</user_id>
       <email>{new_email}</email>
@@ -237,9 +237,10 @@ def test_profile_update():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [[["x_user_id", "=", TEST_USER_ID]]], {"fields": ["email", "name"]}
     )
-    
+
     if not partner_list:
-        report_result("Receiver: profile_update", False, "Partner not found in Odoo after update")
+        msg = "Partner not found in Odoo after update"
+        report_result("Receiver: profile_update", False, msg)
         return
 
     partner = partner_list[0]
@@ -258,7 +259,10 @@ def test_cancellation():
 
     uid, models = get_rpc()
     # Fix E501: wrap the long line
-    domain = [["x_user_id", "=", TEST_USER_ID], ["active", "in", [True, False]]]
+    domain = [
+        ["x_user_id", "=", TEST_USER_ID],
+        ["active", "in", [True, False]]
+    ]
     partner = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [domain], {"fields": ["active"]}
