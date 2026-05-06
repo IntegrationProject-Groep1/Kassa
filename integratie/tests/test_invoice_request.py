@@ -228,7 +228,7 @@ class TestOrderPollerInvoiceRequestDetection:
 
         # Process the order
         with patch.object(poller, '_process_consumption', return_value=(True, 'msg-123')):
-            with patch.object(poller, '_process_invoice_request', return_value=True) as mock_inv:
+            with patch.object(poller, '_process_invoice_request', return_value=(True, 'inv-msg-123')) as mock_inv:
                 with patch.object(poller, 'get_customer_info', return_value=customer_info):
                     poller.process_order(order)
 

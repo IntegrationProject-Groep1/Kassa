@@ -140,14 +140,15 @@ class TestVATValidationOutgoing:
         }
 
         with patch("order_poller.sender.send_error_to_queue") as mock_send_error:
-            result = poller._process_invoice_request(order, customer_info, correlation_id="corr123")
+            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr123")
 
-        # Verify invoice_request was not sent
-        assert result is False
+        # Verify invoice_request was not sent (returns False, None)
+        assert success is False
+        assert msg_id is None
 
         # Verify error was sent to kassa.errors
         mock_send_error.assert_called_once()
-        error_code, msg_id, description = mock_send_error.call_args[0]
+        error_code, related_msg_id, description = mock_send_error.call_args[0]
         assert error_code == "invalid_xml_format"
         assert "VAT number" in description
         assert "50" in description  # Customer ID should be in error message
@@ -173,9 +174,10 @@ class TestVATValidationOutgoing:
         }
 
         with patch("order_poller.sender.send_error_to_queue") as mock_send_error:
-            result = poller._process_invoice_request(order, customer_info, correlation_id="corr456")
+            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr456")
 
-        assert result is False
+        assert success is False
+        assert msg_id is None
         mock_send_error.assert_called_once()
 
     def test_invoice_request_sent_for_company_with_vat(self):
@@ -200,10 +202,11 @@ class TestVATValidationOutgoing:
 
         with patch("order_poller.sender.send_typed_message") as mock_send:
             mock_send.return_value = True
-            result = poller._process_invoice_request(order, customer_info, correlation_id="corr789")
+            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr789")
 
-        # Verify invoice_request was sent
-        assert result is True
+        # Verify invoice_request was sent (returns True with message_id)
+        assert success is True
+        assert msg_id is not None
         mock_send.assert_called_once()
 
     def test_invoice_request_sent_for_private_without_vat(self):
@@ -228,10 +231,11 @@ class TestVATValidationOutgoing:
 
         with patch("order_poller.sender.send_typed_message") as mock_send:
             mock_send.return_value = True
-            result = poller._process_invoice_request(order, customer_info, correlation_id="corr000")
+            success, msg_id = poller._process_invoice_request(order, customer_info, correlation_id="corr000")
 
         # Verify invoice_request was sent (private customer OK without VAT)
-        assert result is True
+        assert success is True
+        assert msg_id is not None
         mock_send.assert_called_once()
 
 

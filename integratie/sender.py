@@ -740,3 +740,23 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+
+
+def extract_message_id(xml_content: str) -> str | None:
+    """
+    Extract message_id from the header of an XML message.
+    Used for de-duplication and traceability tracking.
+    
+    Args:
+        xml_content: XML string (e.g., from build_invoice_request_xml)
+        
+    Returns:
+        message_id string if found, None otherwise
+    """
+    if not xml_content:
+        return None
+    try:
+        root = ET.fromstring(xml_content)
+        return root.findtext('.//message_id')
+    except Exception:
+        return None

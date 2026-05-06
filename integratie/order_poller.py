@@ -287,17 +287,45 @@ class OrderPoller:
             else:
                 all_sent, payment_msg_id = self._process_consumption(order, customer_info, is_anonymous)
 
-            # Story 7: Invoice Request logic
-            if (order.get('to_invoice') or order.get('account_move')) and order.get('amount_total', 0) >= 0:
-                if is_anonymous:
-                    logger.warning(
-                        "⚠️ Klant zonder account: geen invoice_request aangemaakt"
+            # Story 7 & B2B Auto-Invoice: Invoice Request logic
+            should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous
+            is_company = customer_info and customer_info.get('customer_type') == 'company'
+
+            # Check if invoice request should be sent:
+            # 1. Manually flagged via to_invoice or account_move fields (Story 7)
+            # 2. Automatically for all company orders (B2B Auto-Invoice)
+            if should_invoice and ((order.get('to_invoice') or order.get('account_move')) or is_company):
+                # De-duplication: Check if invoice_request was already sent for this order
+                # (indicated by x_invoice_message_id field)
+                if order.get('x_invoice_message_id'):
+                    logger.info(
+                        f"ℹ️  Invoice request already sent for order {order_id} "
+                        f"(msg_id: {order.get('x_invoice_message_id')})"
                     )
                 else:
-                    # Use payment_msg_id as correlation_id, fall back to existing x_payment_message_id
+                    # Use payment_msg_id as correlation_id (Contract Section 11.1)
+                    # This ensures correlation_id matches the consumption_order message_id
                     corr_id = payment_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
-                    inv_sent = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    inv_sent, inv_msg_id = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
                     all_sent = all_sent and inv_sent
+                    
+                    # Store invoice_message_id for future de-duplication
+                    if inv_msg_id:
+                        try:
+                            self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'write',
+                                [[order_id], {'x_invoice_message_id': inv_msg_id}]
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
+                    
+                    if is_company:
+                        logger.info(f"📄 B2B Auto-Invoice triggered for company order {order_id}")
+            elif order.get('amount_total', 0) >= 0 and is_anonymous:
+                logger.warning(
+                    "⚠️ Klant zonder account: geen invoice_request aangemaakt"
+                )
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
@@ -378,8 +406,15 @@ class OrderPoller:
 
         return info
 
-    def _process_invoice_request(self, order, customer_info, correlation_id: str) -> bool:
-        """Build and send the invoice_request XML message for a linked partner."""
+    def _process_invoice_request(self, order, customer_info, correlation_id: str) -> tuple[bool, str | None]:
+        """
+        Build and send the invoice_request XML message for a linked partner.
+        
+        Returns:
+            Tuple of (success: bool, invoice_message_id: str | None)
+            Where invoice_message_id is extracted from the generated message header
+            for de-duplication tracking via x_invoice_message_id field.
+        """
         # Contract Section 11.1: VAT number is mandatory for companies
         if customer_info.get('customer_type') == 'company' and not (customer_info.get('vat') or "").strip():
             logger.error(
@@ -391,7 +426,7 @@ class OrderPoller:
                 None,
                 f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
             )
-            return False
+            return False, None
 
         country_code = customer_info.get('country_code') or "be"
 
@@ -422,7 +457,13 @@ class OrderPoller:
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
-        return sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
+        
+        # Extract message_id for de-duplication tracking
+        invoice_msg_id = sender.extract_message_id(xml_str)
+        
+        # Send the message and return result with message_id
+        success = sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
+        return success, invoice_msg_id
 
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle refund logic."""
