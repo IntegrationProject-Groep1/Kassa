@@ -10,14 +10,12 @@ Checklist:
 ✓ Centralized logging: Errors sent to kassa.errors with code 'invalid_xml_format'
 """
 
-import json
 from unittest.mock import MagicMock, patch
 import pytest
 import xml.etree.ElementTree as ET
 
 import receiver
 import order_poller
-import sender
 
 
 class TestVATValidationIncoming:
@@ -35,7 +33,7 @@ class TestVATValidationIncoming:
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         # Note: vat_number is intentionally missing
-        
+
         payment_due = ET.SubElement(customer, "payment_due")
         ET.SubElement(payment_due, "status").text = "unpaid"
         ET.SubElement(payment_due, "amount").text = "100.00"
@@ -56,7 +54,7 @@ class TestVATValidationIncoming:
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         ET.SubElement(customer, "vat_number").text = "   "  # whitespace only
-        
+
         payment_due = ET.SubElement(customer, "payment_due")
         ET.SubElement(payment_due, "status").text = "unpaid"
         ET.SubElement(payment_due, "amount").text = "100.00"
@@ -77,7 +75,7 @@ class TestVATValidationIncoming:
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         ET.SubElement(customer, "vat_number").text = "BE0123456789"
-        
+
         payment_due = ET.SubElement(customer, "payment_due")
         ET.SubElement(payment_due, "status").text = "unpaid"
         ET.SubElement(payment_due, "amount").text = "100.00"
@@ -87,7 +85,7 @@ class TestVATValidationIncoming:
 
         # Should not raise
         receiver.process_new_registration(root, uid=1, models=models)
-        
+
         # Verify create was called with vat field
         assert models.execute_kw.call_count >= 1
 
@@ -103,7 +101,7 @@ class TestVATValidationIncoming:
         ET.SubElement(customer, "name").text = "John Doe"
         ET.SubElement(customer, "type").text = "private"
         # Note: vat_number is intentionally missing
-        
+
         payment_due = ET.SubElement(customer, "payment_due")
         ET.SubElement(payment_due, "status").text = "unpaid"
         ET.SubElement(payment_due, "amount").text = "50.00"
@@ -121,12 +119,12 @@ class TestVATValidationOutgoing:
     def test_invoice_request_blocked_for_company_without_vat(self):
         """Verify that invoice_request is not sent if company has no VAT number."""
         poller = order_poller.OrderPoller()
-        
+
         order = {
             'id': 100,
             'name': 'Order/00001',
         }
-        
+
         customer_info = {
             'id': 50,
             'name': 'Acme Corp',
@@ -146,7 +144,7 @@ class TestVATValidationOutgoing:
 
         # Verify invoice_request was not sent
         assert result is False
-        
+
         # Verify error was sent to kassa.errors
         mock_send_error.assert_called_once()
         error_code, msg_id, description = mock_send_error.call_args[0]
@@ -157,9 +155,9 @@ class TestVATValidationOutgoing:
     def test_invoice_request_blocked_for_company_with_empty_vat(self):
         """Verify that whitespace-only VAT also blocks invoice_request."""
         poller = order_poller.OrderPoller()
-        
+
         order = {'id': 101, 'name': 'Order/00002'}
-        
+
         customer_info = {
             'id': 51,
             'name': 'Tech Innovations',
@@ -183,9 +181,9 @@ class TestVATValidationOutgoing:
     def test_invoice_request_sent_for_company_with_vat(self):
         """Verify that invoice_request IS sent when company has VAT."""
         poller = order_poller.OrderPoller()
-        
+
         order = {'id': 102, 'name': 'Order/00003'}
-        
+
         customer_info = {
             'id': 52,
             'name': 'Valid Company',
@@ -211,9 +209,9 @@ class TestVATValidationOutgoing:
     def test_invoice_request_sent_for_private_without_vat(self):
         """Verify that private customers can have invoice_request sent without VAT."""
         poller = order_poller.OrderPoller()
-        
+
         order = {'id': 103, 'name': 'Order/00004'}
-        
+
         customer_info = {
             'id': 53,
             'name': 'John Smith',
@@ -255,7 +253,7 @@ class TestVATValidationCentralizedLogging:
         ET.SubElement(customer, "name").text = "Missing VAT Corp"
         ET.SubElement(customer, "type").text = "company"
         # Missing vat_number
-        
+
         payment_due = ET.SubElement(customer, "payment_due")
         ET.SubElement(payment_due, "status").text = "unpaid"
         ET.SubElement(payment_due, "amount").text = "500.00"
@@ -267,7 +265,7 @@ class TestVATValidationCentralizedLogging:
     def test_vat_error_message_includes_context(self):
         """Verify error messages include relevant context for debugging."""
         poller = order_poller.OrderPoller()
-        
+
         order = {'id': 999}
         customer_info = {
             'id': 777,
