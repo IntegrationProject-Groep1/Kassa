@@ -4,10 +4,16 @@
   <xs:complexType name="CurrencyAmountType">
     <xs:simpleContent>
       <xs:extension base="xs:decimal">
-        <xs:attribute name="currency" type="xs:string" use="required" fixed="eur"/>
+        <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
       </xs:extension>
     </xs:simpleContent>
   </xs:complexType>
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
 
   <xs:element name="message">
     <xs:complexType>
@@ -15,11 +21,12 @@
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id" type="xs:string"/>
-              <xs:element name="timestamp" type="xs:dateTime"/>
-              <xs:element name="source" type="xs:string" fixed="kassa"/>
-              <xs:element name="type" type="xs:string" fixed="refund_processed"/>
-              <xs:element name="version" type="xs:string" fixed="2.0"/>
+              <xs:element name="message_id"     type="xs:string"/>
+              <xs:element name="type"           type="xs:string" fixed="refund_processed"/>
+              <xs:element name="source"         type="xs:string" fixed="kassa"/>
+              <xs:element name="timestamp"      type="xs:dateTime"/>
+              <xs:element name="version"        type="xs:string" fixed="2.0"/>
+              <!-- correlation_id = message_id van de originele payment_registered -->
               <xs:element name="correlation_id" type="xs:string" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -27,6 +34,7 @@
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
+              <!-- user_id optioneel: anonieme refunds hebben geen user_id -->
               <xs:element name="user_id" type="xs:string" minOccurs="0"/>
               <xs:element name="refund_type">
                 <xs:simpleType>
@@ -43,6 +51,7 @@
                     <xs:element name="method">
                       <xs:simpleType>
                         <xs:restriction base="xs:string">
+                          <!-- badge_wallet: saldo terugstorten op badge -->
                           <xs:enumeration value="badge_wallet"/>
                           <xs:enumeration value="cash"/>
                           <xs:enumeration value="card_reversal"/>
@@ -62,7 +71,9 @@
                   </xs:sequence>
                 </xs:complexType>
               </xs:element>
+              <!-- original_transaction_id: transaction.id van de originele payment_registered -->
               <xs:element name="original_transaction_id" type="xs:string"/>
+              <!-- new_wallet_balance: alleen aanwezig bij method=badge_wallet -->
               <xs:element name="new_wallet_balance" type="CurrencyAmountType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -70,5 +81,4 @@
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-
 </xs:schema>

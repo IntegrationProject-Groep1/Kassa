@@ -434,14 +434,27 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
 
 
-def _make_header(root, msg_type, correlation_id=None):
-    """Build standard message header in the exact order required by the contract"""
+def _make_header(root, msg_type, correlation_id=None, order="B"):
+    """
+    Build standard message header in the exact order required by the contract.
+    Two orders are used in the literal documentation:
+    Order A (Log/Badge): id, timestamp, source, type, version
+    Order B (Order/Payment): id, type, source, timestamp, version
+    """
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
-    ET.SubElement(header, "timestamp").text = now_utc()
-    ET.SubElement(header, "source").text = "kassa"
-    ET.SubElement(header, "type").text = msg_type
+
+    if order == "A":
+        ET.SubElement(header, "timestamp").text = now_utc()
+        ET.SubElement(header, "source").text = "kassa"
+        ET.SubElement(header, "type").text = msg_type
+    else:  # Order B
+        ET.SubElement(header, "type").text = msg_type
+        ET.SubElement(header, "source").text = "kassa"
+        ET.SubElement(header, "timestamp").text = now_utc()
+
     ET.SubElement(header, "version").text = "2.0"
+
     if correlation_id:
         ET.SubElement(header, "correlation_id").text = correlation_id
     return header
@@ -472,15 +485,14 @@ def build_consumption_order_xml(
                            quantity, unit_price, vat_rate, currency, item_type.
         customer_id:       Odoo res.partner ID as a string (None for anonymous).
         user_id:           CRM x_user_id (external UUID) of the customer.
-        is_company_linked: True if the customer belongs to a company account.
-        company_id:        Odoo res.partner ID of the parent company, if any.
+        customer_type:     "private" or "company"
         email:             Customer email address.
         address:           Dict of address fields (street, city, zip, country).
         is_anonymous:      True for walk-in / badge-not-found sales. When True
                            the <customer> block is omitted from the XML entirely.
     """
     root = ET.Element("message")
-    _make_header(root, "consumption_order")
+    _make_header(root, "consumption_order", order="B")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
@@ -505,10 +517,10 @@ def build_consumption_order_xml(
         up = ET.SubElement(el, "unit_price")
         up.text = str(i["unit_price"])
         up.set("currency", i.get("currency", "eur"))
+        ET.SubElement(el, "vat_rate").text = str(i["vat_rate"])
         tp = ET.SubElement(el, "total_amount")
         tp.text = f"{i['total_amount']:.2f}"
         tp.set("currency", i.get("currency", "eur"))
-        ET.SubElement(el, "vat_rate").text = str(i["vat_rate"])
         if i.get("item_type"):
             ET.SubElement(el, "item_type").text = i["item_type"]
 
@@ -537,7 +549,7 @@ def build_payment_registered_xml(
                          the CRM to link this payment back to the sale.
     """
     root = ET.Element("message")
-    _make_header(root, "payment_registered", correlation_id)
+    _make_header(root, "payment_registered", correlation_id, order="B")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "payment_context").text = payment_context
 
@@ -561,6 +573,16 @@ def build_payment_registered_xml(
     return _to_xml(root)
 
 
+def build_payment_status_xml(user_id: str, status: str) -> str:
+    """Build payment_status message for registration payments."""
+    root = ET.Element("message")
+    _make_header(root, "payment_status", order="B")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
+    ET.SubElement(body, "payment_status").text = status
+    return _to_xml(root)
+
+
 def build_invoice_request_xml(
     user_id: str, invoice_data: dict, correlation_id: str
 ) -> str:
@@ -577,7 +599,7 @@ def build_invoice_request_xml(
         raise ValueError("correlation_id is required for invoice_request")
 
     root = ET.Element("message")
-    _make_header(root, "invoice_request", correlation_id)
+    _make_header(root, "invoice_request", correlation_id, order="B")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = user_id
 
@@ -603,9 +625,6 @@ def build_invoice_request_xml(
     for k, v in invoice_data.get("address", {}).items():
         ET.SubElement(addr, k).text = str(v) if v is not None else ""
 
-    if invoice_data.get("company_name"):
-        ET.SubElement(inv, "company_name").text = invoice_data["company_name"]
-
     if invoice_data.get("vat_number"):
         ET.SubElement(inv, "vat_number").text = invoice_data["vat_number"]
 
@@ -621,7 +640,7 @@ def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
         user_id:  CRM x_user_id of the customer the badge was assigned to.
     """
     root = ET.Element("message")
-    _make_header(root, "badge_assigned")
+    _make_header(root, "badge_assigned", order="A")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = user_id
     ET.SubElement(body, "badge_id").text = badge_id
@@ -632,7 +651,7 @@ def build_badge_assigned_xml(badge_id: str, user_id: str) -> str:
 def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
     """Build wallet_balance_update message"""
     root = ET.Element("message")
-    _make_header(root, "wallet_balance_update")
+    _make_header(root, "wallet_balance_update", order="B")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
 
@@ -672,7 +691,7 @@ def build_refund_processed_xml(
                                  so the CRM can update its own balance record.
     """
     root = ET.Element("message")
-    _make_header(root, "refund_processed", original_payment_msg_id)
+    _make_header(root, "refund_processed", original_payment_msg_id, order="B")
     body = ET.SubElement(root, "body")
 
     if not is_anonymous and user_id:
@@ -722,7 +741,7 @@ def send_error_to_queue(
     arrive out of order relative to the events that caused them.
     """
     root = ET.Element("message")
-    _make_header(root, "system_error")
+    _make_header(root, "system_error", order="B")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
 
@@ -750,7 +769,7 @@ def send_error_to_queue(
 def build_log_xml(level: str, action: str, message: str) -> str:
     """Build a log XML message."""
     root = ET.Element("message")
-    _make_header(root, "log")
+    _make_header(root, "log", order="A")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "level").text = level
     ET.SubElement(body, "action").text = action
