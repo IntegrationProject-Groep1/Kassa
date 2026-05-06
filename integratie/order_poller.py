@@ -114,6 +114,8 @@ class OrderPoller:
         self.models = None
         self.processed_orders = collections.OrderedDict()
         self._session_config_cache: dict[int, str | None] = {}
+        self._last_consumption_has_topup = False
+        self._last_consumption_topup_amount = 0.0
 
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
@@ -212,7 +214,7 @@ class OrderPoller:
         try:
 
             base_fields = [
-                'id', 'name', 'email', 'is_company', 'parent_id',
+                'id', 'name', 'email', 'is_company', 'parent_id', 'x_badge_id',
                 'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
             ]
             try:
@@ -348,6 +350,38 @@ class OrderPoller:
                 all_sent, consumption_msg_id, payment_msg_id = (
                     self._process_consumption(order, customer_info, is_anonymous)
                 )
+
+            if (
+                self._last_consumption_has_topup
+                and customer_info
+                and customer_info.get('x_badge_id')
+                and not order.get('x_wallet_updated')
+            ):
+                try:
+                    current_balance = float(customer_info.get('x_wallet_balance') or 0.0)
+                    topup_amount = float(self._last_consumption_topup_amount or 0.0)
+                    new_balance = round(current_balance + topup_amount, 2)
+
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'write',
+                        [[customer_info['id']], {'x_wallet_balance': new_balance}]
+                    )
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'write',
+                        [[order_id], {'x_wallet_updated': True}]
+                    )
+
+                    wallet_xml = sender.build_wallet_balance_update_xml(
+                        user_id=customer_info.get('x_user_id'),
+                        new_balance=new_balance
+                    )
+                    wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+                    all_sent = all_sent and wallet_sent
+                except Exception as e:
+                    logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
+                    all_sent = False
 
             # Story 7 & B2B Auto-Invoice: Invoice Request logic
             should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous
@@ -630,6 +664,8 @@ class OrderPoller:
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None]:
         """Handle regular sales orders."""
         items = []
+        self._last_consumption_has_topup = False
+        self._last_consumption_topup_amount = 0.0
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
 
         if line_ids:
@@ -701,6 +737,9 @@ class OrderPoller:
                     'currency': 'eur',
                     'item_type': 'wallet_topup' if is_topup else None
                 })
+                if is_topup:
+                    self._last_consumption_has_topup = True
+                    self._last_consumption_topup_amount += total_incl
 
         customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
 

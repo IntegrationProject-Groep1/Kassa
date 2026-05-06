@@ -465,6 +465,66 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
 
 
 @patch('order_poller.sender')
+def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
+    """Top-up orders increase wallet balance and emit wallet_balance_update."""
+    customer_info = {
+        'id': 77,
+        'x_wallet_balance': 10.0,
+        'x_user_id': 'USR-77',
+        'x_badge_id': 'BADGE-77',
+        'is_company': False,
+        'parent_id': False,
+        'email': '',
+        'customer_type': 'private',
+        'name': 'Visitor 77',
+        'street': 'Main 1',
+        'zip': '1000',
+        'city': 'Brussels',
+        'country_code': 'be',
+    }
+    order = {
+        'id': 26,
+        'partner_id': 77,
+        'lines': [(301,)],
+        'amount_total': 15.0,
+        'payment_ids': [],
+        'x_wallet_updated': False,
+        'x_payment_message_id': 'pay-old',
+        'create_date': '2026-04-01 12:00:00',
+        'to_invoice': False,
+        'account_move': None,
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'id': 301, 'product_id': (55, 'Top-up EUR 10'), 'qty': 1, 'price_unit': 15.0, 'tax_ids': [], 'price_subtotal_incl': 15.0}],
+        [{'id': 55, 'x_is_topup': True, 'pos_categ_ids': []}],
+        True,
+        True,
+        True,
+        True,
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-1</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-1</message_id></header></message>'
+    )
+    mock_sender.build_wallet_balance_update_xml.return_value = (
+        '<message><header><message_id>wallet-1</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True, True]
+
+    result = poller.process_order(order)
+
+    assert result is True
+    assert poller.models.execute_kw.call_args_list[2][0][4] == 'write'
+    assert poller.models.execute_kw.call_args_list[2][0][5][1]['x_wallet_balance'] == 25.0
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert sent_types == ['consumption_order', 'payment_registered_consumption', 'wallet_balance_update']
+
+
+@patch('order_poller.sender')
 def test_process_consumption_bulk_tax_fetch(mock_sender, poller):
     """Taxes are fetched in a single bulk call, not per line."""
     mock_sender.build_consumption_order_xml.return_value = (
