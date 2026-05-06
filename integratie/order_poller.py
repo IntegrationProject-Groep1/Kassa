@@ -156,11 +156,11 @@ class OrderPoller:
             )
 
             if order_ids:
-                logger.info(f"🔍 Found raw order IDs: {order_ids} (Buffered count: {len(buffered_ids)})")
+                logger.debug(f"🔍 Found raw order IDs: {order_ids} (Buffered count: {len(buffered_ids)})")
 
             if buffered_ids:
                 order_ids = [oid for oid in order_ids if oid not in buffered_ids]
-                logger.info(f"🔍 Filtered order IDs: {order_ids}")
+                logger.debug(f"🔍 Filtered order IDs: {order_ids}")
 
             if not order_ids:
                 return []
@@ -714,11 +714,10 @@ class OrderPoller:
         payment_msg_id = self._extract_message_id(payment_xml)
 
         # After a successful Inschrijvingskassa payment, mark the partner as fully paid.
-        if customer_info and not is_anonymous:
-            config_name = self._get_pos_config_name(order.get('session_id'))
-            if config_name == 'Inschrijvingskassa':
-                self._update_partner_registration_paid(
-                    customer_info['id'], customer_info.get('name', ''))
+        config_name = self._get_pos_config_name(order.get('session_id'))
+        if config_name == 'Inschrijvingskassa' and customer_info and not is_anonymous:
+            self._update_partner_registration_paid(
+                customer_info['id'], customer_info.get('name', ''))
 
         return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
 
