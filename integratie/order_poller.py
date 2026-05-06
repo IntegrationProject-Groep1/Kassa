@@ -51,7 +51,7 @@ PAYMENT_METHOD_CUSTOMER_ACCOUNT = "Customer Account"
 # XSD enum values for refund_processed XML
 XML_REFUND_METHOD_WALLET = "badge_wallet"
 XML_REFUND_METHOD_CASH = "cash"
-XML_REFUND_METHOD_INVOICE = "invoice"
+XML_REFUND_METHOD_INVOICE = "cash"  # 'invoice' is not in the XSD enum, using 'cash' as fallback
 
 # Default fallback values for refund XML fields
 DEFAULT_REFUND_METHOD = XML_REFUND_METHOD_CASH
@@ -695,9 +695,9 @@ class OrderPoller:
             (order.get('to_invoice') or order.get('account_move')) and customer_type == 'company'
         )
 
-        invoice_status = "open" if is_pay_later else "paid"
+        invoice_status = "pending" if is_pay_later else "paid"
         amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))
-        payment_method = "invoice" if is_pay_later else "on_site"
+        payment_method = "company_link" if is_pay_later else "on_site"
 
         payment_xml = sender.build_payment_registered_xml(
             payment_context="consumption",
