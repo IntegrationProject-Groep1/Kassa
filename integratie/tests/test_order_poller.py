@@ -497,7 +497,14 @@ def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
 
     poller.get_customer_info = MagicMock(return_value=customer_info)
     poller.models.execute_kw.side_effect = [
-        [{'id': 301, 'product_id': (55, 'Top-up EUR 10'), 'qty': 1, 'price_unit': 15.0, 'tax_ids': [], 'price_subtotal_incl': 15.0}],
+        [{
+            'id': 301,
+            'product_id': (55, 'Top-up EUR 10'),
+            'qty': 1,
+            'price_unit': 15.0,
+            'tax_ids': [],
+            'price_subtotal_incl': 15.0,
+        }],
         [{'id': 55, 'x_is_topup': True, 'pos_categ_ids': []}],
         True,
         True,
