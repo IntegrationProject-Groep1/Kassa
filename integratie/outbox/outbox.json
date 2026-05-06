@@ -1,0 +1,12 @@
+[
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  }
+]
