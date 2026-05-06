@@ -1,4 +1,3 @@
-import pytest
 import uuid
 from pathlib import Path
 from lxml import etree
@@ -6,6 +5,7 @@ import xml.etree.ElementTree as standardET
 import sender
 
 _SCHEMA_DIR = Path(__file__).parent.parent / "schemas"
+
 
 def validate_xml(xml_str, schema_filename):
     schema_path = _SCHEMA_DIR / schema_filename
@@ -15,8 +15,9 @@ def validate_xml(xml_str, schema_filename):
     xml_doc = etree.fromstring(xml_str.encode("utf-8"), parser=parser)
     return schema.validate(xml_doc), schema.error_log
 
+
 class TestXSDCompliance:
-    
+
     def test_consumption_order_compliance(self):
         items = [{
             'id': 'LINE-1', 'sku': 'SKU1', 'description': 'Item 1',
@@ -46,7 +47,10 @@ class TestXSDCompliance:
     def test_invoice_request_compliance(self):
         invoice_data = {
             "first_name": "Jan", "last_name": "Peeters", "email": "jan@example.be",
-            "address": {"street": "Kiekenmarkt", "number": "42", "postal_code": "1000", "city": "Brussel", "country": "be"},
+            "address": {
+                "street": "Kiekenmarkt", "number": "42", "postal_code": "1000",
+                "city": "Brussel", "country": "be"
+            },
             "vat_number": "BE0123456789"
         }
         xml = sender.build_invoice_request_xml(str(uuid.uuid4()), invoice_data, str(uuid.uuid4()))
