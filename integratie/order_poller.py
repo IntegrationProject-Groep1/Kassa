@@ -476,7 +476,7 @@ class OrderPoller:
     def _process_invoice_request(self, order, customer_info, correlation_id: str) -> tuple[bool, str | None]:
         """
         Build and send the invoice_request XML message for a linked partner.
-        
+
         Returns:
             Tuple of (success: bool, invoice_message_id: str | None)
             Where invoice_message_id is extracted from the generated message header
