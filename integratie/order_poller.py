@@ -858,7 +858,8 @@ class OrderPoller:
                     identity_uuid = p.get('x_user_id')
                     if not identity_uuid:
                         logger.error(
-                            "❌ badge_assigned: x_user_id missing for partner %s, cannot send badge_assigned message (UUID required)",
+                            "❌ badge_assigned: x_user_id missing for partner %s, "
+                            "cannot send badge_assigned message (UUID required)",
                             p['id']
                         )
                         continue
