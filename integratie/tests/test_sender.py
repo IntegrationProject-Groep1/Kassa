@@ -35,8 +35,7 @@ class TestSenderBuffer:
         entries = json.loads(tmp_buffer.read_text())
         assert len(entries) == 2
 
-    @patch("sender.send_error_to_queue")
-    def test_buffer_full_raises_error(self, mock_error_queue, tmp_buffer):
+    def test_buffer_full_raises_error(self, tmp_buffer):
         # Mock max size to 2 for quick testing
         original_max = sender.BUFFER_MAX_MESSAGES
         sender.BUFFER_MAX_MESSAGES = 2
@@ -44,11 +43,43 @@ class TestSenderBuffer:
         try:
             sender._buffer_message("r.1", "<1/>")
             sender._buffer_message("r.2", "<2/>")
-            # 3rd should fail
+            # 3rd should fail and create error notification
             with pytest.raises(sender.BufferFullError):
                 sender._buffer_message("r.3", "<3/>")
 
-            mock_error_queue.assert_called_once()
+            # Verify buffer contains: 2 original + 1 offline_queue_full error
+            entries = json.loads(tmp_buffer.read_text())
+            assert len(entries) == 3
+
+            # Verify the last entry is the offline_queue_full error
+            error_entry = entries[-1]
+            assert error_entry["routing_key"] == "kassa.errors"
+            assert "offline_queue_full" in error_entry["xml"]
+            assert "message not buffered: r.3" in error_entry["xml"]
+
+            # Verify the 3rd message itself was NOT buffered
+            assert entries[0]["xml"] == "<1/>"
+            assert entries[1]["xml"] == "<2/>"
+
+            # Verify deduplication: requesting another buffer when full
+            # should not create a duplicate error notification
+            error_count_before = sum(
+                1 for e in entries if e.get("routing_key") == "kassa.errors"
+            )
+            assert error_count_before == 1
+
+            with pytest.raises(sender.BufferFullError):
+                sender._buffer_message("r.4", "<4/>")
+
+            # Reload entries from file
+            entries_after = json.loads(tmp_buffer.read_text())
+
+            # Verify no duplicate error was added (still only 1 error + 2 originals)
+            error_count_after = sum(
+                1 for e in entries_after if e.get("routing_key") == "kassa.errors"
+            )
+            assert error_count_after == 1
+            assert len(entries_after) == 3  # Still 2 original + 1 error
         finally:
             sender.BUFFER_MAX_MESSAGES = original_max
 

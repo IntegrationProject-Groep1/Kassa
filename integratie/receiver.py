@@ -225,6 +225,12 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     if not identity_uuid:
         raise ValueError("new_registration: identity_uuid missing in <customer>")
 
+    # Contract Section 11.1: VAT number required for companies
+    if ctype == "company" and not vat_number:
+        raise ValueError(
+            "new_registration: vat_number is mandatory for company type per contract Section 11.1"
+        )
+
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
@@ -541,9 +547,13 @@ def process_message(ch, method, properties, body):
             )
 
     except ValueError as e:
-        code = "unknown_message_type" if "Unknown message type" in str(e) else "invalid_xml_format"
+        error_str = str(e)
+        if "Unknown message type" in error_str:
+            code = "unknown_message_type"
+        else:
+            code = "invalid_xml_format"
         logger.error("[RECEIVER] ❌ %s: %s", code, e)
-        send_error_to_queue(code, related_message_id, str(e))
+        send_error_to_queue(code, related_message_id, error_str)
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except ConnectionError as e:

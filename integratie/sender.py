@@ -125,17 +125,54 @@ def _buffer_message(
         entries = _read_buffer()
 
         if len(entries) >= BUFFER_MAX_MESSAGES:
-            send_error_to_queue(
-                "offline_queue_full",
-                None,
-                f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+            # Buffer is full: create and buffer a system_error notification instead.
+            # Check if a notification already exists to prevent unbounded growth.
+            already_notified = (
+                entries
+                and entries[-1].get("routing_key") == "kassa.errors"
+                and "offline_queue_full" in str(entries[-1].get("xml", ""))
+            )
+
+            if not already_notified:
+                # Create and buffer system_error only once per overflow.
+                # This ensures the admin is notified when the connection is restored
+                # without causing the buffer file to grow indefinitely.
+                error_root = ET.Element("message")
+                _make_header(error_root, "system_error")
+                error_body = ET.SubElement(error_root, "body")
+                ET.SubElement(error_body, "error_code").text = "offline_queue_full"
+                ET.SubElement(
+                    error_body, "error_description"
+                ).text = f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+                error_xml = _to_xml(error_root)
+
+                # Add the error to the buffer (bypassing the size check)
+                # So we can ensure the admin is notified
+                error_entry: dict[str, str | int] = {
+                    "routing_key": "kassa.errors",
+                    "xml": error_xml
+                }
+                entries.append(error_entry)
+                BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+                BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+                logger.warning(
+                    f"⚠️  Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}"
+                )
+                logger.info(
+                    f"📁 Buffered offline_queue_full error notification: {len(entries)}/{BUFFER_MAX_MESSAGES + 1}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️  Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}"
+                )
+
             raise BufferFullError(
                 f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
             )
 
         entries.append(entry)
         BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
         logger.info(
             f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
@@ -191,7 +228,8 @@ def flush_buffer() -> list[tuple[str, int]]:
                 json.dumps(
                     remaining,
                     ensure_ascii=False,
-                    indent=2))
+                    indent=2),
+                encoding='utf-8')
         else:
             BUFFER_FILE.unlink(missing_ok=True)
 
@@ -774,3 +812,25 @@ def build_log_xml(level: str, action: str, message: str) -> str:
     ET.SubElement(body, "action").text = action
     ET.SubElement(body, "message").text = message
     return _to_xml(root)
+
+
+def extract_message_id(xml_content: str) -> str | None:
+    """
+    Extract message_id from the header of an XML message.
+    Used for de-duplication and traceability tracking.
+
+    Args:
+        xml_content: XML string (e.g., from build_invoice_request_xml)
+
+    Returns:
+        message_id string if found, None otherwise
+    """
+    if not xml_content:
+        return None
+    try:
+        from defusedxml import ElementTree as DET
+
+        root = DET.fromstring(xml_content)
+        return root.findtext('.//message_id')
+    except Exception:
+        return None
