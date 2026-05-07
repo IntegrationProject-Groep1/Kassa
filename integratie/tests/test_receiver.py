@@ -181,7 +181,8 @@ class TestProcessNewRegistration:
         root = ET.fromstring(
             "<message><header/><body>"
             "<customer>"
-            "<email>a@b.com</email><contact><first_name>X</first_name><last_name>Y</last_name></contact><type>private</type>"
+            "<email>a@b.com</email><contact><first_name>X</first_name>"
+            "<last_name>Y</last_name></contact><type>private</type>"
             "<payment_due><amount currency=\"eur\">0</amount><status>unpaid</status></payment_due>"
             "</customer>"
             "</body></message>"
@@ -374,7 +375,8 @@ class TestProcessMessage:
             "new_registration",
             "<customer>"
             "<identity_uuid>550e8400-e29b-41d4-a716-446655440001</identity_uuid>"
-            "<email>x@x.com</email><contact><first_name>X</first_name><last_name>Y</last_name></contact><type>private</type>"
+            "<email>x@x.com</email><contact><first_name>X</first_name>"
+            "<last_name>Y</last_name></contact><type>private</type>"
             "<date_of_birth>2006-01-01</date_of_birth><session_id>s1</session_id>"
             "<payment_due><amount currency=\"eur\">10</amount><status>unpaid</status></payment_due>"
             "</customer>",
@@ -395,7 +397,8 @@ class TestProcessMessage:
             "new_registration",
             "<customer>"
             "<identity_uuid>550e8400-e29b-41d4-a716-446655440001</identity_uuid>"
-            "<email>x@x.com</email><contact><first_name>X</first_name><last_name>Y</last_name></contact><type>private</type>"
+            "<email>x@x.com</email><contact><first_name>X</first_name>"
+            "<last_name>Y</last_name></contact><type>private</type>"
             "<date_of_birth>2006-01-01</date_of_birth><session_id>s1</session_id>"
             "<payment_due><amount currency=\"eur\">10</amount><status>unpaid</status></payment_due>"
             "</customer>",
@@ -595,7 +598,8 @@ class TestProcessNewRegistrationPaymentFields:
         root = ET.fromstring(
             "<message><header/><body>"
             "<customer><identity_uuid>550e8400-e29b-41d4-a716-446655440001</identity_uuid>"
-            "<email>a@b.com</email><contact><first_name>X</first_name><last_name>Y</last_name></contact><type>private</type>"
+            "<email>a@b.com</email><contact><first_name>X</first_name>"
+            "<last_name>Y</last_name></contact><type>private</type>"
             "<date_of_birth>2000-01-01</date_of_birth><session_id>s1</session_id>"
             "<payment_due><amount currency=\"eur\">not-a-number</amount><status>unpaid</status></payment_due>"
             "</customer>"

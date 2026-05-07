@@ -550,7 +550,7 @@ def build_payment_registered_xml(
     inv = ET.SubElement(body, "invoice")
     if invoice_id:
         ET.SubElement(inv, "id").text = invoice_id
-    
+
     ap = ET.SubElement(inv, "amount_paid")
     ap.text = str(amount_paid)
     ap.set("currency", "eur")

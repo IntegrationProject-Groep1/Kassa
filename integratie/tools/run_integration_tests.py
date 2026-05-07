@@ -151,9 +151,9 @@ def build_msg(msg_type, body_xml, message_id=None):
     if msg_type == "new_registration":
         header = (
             f"<message_id>{m_id}</message_id>"
-            f"<type>{msg_type}</type>"
-            f"<source>{source}</source>"
             "<timestamp>2026-03-31T10:00:00Z</timestamp>"
+            f"<source>{source}</source>"
+            f"<type>{msg_type}</type>"
             "<version>2.0</version>"
         )
     else:
@@ -180,7 +180,7 @@ def test_registration_and_idempotency():
     # new_registration XSD: customer plus sibling payment_due in body.
     xml = f"""
     <customer>
-      <user_id>{TEST_USER_ID}</user_id>
+      <identity_uuid>{TEST_USER_ID}</identity_uuid>
       <email>test@{TEST_ID}.be</email>
       <date_of_birth>1990-01-01</date_of_birth>
       <contact>
@@ -224,9 +224,9 @@ def test_registration_and_idempotency():
 def test_profile_update():
     section("TEST 3: profile_update")
     new_email = f"updated-{TEST_ID}@test.be"
-    # profile_update XSD: user_id, email, dob, contact, type, company_name, vat_number, company_id, payment_due
+    # profile_update XSD: identity_uuid, email, dob, contact, type, company_name, vat_number, company_id, payment_due
     xml = f"""
-      <user_id>{TEST_USER_ID}</user_id>
+      <identity_uuid>{TEST_USER_ID}</identity_uuid>
       <email>{new_email}</email>
       <date_of_birth>1990-01-01</date_of_birth>
       <contact>
@@ -259,7 +259,7 @@ def test_profile_update():
 
 def test_cancellation():
     section("TEST 4: cancel_registration")
-    xml = f"<user_id>{TEST_USER_ID}</user_id><session_id>s1</session_id><reason>Testing</reason>"
+    xml = f"<identity_uuid>{TEST_USER_ID}</identity_uuid><session_id>s1</session_id><reason>Testing</reason>"
     publish(build_msg("cancel_registration", xml), "kassa.incoming.cancel")
     wait(8, "receiver processing cancellation")
 
@@ -269,11 +269,16 @@ def test_cancellation():
         ["x_user_id", "=", TEST_USER_ID],
         ["active", "in", [True, False]]
     ]
-    partner = models.execute_kw(
+    partner_results = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [domain], {"fields": ["active"]}
-    )[0]
+    )
 
+    if not partner_results:
+        report_result("Receiver: cancel_registration", False, "Partner not found in Odoo")
+        return
+
+    partner = partner_results[0]
     ok = partner["active"] is False
     report_result("Receiver: cancel_registration (soft delete)", ok, f"Active: {partner['active']}")
 
@@ -507,7 +512,7 @@ def test_xsd_rejection():
     # Missing required <contact> block
     broken_xml = f"""
     <customer>
-      <user_id>broken-{TEST_ID}</user_id>
+      <identity_uuid>broken-{TEST_ID}</identity_uuid>
       <type>private</type>
     </customer>
     """

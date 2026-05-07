@@ -758,12 +758,15 @@ class OrderPoller:
                     badge_id = p['x_badge_id']
                     identity_uuid = p.get('x_user_id')
                     if not identity_uuid:
-                        logger.warning(f"⚠️ badge_assigned: x_user_id missing for partner {p['id']}, using email fallback")
+                        logger.warning(
+                            "⚠️ badge_assigned: x_user_id missing for partner %s, using email fallback",
+                            p['id']
+                        )
                         identity_uuid = p.get('email')
-                    
+
                     if not identity_uuid:
                         raise ValueError("badge_assigned: both identity_uuid and email missing on partner")
-                    
+
                     logger.info(f"🏷️ Badge {badge_id} assigned to {identity_uuid} — sending badge_assigned")
 
                     badge_xml = sender.build_badge_assigned_xml(badge_id, identity_uuid)
@@ -852,7 +855,10 @@ class OrderPoller:
                 'pos.order', 'send_partner_bus_event',
                 [partner_id, 0.0, 'paid', partner_name],
             )
-            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+            logger.info(
+                "[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment",
+                partner_id
+            )
         except Exception as e:
             logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
 
