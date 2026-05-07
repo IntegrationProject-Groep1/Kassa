@@ -867,7 +867,7 @@ class OrderPoller:
         logger.info("Order Poller performing single run...")
         try:
             orders = self.get_pending_orders()
-            
+
             # Pre-fetch country data for all partners in the fetched orders
             partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
             country_map = {}

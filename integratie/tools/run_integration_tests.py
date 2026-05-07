@@ -30,7 +30,7 @@ EXCHANGE_NAME = "kassa.exchange"
 
 # ── Test state ─────────────────────────────────────────────────────────────────
 TEST_ID = uuid.uuid4().hex[:8]
-TEST_USER_ID = f"kassa-test-{TEST_ID}"
+TEST_USER_ID = str(uuid.uuid4())
 TEST_BADGE_ID = f"BADGE-{TEST_ID.upper()}"
 RESULTS = []
 GLOBAL_SESSION_ID = None
@@ -307,6 +307,9 @@ def test_pos_order_sync():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -356,6 +359,9 @@ def test_refund_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -394,6 +400,9 @@ def test_invoice_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -442,6 +451,9 @@ def test_wallet_payment_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
