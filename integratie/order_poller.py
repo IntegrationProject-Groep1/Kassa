@@ -374,7 +374,7 @@ class OrderPoller:
                     )
 
                     wallet_xml = sender.build_wallet_balance_update_xml(
-                        user_id=customer_info.get('x_user_id'),
+                        identity_uuid=customer_info.get('x_user_id'),
                         new_balance=new_balance
                     )
                     wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
@@ -534,8 +534,8 @@ class OrderPoller:
         country_code = customer_info.get('country_code') or "be"
 
         # Story 7 Compliance: Only send invoice_request if partner has valid x_user_id
-        user_id = customer_info.get('x_user_id')
-        if not user_id:
+        identity_uuid = customer_info.get('x_user_id')
+        if not identity_uuid:
             logger.warning(
                 f"⚠️ Partner {customer_info.get('id')} has no x_user_id: "
                 "skipping invoice_request per Story 7"
@@ -561,7 +561,7 @@ class OrderPoller:
         }
 
         xml_str = sender.build_invoice_request_xml(
-            user_id=user_id,
+            identity_uuid=identity_uuid,
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
@@ -602,7 +602,7 @@ class OrderPoller:
             )
 
             wallet_xml = sender.build_wallet_balance_update_xml(
-                user_id=customer_info.get('x_user_id'),
+                identity_uuid=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
@@ -654,7 +654,7 @@ class OrderPoller:
             refund_method=refund_method,
             refund_reason=DEFAULT_REFUND_REASON,
             original_transaction_id=str(order['id']),
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             is_anonymous=is_anonymous,
             email=customer_info.get('email') if customer_info else None
         )
@@ -760,7 +760,7 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
             address=address,
@@ -807,7 +807,7 @@ class OrderPoller:
             due_date=order.get('create_date', '').split(" ")[0] if order.get('create_date') else "1970-01-01",
             trx_id=str(order['id']),
             payment_method=payment_method,
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             correlation_id=correlation_id,
             email=customer_info.get('email') if customer_info else None
         )
@@ -855,12 +855,18 @@ class OrderPoller:
             for p in partners:
                 try:
                     badge_id = p['x_badge_id']
-                    email = p.get('email') or p.get('x_user_id')
-                    if not email:
-                        raise ValueError("badge_assigned: email missing on partner")
-                    logger.info(f"🏷️ Badge {badge_id} assigned to {email} — sending badge_assigned")
+                    identity_uuid = p.get('x_user_id')
+                    if not identity_uuid:
+                        logger.error(
+                            "❌ badge_assigned: x_user_id missing for partner %s, "
+                            "cannot send badge_assigned message (UUID required)",
+                            p['id']
+                        )
+                        continue
 
-                    badge_xml = sender.build_badge_assigned_xml(badge_id, email)
+                    logger.info(f"🏷️ Badge {badge_id} assigned to {identity_uuid} — sending badge_assigned")
+
+                    badge_xml = sender.build_badge_assigned_xml(badge_id, identity_uuid)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
@@ -946,9 +952,45 @@ class OrderPoller:
                 'pos.order', 'send_partner_bus_event',
                 [partner_id, 0.0, 'paid', partner_name],
             )
-            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+            logger.info(
+                "[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment",
+                partner_id
+            )
         except Exception as e:
             logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
+
+    def run_once(self):
+        """Perform a single polling cycle (fetch, process, badge assignments)."""
+        logger.info("Order Poller performing single run...")
+        try:
+            orders = self.get_pending_orders()
+
+            # Pre-fetch country data for all partners in the fetched orders
+            partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
+            country_map = {}
+            if partner_ids:
+                partners = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.partner', 'read',
+                    [partner_ids, ['country_id']]
+                )
+                country_ids = list(set([p['country_id'][0] for p in partners if p.get('country_id')]))
+                if country_ids:
+                    countries = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.country', 'read',
+                        [country_ids, ['id', 'code']]
+                    )
+                    country_map = {c['id']: c.get('code', '').lower() for c in countries}
+
+            for order in orders:
+                self.process_order(order, country_map=country_map)
+
+            self.poll_badge_assignments()
+            sender.flush_buffer()
+            logger.info("Order Poller single run completed.")
+        except Exception as e:
+            logger.error(f"Error in Order Poller single run: {e}")
 
     def poll(self, interval=5):
         """Run the polling loop indefinitely."""
