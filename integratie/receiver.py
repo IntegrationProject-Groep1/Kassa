@@ -379,7 +379,6 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         raise ValueError("badge_scanned: <body> missing")
 
     badge_id = (body.findtext("badge_id") or "").strip()
-    email = (body.findtext("email") or "").strip()
     scan_type = (body.findtext("scan_type") or "").strip()
     location = (body.findtext("location") or scan_type or "unknown").strip()
     scanned_at = (body.findtext("scanned_at") or "").strip()
@@ -396,15 +395,6 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
                     "x_date_of_birth", "is_company"], "limit": 1},
     )
-
-    if not existing and email:
-        existing = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "search_read",
-            [[["email", "=", email]]],
-            {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
-                        "x_date_of_birth", "is_company"], "limit": 1},
-        )
 
     message_id = root.findtext("header/message_id")
 

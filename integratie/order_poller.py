@@ -857,14 +857,11 @@ class OrderPoller:
                     badge_id = p['x_badge_id']
                     identity_uuid = p.get('x_user_id')
                     if not identity_uuid:
-                        logger.warning(
-                            "⚠️ badge_assigned: x_user_id missing for partner %s, using email fallback",
+                        logger.error(
+                            "❌ badge_assigned: x_user_id missing for partner %s, cannot send badge_assigned message (UUID required)",
                             p['id']
                         )
-                        identity_uuid = p.get('email')
-
-                    if not identity_uuid:
-                        raise ValueError("badge_assigned: both identity_uuid and email missing on partner")
+                        continue
 
                     logger.info(f"🏷️ Badge {badge_id} assigned to {identity_uuid} — sending badge_assigned")
 

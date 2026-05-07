@@ -472,7 +472,7 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
 
 
-def _make_header(root, msg_type, correlation_id=None, order="A", source="kassa"):
+def _make_header(root, msg_type, correlation_id=None, source="kassa"):
     """
     Build standard message header in the exact order required by the contract v2.3.
     Standard Order (used for all messages): id, timestamp, source, type, version
@@ -531,11 +531,12 @@ def build_consumption_order_xml(
         ET.SubElement(cust, "identity_uuid").text = str(identity_uuid) if identity_uuid else ""
         ET.SubElement(cust, "type").text = customer_type
         ET.SubElement(cust, "email").text = str(email) if email else ""
-        if address:
-            addr = ET.SubElement(cust, "address")
-            for k in ("street", "number", "postal_code", "city", "country"):
-                if k in address:
-                    ET.SubElement(addr, k).text = str(address[k]) if address[k] is not None else ""
+    if address:
+        addr = ET.SubElement(cust, "address")
+        for key in ["street", "number", "postal_code", "city", "country"]:
+            value = address.get(key)
+            if value is not None:
+                ET.SubElement(addr, key).text = str(value)
 
     items_el = ET.SubElement(body, "items")
     for i in (items or []):
