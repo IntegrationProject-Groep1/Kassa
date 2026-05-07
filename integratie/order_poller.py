@@ -862,6 +862,39 @@ class OrderPoller:
         except Exception as e:
             logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
 
+    def run_once(self):
+        """Perform a single polling cycle (fetch, process, badge assignments)."""
+        logger.info("Order Poller performing single run...")
+        try:
+            orders = self.get_pending_orders()
+            
+            # Pre-fetch country data for all partners in the fetched orders
+            partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
+            country_map = {}
+            if partner_ids:
+                partners = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.partner', 'read',
+                    [partner_ids, ['country_id']]
+                )
+                country_ids = list(set([p['country_id'][0] for p in partners if p.get('country_id')]))
+                if country_ids:
+                    countries = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.country', 'read',
+                        [country_ids, ['id', 'code']]
+                    )
+                    country_map = {c['id']: c.get('code', '').lower() for c in countries}
+
+            for order in orders:
+                self.process_order(order, country_map=country_map)
+
+            self.poll_badge_assignments()
+            sender.flush_buffer()
+            logger.info("Order Poller single run completed.")
+        except Exception as e:
+            logger.error(f"Error in Order Poller single run: {e}")
+
     def poll(self, interval=5):
         """Run the polling loop indefinitely."""
         logger.info(f"Order Poller started (interval: {interval}s)")

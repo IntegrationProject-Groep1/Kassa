@@ -140,30 +140,33 @@ def ensure_opened_session(uid, models):
 
 # ── XML Builders ──────────────────────────────────────────────────────────────
 
-def build_msg(msg_type, body_xml, message_id=None):
+def build_msg(msg_type, body_xml, message_id=None, correlation_id=None):
     m_id = message_id or str(uuid.uuid4())
+    corr_id = correlation_id or str(uuid.uuid4())
     source = "crm"
     if msg_type in ("new_registration", "profile_update", "cancel_registration"):
         source = "crm"
     elif msg_type == "badge_scanned":
         source = "iot_gateway"
 
+    header_parts = [
+        f"<message_id>{m_id}</message_id>",
+        "<timestamp>2026-03-31T10:00:00Z</timestamp>",
+        f"<source>{source}</source>",
+        f"<type>{msg_type}</type>",
+        "<version>2.0</version>"
+    ]
+
+    # new_registration REQUIRES correlation_id per XSD v2.3
+    # profile_update/cancel_registration: optional
+    # badge_scanned: NO correlation_id allowed
     if msg_type == "new_registration":
-        header = (
-            f"<message_id>{m_id}</message_id>"
-            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
-            f"<source>{source}</source>"
-            f"<type>{msg_type}</type>"
-            "<version>2.0</version>"
-        )
-    else:
-        header = (
-            f"<message_id>{m_id}</message_id>"
-            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
-            f"<source>{source}</source>"
-            f"<type>{msg_type}</type>"
-            "<version>2.0</version>"
-        )
+        header_parts.append(f"<correlation_id>{corr_id}</correlation_id>")
+    elif msg_type in ("profile_update", "cancel_registration"):
+        if correlation_id:  # Only add if explicitly provided for these types
+            header_parts.append(f"<correlation_id>{correlation_id}</correlation_id>")
+
+    header = "".join(header_parts)
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
@@ -177,7 +180,7 @@ def build_msg(msg_type, body_xml, message_id=None):
 def test_registration_and_idempotency():
     section("TEST 1 & 2: new_registration & Idempotency")
     msg_id = str(uuid.uuid4())
-    # new_registration XSD: customer plus sibling payment_due in body.
+    # new_registration XSD: payment_due MUST be nested inside customer
     xml = f"""
     <customer>
       <identity_uuid>{TEST_USER_ID}</identity_uuid>
@@ -187,12 +190,13 @@ def test_registration_and_idempotency():
         <first_name>Test</first_name>
         <last_name>User</last_name>
       </contact>
+      <type>private</type>
       <session_id>sess-001</session_id>
+      <payment_due>
+        <amount currency="eur">10.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
-    <payment_due>
-      <amount currency="eur">10.00</amount>
-      <status>unpaid</status>
-    </payment_due>
     """
     full_xml = build_msg("new_registration", xml, message_id=msg_id)
 
