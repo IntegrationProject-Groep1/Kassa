@@ -30,7 +30,7 @@ EXCHANGE_NAME = "kassa.exchange"
 
 # ── Test state ─────────────────────────────────────────────────────────────────
 TEST_ID = uuid.uuid4().hex[:8]
-TEST_USER_ID = f"kassa-test-{TEST_ID}"
+TEST_USER_ID = str(uuid.uuid4())
 TEST_BADGE_ID = f"BADGE-{TEST_ID.upper()}"
 RESULTS = []
 GLOBAL_SESSION_ID = None
@@ -140,30 +140,33 @@ def ensure_opened_session(uid, models):
 
 # ── XML Builders ──────────────────────────────────────────────────────────────
 
-def build_msg(msg_type, body_xml, message_id=None):
+def build_msg(msg_type, body_xml, message_id=None, correlation_id=None):
     m_id = message_id or str(uuid.uuid4())
+    corr_id = correlation_id or str(uuid.uuid4())
     source = "crm"
     if msg_type in ("new_registration", "profile_update", "cancel_registration"):
         source = "crm"
     elif msg_type == "badge_scanned":
         source = "iot_gateway"
 
+    header_parts = [
+        f"<message_id>{m_id}</message_id>",
+        "<timestamp>2026-03-31T10:00:00Z</timestamp>",
+        f"<source>{source}</source>",
+        f"<type>{msg_type}</type>",
+        "<version>2.0</version>"
+    ]
+
+    # new_registration REQUIRES correlation_id per XSD v2.3
+    # profile_update/cancel_registration: optional
+    # badge_scanned: NO correlation_id allowed
     if msg_type == "new_registration":
-        header = (
-            f"<message_id>{m_id}</message_id>"
-            f"<type>{msg_type}</type>"
-            f"<source>{source}</source>"
-            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
-            "<version>2.0</version>"
-        )
-    else:
-        header = (
-            f"<message_id>{m_id}</message_id>"
-            "<timestamp>2026-03-31T10:00:00Z</timestamp>"
-            f"<source>{source}</source>"
-            f"<type>{msg_type}</type>"
-            "<version>2.0</version>"
-        )
+        header_parts.append(f"<correlation_id>{corr_id}</correlation_id>")
+    elif msg_type in ("profile_update", "cancel_registration"):
+        if correlation_id:  # Only add if explicitly provided for these types
+            header_parts.append(f"<correlation_id>{correlation_id}</correlation_id>")
+
+    header = "".join(header_parts)
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
@@ -177,22 +180,23 @@ def build_msg(msg_type, body_xml, message_id=None):
 def test_registration_and_idempotency():
     section("TEST 1 & 2: new_registration & Idempotency")
     msg_id = str(uuid.uuid4())
-    # new_registration XSD: customer plus sibling payment_due in body.
+    # new_registration XSD: payment_due MUST be nested inside customer
     xml = f"""
     <customer>
-      <user_id>{TEST_USER_ID}</user_id>
+      <identity_uuid>{TEST_USER_ID}</identity_uuid>
       <email>test@{TEST_ID}.be</email>
       <date_of_birth>1990-01-01</date_of_birth>
       <contact>
         <first_name>Test</first_name>
         <last_name>User</last_name>
       </contact>
+      <type>private</type>
       <session_id>sess-001</session_id>
+      <payment_due>
+        <amount currency="eur">10.00</amount>
+        <status>unpaid</status>
+      </payment_due>
     </customer>
-    <payment_due>
-      <amount currency="eur">10.00</amount>
-      <status>unpaid</status>
-    </payment_due>
     """
     full_xml = build_msg("new_registration", xml, message_id=msg_id)
 
@@ -224,9 +228,9 @@ def test_registration_and_idempotency():
 def test_profile_update():
     section("TEST 3: profile_update")
     new_email = f"updated-{TEST_ID}@test.be"
-    # profile_update XSD: user_id, email, dob, contact, type, company_name, vat_number, company_id, payment_due
+    # profile_update XSD: identity_uuid, email, dob, contact, type, company_name, vat_number, company_id, payment_due
     xml = f"""
-      <user_id>{TEST_USER_ID}</user_id>
+      <identity_uuid>{TEST_USER_ID}</identity_uuid>
       <email>{new_email}</email>
       <date_of_birth>1990-01-01</date_of_birth>
       <contact>
@@ -259,7 +263,7 @@ def test_profile_update():
 
 def test_cancellation():
     section("TEST 4: cancel_registration")
-    xml = f"<user_id>{TEST_USER_ID}</user_id><session_id>s1</session_id><reason>Testing</reason>"
+    xml = f"<identity_uuid>{TEST_USER_ID}</identity_uuid><session_id>s1</session_id><reason>Testing</reason>"
     publish(build_msg("cancel_registration", xml), "kassa.incoming.cancel")
     wait(8, "receiver processing cancellation")
 
@@ -269,11 +273,16 @@ def test_cancellation():
         ["x_user_id", "=", TEST_USER_ID],
         ["active", "in", [True, False]]
     ]
-    partner = models.execute_kw(
+    partner_results = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [domain], {"fields": ["active"]}
-    )[0]
+    )
 
+    if not partner_results:
+        report_result("Receiver: cancel_registration", False, "Partner not found in Odoo")
+        return
+
+    partner = partner_results[0]
     ok = partner["active"] is False
     report_result("Receiver: cancel_registration (soft delete)", ok, f"Active: {partner['active']}")
 
@@ -298,6 +307,9 @@ def test_pos_order_sync():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -347,6 +359,9 @@ def test_refund_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -385,6 +400,9 @@ def test_invoice_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -433,6 +451,9 @@ def test_wallet_payment_flow():
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search",
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
+    if not partner_ids:
+        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        return
     partner_id = partner_ids[0]
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
@@ -507,7 +528,7 @@ def test_xsd_rejection():
     # Missing required <contact> block
     broken_xml = f"""
     <customer>
-      <user_id>broken-{TEST_ID}</user_id>
+      <identity_uuid>broken-{TEST_ID}</identity_uuid>
       <type>private</type>
     </customer>
     """

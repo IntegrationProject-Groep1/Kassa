@@ -10,7 +10,7 @@
     <xs:complexType><xs:sequence>
       <xs:element name="header">
         <xs:complexType><xs:sequence>
-          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="message_id" type="UUIDType"/>
           <xs:element name="timestamp"  type="xs:dateTime"/>
           <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
             <xs:enumeration value="iot_gateway"/>
@@ -23,9 +23,8 @@
       </xs:element>
       <xs:element name="body">
         <xs:complexType><xs:sequence>
-          <xs:element name="email"      type="xs:string"/>
           <xs:element name="badge_id"   type="xs:string"/>
-          <xs:element name="scan_type">
+          <xs:element name="location">
             <xs:simpleType><xs:restriction base="xs:string">
               <xs:enumeration value="entrance"/>
               <xs:enumeration value="bar"/>
@@ -33,8 +32,7 @@
               <xs:enumeration value="session"/>
             </xs:restriction></xs:simpleType>
           </xs:element>
-          <xs:element name="location"   type="xs:string" minOccurs="0"/>
-          <xs:element name="scanned_at" type="xs:dateTime" minOccurs="0"/>
+          <xs:element name="scanned_at" type="xs:dateTime"/>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>

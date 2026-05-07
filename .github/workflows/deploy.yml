@@ -33,10 +33,17 @@ jobs:
         id: vars
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
+            BRANCH="${GITHUB_REF#refs/heads/}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "tag=prod" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "dev" ]]; then
             echo "tag=dev" >> $GITHUB_OUTPUT
           else
-            # workflow_run triggered by a tag (e.g. v1.2.3) → prod
-            echo "tag=prod" >> $GITHUB_OUTPUT
+            echo "tag=$BRANCH" >> $GITHUB_OUTPUT
           fi
 
       - name: Lowercase repo name

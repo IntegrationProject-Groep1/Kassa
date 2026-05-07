@@ -125,17 +125,54 @@ def _buffer_message(
         entries = _read_buffer()
 
         if len(entries) >= BUFFER_MAX_MESSAGES:
-            send_error_to_queue(
-                "offline_queue_full",
-                None,
-                f"Outbox full: {len(entries)}/{BUFFER_MAX_MESSAGES} — message not buffered: {routing_key}")
+            # Buffer is full: create and buffer a system_error notification instead.
+            # Check if a notification already exists to prevent unbounded growth.
+            already_notified = (
+                entries
+                and entries[-1].get("routing_key") == "kassa.errors"
+                and "offline_queue_full" in str(entries[-1].get("xml", ""))
+            )
+
+            if not already_notified:
+                # Create and buffer system_error only once per overflow.
+                # This ensures the admin is notified when the connection is restored
+                # without causing the buffer file to grow indefinitely.
+                error_root = ET.Element("message")
+                _make_header(error_root, "system_error")
+                error_body = ET.SubElement(error_root, "body")
+                ET.SubElement(error_body, "error_code").text = "offline_queue_full"
+                ET.SubElement(
+                    error_body, "error_description"
+                ).text = f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
+                error_xml = _to_xml(error_root)
+
+                # Add the error to the buffer (bypassing the size check)
+                # So we can ensure the admin is notified
+                error_entry: dict[str, str | int] = {
+                    "routing_key": "kassa.errors",
+                    "xml": error_xml
+                }
+                entries.append(error_entry)
+                BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+                BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
+                logger.warning(
+                    f"⚠️  Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}"
+                )
+                logger.info(
+                    f"📁 Buffered offline_queue_full error notification: {len(entries)}/{BUFFER_MAX_MESSAGES + 1}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️  Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}"
+                )
+
             raise BufferFullError(
                 f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
             )
 
         entries.append(entry)
         BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
+        BUFFER_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding='utf-8')
         logger.info(
             f"📁 Buffered message: {routing_key} ({len(entries)}/{BUFFER_MAX_MESSAGES})")
 
@@ -191,7 +228,8 @@ def flush_buffer() -> list[tuple[str, int]]:
                 json.dumps(
                     remaining,
                     ensure_ascii=False,
-                    indent=2))
+                    indent=2),
+                encoding='utf-8')
         else:
             BUFFER_FILE.unlink(missing_ok=True)
 
@@ -434,25 +472,16 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
 
 
-def _make_header(root, msg_type, correlation_id=None, order="B", source="kassa"):
+def _make_header(root, msg_type, correlation_id=None, source="kassa"):
     """
-    Build standard message header in the exact order required by the contract.
-    Two orders are used in the literal documentation:
-    Order A (Log/Badge): id, timestamp, source, type, version
-    Order B (Order/Payment): id, type, source, timestamp, version
+    Build standard message header in the exact order required by the contract v2.3.
+    Standard Order (used for all messages): id, timestamp, source, type, version
     """
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
-
-    if order == "A":
-        ET.SubElement(header, "timestamp").text = now_utc()
-        ET.SubElement(header, "source").text = source
-        ET.SubElement(header, "type").text = msg_type
-    else:  # Order B
-        ET.SubElement(header, "type").text = msg_type
-        ET.SubElement(header, "source").text = source
-        ET.SubElement(header, "timestamp").text = now_utc()
-
+    ET.SubElement(header, "timestamp").text = now_utc()
+    ET.SubElement(header, "source").text = source
+    ET.SubElement(header, "type").text = msg_type
     ET.SubElement(header, "version").text = "2.0"
 
     if correlation_id:
@@ -473,7 +502,7 @@ def _to_xml(root) -> str:
 # ===========================================================================
 
 def build_consumption_order_xml(
-    items, customer_id=None, user_id=None,
+    items, customer_id=None, identity_uuid=None,
     customer_type="private",
     email=None, address=None, is_anonymous=False
 ) -> str:
@@ -484,7 +513,7 @@ def build_consumption_order_xml(
         items:             List of dicts, each with keys: id, description,
                            quantity, unit_price, vat_rate, currency, item_type.
         customer_id:       Odoo res.partner ID as a string (None for anonymous).
-        user_id:           CRM x_user_id (external UUID) of the customer.
+        identity_uuid:     CRM identity_uuid (external UUID) of the customer.
         customer_type:     "private" or "company"
         email:             Customer email address.
         address:           Dict of address fields (street, city, zip, country).
@@ -492,20 +521,22 @@ def build_consumption_order_xml(
                            the <customer> block is omitted from the XML entirely.
     """
     root = ET.Element("message")
-    _make_header(root, "consumption_order", order="B")
+    _make_header(root, "consumption_order")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "is_anonymous").text = str(is_anonymous).lower()
 
     if not is_anonymous:
         cust = ET.SubElement(body, "customer")
         ET.SubElement(cust, "id").text = str(customer_id)
-        ET.SubElement(cust, "user_id").text = str(user_id) if user_id else ""
+        ET.SubElement(cust, "identity_uuid").text = str(identity_uuid) if identity_uuid else ""
         ET.SubElement(cust, "type").text = customer_type
         ET.SubElement(cust, "email").text = str(email) if email else ""
-        if address:
-            addr = ET.SubElement(cust, "address")
-            for k, v in address.items():
-                ET.SubElement(addr, k).text = str(v) if v else ""
+    if address:
+        addr = ET.SubElement(cust, "address")
+        for key in ["street", "number", "postal_code", "city", "country"]:
+            value = address.get(key)
+            if value is not None:
+                ET.SubElement(addr, key).text = str(value)
 
     items_el = ET.SubElement(body, "items")
     for i in (items or []):
@@ -530,7 +561,7 @@ def build_consumption_order_xml(
 def build_payment_registered_xml(
     payment_context, invoice_status, amount_paid,
     due_date, trx_id, payment_method,
-    invoice_id=None, user_id=None, correlation_id=None, email=None
+    invoice_id=None, identity_uuid=None, correlation_id=None, email=None
 ) -> str:
     """
     Build a payment_registered message confirming a payment was processed.
@@ -544,29 +575,28 @@ def build_payment_registered_xml(
         trx_id:          Unique transaction ID from the payment terminal.
         payment_method:  How the customer paid, e.g. 'cash', 'card', 'wallet'.
         invoice_id:      Odoo invoice ID, included if available.
-        user_id:         CRM x_user_id of the customer, if known.
+        identity_uuid:   CRM identity_uuid of the customer, if known.
         correlation_id:  message_id of the original consumption_order, used by
                          the CRM to link this payment back to the sale.
     """
     root = ET.Element("message")
-    _make_header(root, "payment_registered", correlation_id, order="B")
+    _make_header(root, "payment_registered", correlation_id)
     body = ET.SubElement(root, "body")
-    if email:
-        ET.SubElement(body, "email").text = str(email)
-    ET.SubElement(body, "payment_context").text = payment_context
 
-    if user_id:
-        ET.SubElement(body, "user_id").text = user_id
+    if identity_uuid:
+        ET.SubElement(body, "identity_uuid").text = identity_uuid
 
     inv = ET.SubElement(body, "invoice")
     if invoice_id:
         ET.SubElement(inv, "id").text = invoice_id
-    ET.SubElement(inv, "status").text = invoice_status
 
     ap = ET.SubElement(inv, "amount_paid")
     ap.text = str(amount_paid)
     ap.set("currency", "eur")
+    ET.SubElement(inv, "status").text = invoice_status
     ET.SubElement(inv, "due_date").text = due_date
+
+    ET.SubElement(body, "payment_context").text = payment_context
 
     trx = ET.SubElement(body, "transaction")
     ET.SubElement(trx, "id").text = trx_id
@@ -575,38 +605,39 @@ def build_payment_registered_xml(
     return _to_xml(root)
 
 
-def build_payment_status_xml(user_id: str, status: str) -> str:
+def build_payment_status_xml(identity_uuid: str, status: str) -> str:
     """Build payment_status message for registration payments."""
     root = ET.Element("message")
-    _make_header(root, "payment_status", order="B")
+    _make_header(root, "payment_status")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
+    ET.SubElement(body, "identity_uuid").text = str(identity_uuid) if identity_uuid else ""
     ET.SubElement(body, "payment_status").text = status
     return _to_xml(root)
 
 
 def build_invoice_request_xml(
-    user_id: str, invoice_data: dict, correlation_id: str
+    identity_uuid: str, invoice_data: dict, correlation_id: str
 ) -> str:
     """
     Build an invoice_request message asking the CRM to generate a formal invoice.
 
     Args:
-        user_id:       CRM x_user_id of the customer requesting the invoice.
-        invoice_data:  Dict with keys: name, email, address (dict), and
-                       optionally vat_number for B2B invoices.
+        identity_uuid:  CRM identity_uuid of the customer requesting the invoice.
+        invoice_data:   Dict with keys: name, email, address (dict), and
+                        optionally vat_number for B2B invoices.
         correlation_id: message_id of the original sale this invoice covers.
     """
     if not correlation_id:
         raise ValueError("correlation_id is required for invoice_request")
 
     root = ET.Element("message")
-    _make_header(root, "invoice_request", correlation_id, order="B", source="crm")
+    _make_header(root, "invoice_request", correlation_id, source="crm")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = user_id
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
 
     inv = ET.SubElement(body, "invoice_data")
 
+    contact = ET.SubElement(inv, "contact")
     first_name = invoice_data.get("first_name")
     last_name = invoice_data.get("last_name")
 
@@ -619,8 +650,8 @@ def build_invoice_request_xml(
         if not last_name:
             last_name = parts[1] if len(parts) > 1 else ""
 
-    ET.SubElement(inv, "first_name").text = str(first_name or "")
-    ET.SubElement(inv, "last_name").text = str(last_name or "")
+    ET.SubElement(contact, "first_name").text = str(first_name or "")
+    ET.SubElement(contact, "last_name").text = str(last_name or "")
     ET.SubElement(inv, "email").text = str(invoice_data.get("email") or "")
 
     addr = ET.SubElement(inv, "address")
@@ -638,29 +669,29 @@ def build_invoice_request_xml(
     return _to_xml(root)
 
 
-def build_badge_assigned_xml(badge_id: str, email: str) -> str:
+def build_badge_assigned_xml(badge_id: str, identity_uuid: str) -> str:
     """
     Build a badge_assigned message notifying the CRM that a badge was linked.
 
     Args:
         badge_id: Physical badge/RFID identifier (e.g. 'BADGE-RF-00142').
-        email:    Customer email address the badge was assigned to.
+        identity_uuid: CRM identity_uuid the badge was assigned to.
     """
     root = ET.Element("message")
-    _make_header(root, "badge_assigned", order="A")
+    _make_header(root, "badge_assigned")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "email").text = email
+    ET.SubElement(body, "identity_uuid").text = identity_uuid
     ET.SubElement(body, "badge_id").text = badge_id
     ET.SubElement(body, "assigned_at").text = now_utc()
     return _to_xml(root)
 
 
-def build_wallet_balance_update_xml(user_id: str, new_balance: float) -> str:
+def build_wallet_balance_update_xml(identity_uuid: str, new_balance: float) -> str:
     """Build wallet_balance_update message"""
     root = ET.Element("message")
-    _make_header(root, "wallet_balance_update", order="B")
+    _make_header(root, "wallet_balance_update")
     body = ET.SubElement(root, "body")
-    ET.SubElement(body, "user_id").text = str(user_id) if user_id else ""
+    ET.SubElement(body, "identity_uuid").text = str(identity_uuid) if identity_uuid else ""
 
     bal = ET.SubElement(body, "wallet_balance")
     bal.text = f"{new_balance:.2f}"
@@ -674,7 +705,7 @@ def build_refund_processed_xml(
     refund_type: str, refund_amount: float,
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
-    user_id=None, description=None, new_wallet_balance=None,
+    identity_uuid=None, description=None, new_wallet_balance=None,
     is_anonymous=False, email=None
 ) -> str:
     """
@@ -691,21 +722,18 @@ def build_refund_processed_xml(
         refund_reason:           Canonical reason: 'duplicate_payment',
                                  'customer_request', or 'system_error'.
         original_transaction_id: Terminal transaction ID from the original sale.
-        user_id:                 CRM x_user_id if the customer is known.
+        identity_uuid:           CRM identity_uuid if the customer is known.
         description:             Optional longer description of the refund.
         new_wallet_balance:      Updated wallet balance after the refund, if the
                                  refund method was 'badge_wallet'. Included in the XML
                                  so the CRM can update its own balance record.
     """
     root = ET.Element("message")
-    _make_header(root, "refund_processed", original_payment_msg_id, order="B")
+    _make_header(root, "refund_processed", original_payment_msg_id)
     body = ET.SubElement(root, "body")
 
-    if email:
-        ET.SubElement(body, "email").text = str(email)
-
-    if not is_anonymous and user_id:
-        ET.SubElement(body, "user_id").text = user_id
+    if not is_anonymous and identity_uuid:
+        ET.SubElement(body, "identity_uuid").text = identity_uuid
 
     ET.SubElement(body, "refund_type").text = refund_type
 
@@ -751,7 +779,7 @@ def send_error_to_queue(
     arrive out of order relative to the events that caused them.
     """
     root = ET.Element("message")
-    _make_header(root, "system_error", order="B")
+    _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
 
@@ -779,9 +807,31 @@ def send_error_to_queue(
 def build_log_xml(level: str, action: str, message: str) -> str:
     """Build a log XML message."""
     root = ET.Element("message")
-    _make_header(root, "log", order="A")
+    _make_header(root, "log")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "level").text = level
     ET.SubElement(body, "action").text = action
     ET.SubElement(body, "message").text = message
     return _to_xml(root)
+
+
+def extract_message_id(xml_content: str) -> str | None:
+    """
+    Extract message_id from the header of an XML message.
+    Used for de-duplication and traceability tracking.
+
+    Args:
+        xml_content: XML string (e.g., from build_invoice_request_xml)
+
+    Returns:
+        message_id string if found, None otherwise
+    """
+    if not xml_content:
+        return None
+    try:
+        from defusedxml import ElementTree as DET
+
+        root = DET.fromstring(xml_content)
+        return root.findtext('.//message_id')
+    except Exception:
+        return None

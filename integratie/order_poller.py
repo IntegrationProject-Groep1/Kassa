@@ -114,6 +114,8 @@ class OrderPoller:
         self.models = None
         self.processed_orders = collections.OrderedDict()
         self._session_config_cache: dict[int, str | None] = {}
+        self._last_consumption_has_topup = False
+        self._last_consumption_topup_amount = 0.0
 
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
@@ -212,7 +214,7 @@ class OrderPoller:
         try:
 
             base_fields = [
-                'id', 'name', 'email', 'is_company', 'parent_id',
+                'id', 'name', 'email', 'is_company', 'parent_id', 'x_badge_id',
                 'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
             ]
             try:
@@ -349,17 +351,81 @@ class OrderPoller:
                     self._process_consumption(order, customer_info, is_anonymous)
                 )
 
-            # Story 7: Invoice Request logic
-            if (order.get('to_invoice') or order.get('account_move')) and order.get('amount_total', 0) >= 0:
-                if is_anonymous:
-                    logger.warning(
-                        "⚠️ Klant zonder account: geen invoice_request aangemaakt"
+            if (
+                self._last_consumption_has_topup
+                and customer_info
+                and customer_info.get('x_badge_id')
+                and not order.get('x_wallet_updated')
+            ):
+                try:
+                    current_balance = float(customer_info.get('x_wallet_balance') or 0.0)
+                    topup_amount = float(self._last_consumption_topup_amount or 0.0)
+                    new_balance = round(current_balance + topup_amount, 2)
+
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'write',
+                        [[customer_info['id']], {'x_wallet_balance': new_balance}]
+                    )
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'write',
+                        [[order_id], {'x_wallet_updated': True}]
+                    )
+
+                    wallet_xml = sender.build_wallet_balance_update_xml(
+                        identity_uuid=customer_info.get('x_user_id'),
+                        new_balance=new_balance
+                    )
+                    wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+                    all_sent = all_sent and wallet_sent
+                except Exception as e:
+                    logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
+                    all_sent = False
+
+            # Story 7 & B2B Auto-Invoice: Invoice Request logic
+            should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous
+            is_company = customer_info and customer_info.get('customer_type') == 'company'
+
+            # Check if invoice request should be sent:
+            # 1. Manually flagged via to_invoice or account_move fields (Story 7)
+            # 2. Automatically for all company orders (B2B Auto-Invoice)
+            if should_invoice and ((order.get('to_invoice') or order.get('account_move')) or is_company):
+                # De-duplication: Check if invoice_request was already sent for this order
+                # (indicated by x_invoice_message_id field)
+                if order.get('x_invoice_message_id'):
+                    logger.info(
+                        f"ℹ️  Invoice request already sent for order {order_id} "
+                        f"(msg_id: {order.get('x_invoice_message_id')})"
                     )
                 else:
-                    # Use consumption_msg_id as correlation_id per Flow 10 docs
+                    # Use consumption_msg_id as correlation_id per Flow 10 docs.
+                    # This keeps invoice_request correlated to the original consumption_order.
                     corr_id = consumption_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
-                    inv_sent = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    invoice_result = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    if isinstance(invoice_result, tuple):
+                        inv_sent, inv_msg_id = invoice_result
+                    else:
+                        inv_sent, inv_msg_id = invoice_result, None
                     all_sent = all_sent and inv_sent
+
+                    # Store invoice_message_id for future de-duplication
+                    if inv_msg_id:
+                        try:
+                            self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'write',
+                                [[order_id], {'x_invoice_message_id': inv_msg_id}]
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
+
+                    if is_company:
+                        logger.info(f"📄 B2B Auto-Invoice triggered for company order {order_id}")
+            elif order.get('amount_total', 0) >= 0 and is_anonymous:
+                logger.warning(
+                    "⚠️ Klant zonder account: geen invoice_request aangemaakt"
+                )
 
             # Update in-memory cache immediately to suppress duplicates within
             # the current session, regardless of whether messages were sent or buffered.
@@ -441,18 +507,40 @@ class OrderPoller:
 
         return info
 
-    def _process_invoice_request(self, order, customer_info, correlation_id: str) -> bool:
-        """Build and send the invoice_request XML message for a linked partner."""
+    def _process_invoice_request(self, order, customer_info, correlation_id: str) -> tuple[bool, str | None]:
+        """
+        Build and send the invoice_request XML message for a linked partner.
+
+        Returns:
+            Tuple of (success: bool, invoice_message_id: str | None)
+            Where invoice_message_id is extracted from the generated message header
+            for de-duplication tracking via x_invoice_message_id field.
+        """
+        # Contract Section 11.1: VAT number is mandatory for companies
+        if customer_info.get('customer_type') == 'company' and not (customer_info.get('vat') or "").strip():
+            logger.error(
+                "🚫 Invoice request blocked: Company customer (ID=%s) missing VAT number per contract Section 11.1",
+                customer_info.get('id')
+            )
+            sender.send_error_to_queue(
+                "invalid_xml_format",
+                None,
+                f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
+            )
+            raise sender.XSDValidationError(
+                f"Invoice request blocked: Company customer (Odoo ID={customer_info.get('id')}) has no VAT number"
+            )
+
         country_code = customer_info.get('country_code') or "be"
 
         # Story 7 Compliance: Only send invoice_request if partner has valid x_user_id
-        user_id = customer_info.get('x_user_id')
-        if not user_id:
+        identity_uuid = customer_info.get('x_user_id')
+        if not identity_uuid:
             logger.warning(
                 f"⚠️ Partner {customer_info.get('id')} has no x_user_id: "
                 "skipping invoice_request per Story 7"
             )
-            return False
+            return False, None
 
         # Split street address into street name and house number
         street_full = customer_info.get('street') or "Onbekend"
@@ -473,11 +561,17 @@ class OrderPoller:
         }
 
         xml_str = sender.build_invoice_request_xml(
-            user_id=user_id,
+            identity_uuid=identity_uuid,
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
-        return sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
+
+        # Extract message_id for de-duplication tracking
+        invoice_msg_id = sender.extract_message_id(xml_str)
+
+        # Send the message and return result with message_id
+        success = sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
+        return success, invoice_msg_id
 
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle refund logic."""
@@ -508,7 +602,7 @@ class OrderPoller:
             )
 
             wallet_xml = sender.build_wallet_balance_update_xml(
-                user_id=customer_info.get('x_user_id'),
+                identity_uuid=customer_info.get('x_user_id'),
                 new_balance=new_balance
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
@@ -560,7 +654,7 @@ class OrderPoller:
             refund_method=refund_method,
             refund_reason=DEFAULT_REFUND_REASON,
             original_transaction_id=str(order['id']),
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             is_anonymous=is_anonymous,
             email=customer_info.get('email') if customer_info else None
         )
@@ -571,6 +665,8 @@ class OrderPoller:
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None]:
         """Handle regular sales orders."""
         items = []
+        self._last_consumption_has_topup = False
+        self._last_consumption_topup_amount = 0.0
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
 
         if line_ids:
@@ -642,6 +738,9 @@ class OrderPoller:
                     'currency': 'eur',
                     'item_type': 'wallet_topup' if is_topup else None
                 })
+                if is_topup:
+                    self._last_consumption_has_topup = True
+                    self._last_consumption_topup_amount += total_incl
 
         customer_type = customer_info.get('customer_type', 'private') if customer_info else "private"
 
@@ -661,7 +760,7 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             customer_type=customer_type,
             email=customer_info.get('email', '') if customer_info else '',
             address=address,
@@ -708,7 +807,7 @@ class OrderPoller:
             due_date=order.get('create_date', '').split(" ")[0] if order.get('create_date') else "1970-01-01",
             trx_id=str(order['id']),
             payment_method=payment_method,
-            user_id=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             correlation_id=correlation_id,
             email=customer_info.get('email') if customer_info else None
         )
@@ -756,12 +855,18 @@ class OrderPoller:
             for p in partners:
                 try:
                     badge_id = p['x_badge_id']
-                    email = p.get('email') or p.get('x_user_id')
-                    if not email:
-                        raise ValueError("badge_assigned: email missing on partner")
-                    logger.info(f"🏷️ Badge {badge_id} assigned to {email} — sending badge_assigned")
+                    identity_uuid = p.get('x_user_id')
+                    if not identity_uuid:
+                        logger.error(
+                            "❌ badge_assigned: x_user_id missing for partner %s, "
+                            "cannot send badge_assigned message (UUID required)",
+                            p['id']
+                        )
+                        continue
 
-                    badge_xml = sender.build_badge_assigned_xml(badge_id, email)
+                    logger.info(f"🏷️ Badge {badge_id} assigned to {identity_uuid} — sending badge_assigned")
+
+                    badge_xml = sender.build_badge_assigned_xml(badge_id, identity_uuid)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
                         success_ids.append(p['id'])
                 except sender.XSDValidationError as ve:
@@ -847,9 +952,45 @@ class OrderPoller:
                 'pos.order', 'send_partner_bus_event',
                 [partner_id, 0.0, 'paid', partner_name],
             )
-            logger.info("[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment", partner_id)
+            logger.info(
+                "[POLLER] ✓ Partner %s marked as paid after Inschrijvingskassa payment",
+                partner_id
+            )
         except Exception as e:
             logger.warning("[POLLER] Could not mark partner %s as paid: %s", partner_id, e)
+
+    def run_once(self):
+        """Perform a single polling cycle (fetch, process, badge assignments)."""
+        logger.info("Order Poller performing single run...")
+        try:
+            orders = self.get_pending_orders()
+
+            # Pre-fetch country data for all partners in the fetched orders
+            partner_ids = list(set([o['partner_id'][0] for o in orders if o['partner_id']]))
+            country_map = {}
+            if partner_ids:
+                partners = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.partner', 'read',
+                    [partner_ids, ['country_id']]
+                )
+                country_ids = list(set([p['country_id'][0] for p in partners if p.get('country_id')]))
+                if country_ids:
+                    countries = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.country', 'read',
+                        [country_ids, ['id', 'code']]
+                    )
+                    country_map = {c['id']: c.get('code', '').lower() for c in countries}
+
+            for order in orders:
+                self.process_order(order, country_map=country_map)
+
+            self.poll_badge_assignments()
+            sender.flush_buffer()
+            logger.info("Order Poller single run completed.")
+        except Exception as e:
+            logger.error(f"Error in Order Poller single run: {e}")
 
     def poll(self, interval=5):
         """Run the polling loop indefinitely."""
