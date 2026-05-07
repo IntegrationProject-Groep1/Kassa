@@ -1,0 +1,54 @@
+[
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.invoice",
+    "xml": "<?xml version='1.0' encoding='utf-8'?>\n<message><header><message_id>7f529c3c-cf3e-4845-9581-a4017253ee8a</message_id><timestamp>2026-05-07T12:27:21Z</timestamp><source>crm</source><type>invoice_request</type><version>2.0</version><correlation_id>550e8400-e29b-41d4-a716-446655440000</correlation_id></header><body><identity_uuid>user-123</identity_uuid><invoice_data><contact><first_name>John</first_name><last_name>Doe</last_name></contact><email>john@example.com</email><address><street>Test St</street><number>1</number><postal_code>1234</postal_code><city>TestCity</city><country>be</country></address></invoice_data></body></message>",
+    "exchange": null,
+    "record_id": 100,
+    "model": "pos.order"
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  },
+  {
+    "routing_key": "kassa.payments.consumption",
+    "xml": "<?xml version=\"1.0\"?><!DOCTYPE message [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><message><header><message_id>&xxe;</message_id></header></message>",
+    "exchange": null
+  }
+]
