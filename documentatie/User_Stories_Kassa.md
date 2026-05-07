@@ -27,7 +27,7 @@ _Als kassamedewerker wil ik dat nieuwe inschrijvingen vanuit de website automati
 
 **Gegeven** dat receiver.py verbonden is met RabbitMQ op kassa.incoming
 
-**En** er een geldig new_registration XML-bericht binnenkomt met user_id, email, first_name, last_name (via het contact-element), date_of_birth en optioneel company_name en vat_number
+**En** er een geldig new_registration XML-bericht binnenkomt met identity_uuid, email, first_name, last_name (via het contact-element), date_of_birth en optioneel company_name en vat_number
 
 **En** er bestaat nog geen klant in Odoo met dit x_user_id
 
@@ -291,14 +291,14 @@ _Als bezoeker die zijn ticket nog niet online betaald heeft, wil ik dit veilig a
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
 1. Herken in het pollerscript dat het om een inschrijvingsbetaling gaat via het POS-sessieprofiel ("Inschrijvingskassa") of een custom veld op `pos.order`. Bestellingen van de "Inschrijvingskassa" krijgen altijd `payment_context=registration`.
-2. Bouw de `payment_registered` XML op met `payment_context=registration` en `user_id` van de gekoppelde klant. Valideer vóór verzending en stuur naar routing key `kassa.payments.registration`.
-3. Bouw de `payment_status` XML op met `user_id` van de klant en `payment_status=paid`. Valideer en stuur naar routing key `kassa.frontend.payment`.
+2. Bouw de `payment_registered` XML op met `payment_context=registration` en `identity_uuid` van de gekoppelde klant. Valideer vóór verzending en stuur naar routing key `kassa.payments.registration`.
+3. Bouw de `payment_status` XML op met `identity_uuid` van de klant en `payment_status=paid`. Valideer en stuur naar routing key `kassa.frontend.payment`.
 4. Markeer de bestelling als verzonden in Odoo.
 
 **DEFINITION OF DONE:**
 
 - [ ] `payment_registered` verstuurd met `payment_context=registration` via routing key `kassa.payments.registration`
-- [ ] `payment_status` verstuurd naar `frontend.payments` met `user_id` van de klant (verplicht veld in `schema_payment_status.xsd`)
+- [ ] `payment_status` verstuurd naar `frontend.payments` met `identity_uuid` van de klant (verplicht veld in `schema_payment_status.xsd`)
 - [ ] Uitgaande XML valide tegen `schema_payment_registered_v2.1.xsd` en `schema_payment_status.xsd`
 - [ ] `x_rabbitmq_sent=True` gezet op de order
 
@@ -366,7 +366,7 @@ _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annul
 
 **Gegeven** dat een order in Odoo een negatief totaalbedrag heeft en geen gekoppelde klant heeft (anoniem)
 **Wanneer** poller.py deze order detecteert
-**Dan** wordt een refund_processed XML verstuurd zonder `<user_id>`
+**Dan** wordt een refund_processed XML verstuurd zonder `<identity_uuid>`
 **En** is de methode cash of card_reversal (nooit badge_wallet)
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
@@ -380,7 +380,7 @@ _Als kassamedewerker wil ik een verkeerd aangeslagen drankje direct kunnen annul
 
 - [ ] `refund_processed` verstuurd met `correlation_id` gelijk aan de `message_id` van de originele `payment_registered` (UUID-formaat, niet `ORDER-{id}`)
 - [ ] Badge Wallet refund: `x_wallet_balance` verhoogd in Odoo én `wallet_balance_update` verstuurd naar `frontend.payments`
-- [ ] Anonieme refund: geen `<user_id>` in bericht, methode altijd `cash` of `card_reversal`
+- [ ] Anonieme refund: geen `<identity_uuid>` in bericht, methode altijd `cash` of `card_reversal`
 - [ ] Uitgaande XML valide tegen `schema_refund_processed.xsd`
 - [ ] `x_rabbitmq_sent=True` gezet op de terugbetalingsorder
 

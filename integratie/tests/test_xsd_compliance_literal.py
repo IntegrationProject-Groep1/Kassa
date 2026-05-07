@@ -24,14 +24,14 @@ class TestXSDCompliance:
             'quantity': 1, 'unit_price': 10.0, 'total_amount': 10.0,
             'vat_rate': 21, 'currency': 'eur'
         }]
-        xml = sender.build_consumption_order_xml(items, customer_id="1", user_id=str(uuid.uuid4()))
+        xml = sender.build_consumption_order_xml(items, customer_id="1", identity_uuid=str(uuid.uuid4()))
         valid, errors = validate_xml(xml, "schema_consumption_order_v2.3.xsd")
         assert valid, f"XSD Error in consumption_order: {errors}"
 
     def test_payment_registered_compliance(self):
         xml = sender.build_payment_registered_xml(
             "consumption", "paid", 10.0, "2026-05-06", "TRX1", "on_site",
-            user_id=str(uuid.uuid4()), correlation_id=str(uuid.uuid4())
+            identity_uuid=str(uuid.uuid4()), correlation_id=str(uuid.uuid4())
         )
         valid, errors = validate_xml(xml, "schema_payment_registered_v2.1.xsd")
         assert valid, f"XSD Error in payment_registered: {errors}"
@@ -39,7 +39,7 @@ class TestXSDCompliance:
     def test_refund_processed_compliance(self):
         xml = sender.build_refund_processed_xml(
             str(uuid.uuid4()), "consumption_item", 5.0, "cash", "customer_request",
-            "TRX1", user_id=str(uuid.uuid4())
+            "TRX1", identity_uuid=str(uuid.uuid4())
         )
         valid, errors = validate_xml(xml, "schema_refund_processed.xsd")
         assert valid, f"XSD Error in refund_processed: {errors}"
@@ -63,7 +63,7 @@ class TestXSDCompliance:
         assert valid, f"XSD Error in wallet_balance_update: {errors}"
 
     def test_badge_assigned_compliance(self):
-        xml = sender.build_badge_assigned_xml("BADGE1", "user@example.com")
+        xml = sender.build_badge_assigned_xml("BADGE1", str(uuid.uuid4()))
         valid, errors = validate_xml(xml, "schema_badge_assigned.xsd")
         assert valid, f"XSD Error in badge_assigned: {errors}"
 

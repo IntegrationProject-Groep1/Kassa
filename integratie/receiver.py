@@ -88,29 +88,10 @@ _schema_cache: dict[str, etree.XMLSchema] = {}
 
 def _normalize_for_validation(xml_text: str, msg_type: str) -> str:
     """
-    Keep validation strict for the current XSD, with a compatibility bridge for
-    CRM main's new_registration payload where payment_due is still nested under
-    customer instead of body.
+    Contract v2.3 alignment: No normalization required as CRM and Kassa
+    now follow the same centralized schema definitions.
     """
-    if msg_type != "new_registration":
-        return xml_text
-
-    try:
-        root = ET.fromstring(xml_text)
-        body = root.find("body")
-        customer = body.find("customer") if body is not None else None
-        if body is None or customer is None or body.find("payment_due") is not None:
-            return xml_text
-
-        payment_due = customer.find("payment_due")
-        if payment_due is None:
-            return xml_text
-
-        customer.remove(payment_due)
-        body.append(payment_due)
-        return ET.tostring(root, encoding="unicode")
-    except Exception:
-        return xml_text
+    return xml_text
 
 
 # ── Idempotency cache ──────────────────────────────────────────────────────────
@@ -210,14 +191,16 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     if customer is None:
         raise ValueError("new_registration: <customer> missing in <body>")
 
-    user_id = (customer.findtext("user_id") or "").strip()
+    identity_uuid = (customer.findtext("identity_uuid") or "").strip()
     email = (customer.findtext("email") or "").strip()
 
     contact = customer.find("contact")
     first_name = (contact.findtext("first_name") or "").strip() if contact is not None else ""
     last_name = (contact.findtext("last_name") or "").strip() if contact is not None else ""
     contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
-    name = (customer.findtext("name") or "").strip() or contact_name
+
+    # Fallback for old 'name' tag if present, but priority to first+last name
+    name = contact_name or (customer.findtext("name") or "").strip()
 
     company_name = (customer.findtext("company_name") or "").strip()
     ctype = (customer.findtext("type") or "private").strip().lower()
@@ -228,29 +211,31 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     session_id = (customer.findtext("session_id") or "").strip()
     session_title = (customer.findtext("session_title") or "").strip()
 
-    payment_due_el = body.find("payment_due")
+    payment_due_el = customer.find("payment_due")
     if payment_due_el is None:
-        payment_due_el = customer.find("payment_due")
+        # Compatibility fallback if payment_due was moved to body by normalization
+        payment_due_el = body.find("payment_due")
+
     if payment_due_el is None:
-        raise ValueError("new_registration: <payment_due> missing in <body>")
+        raise ValueError("new_registration: <payment_due> missing in <customer>")
 
     status = (payment_due_el.findtext("status") or "unpaid").strip()
     amount = parse_xml_float(payment_due_el.find("amount"))
 
-    if not user_id:
-        raise ValueError("new_registration: user_id missing in <customer>")
+    if not identity_uuid:
+        raise ValueError("new_registration: identity_uuid missing in <customer>")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
-        [[["x_user_id", "=", user_id]]],
+        [[["x_user_id", "=", identity_uuid]]],
         {"fields": ["id", "name", "x_user_id"], "limit": 1},
     )
 
     partner_vals: Dict[str, Any] = {
         "name": name or company_name or "Unknown",
         "email": email,
-        "x_user_id": user_id,
+        "x_user_id": identity_uuid,
         "is_company": ctype == "company",
         "x_session_id": session_id,
         "x_payment_status": status,
@@ -296,31 +281,32 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     if body is None:
         raise ValueError("profile_update: <body> missing")
 
-    user_id = (body.findtext("user_id") or "").strip()
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
     email = (body.findtext("email") or "").strip()
 
     contact = body.find("contact")
     first_name = (contact.findtext("first_name") or "").strip() if contact is not None else ""
     last_name = (contact.findtext("last_name") or "").strip() if contact is not None else ""
     contact_name = " ".join(part for part in [first_name, last_name] if part).strip()
-    name = (body.findtext("name") or "").strip() or contact_name
+
+    # Fallback for old 'name' tag if present
+    name = contact_name or (body.findtext("name") or "").strip()
 
     company_name = (body.findtext("company_name") or "").strip()
     ctype = (body.findtext("type") or "private").strip().lower()
     vat_number = (body.findtext("vat_number") or "").strip()
     dob_str = (body.findtext("date_of_birth") or "").strip()
     company_id = (body.findtext("company_id") or "").strip()
-    company_name = (body.findtext("company_name") or "").strip()
 
     payment_due_el = body.find("payment_due")
 
-    if not user_id:
-        raise ValueError("profile_update: user_id missing in <body>")
+    if not identity_uuid:
+        raise ValueError("profile_update: identity_uuid missing in <body>")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
-        [[["x_user_id", "=", user_id]]],
+        [[["x_user_id", "=", identity_uuid]]],
         {"fields": ["id", "name"], "limit": 1},
     )
 
@@ -365,7 +351,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         )
         logger.info("[PROFILE_UPDATE] ✓ Profile updated: Odoo ID=%s", partner_id)
     else:
-        update_vals["x_user_id"] = user_id
+        update_vals["x_user_id"] = identity_uuid
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "create",
@@ -438,17 +424,17 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
     if body is None:
         raise ValueError("cancel_registration: <body> missing")
 
-    user_id = (body.findtext("user_id") or "").strip()
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
     session_id = (body.findtext("session_id") or "").strip()
     reason = (body.findtext("reason") or "").strip()
 
-    if not user_id:
-        raise ValueError("cancel_registration: user_id missing in <body>")
+    if not identity_uuid:
+        raise ValueError("cancel_registration: identity_uuid missing in <body>")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
-        [[["x_user_id", "=", user_id]]],
+        [[["x_user_id", "=", identity_uuid]]],
         {"fields": ["id", "name"], "limit": 1},
     )
 
