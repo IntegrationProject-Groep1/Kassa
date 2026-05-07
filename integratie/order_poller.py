@@ -374,7 +374,7 @@ class OrderPoller:
                     )
 
                     wallet_xml = sender.build_wallet_balance_update_xml(
-                        user_id=customer_info.get('x_user_id'),
+                        identity_uuid=customer_info.get('x_user_id'),
                         new_balance=new_balance
                     )
                     wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
