@@ -74,7 +74,7 @@ class TestXSDCompliance:
 
     def test_system_error_compliance(self):
         root = standardET.Element("message")
-        sender._make_header(root, "system_error", order="B")
+        sender._make_header(root, "system_error")
         body = standardET.SubElement(root, "body")
         standardET.SubElement(body, "error_code").text = "database_error"
         standardET.SubElement(body, "error_description").text = "Something went wrong"
