@@ -58,7 +58,7 @@ def build_new_registration_xml(user_id: str) -> str:
     </header>
     <body>
         <customer>
-            <user_id>{user_id}</user_id>
+            <identity_uuid>{user_id}</identity_uuid>
             <email>{TEST_EMAIL}</email>
             <date_of_birth>1996-01-01</date_of_birth>
             <contact>
@@ -112,20 +112,21 @@ def publish_new_registration():
         properties=pika.BasicProperties(delivery_mode=2)
     )
     conn.close()
-    print(f"  Sent:    user_id={user_uuid}")
+    print(f"  Sent:    identity_uuid={user_uuid}")
     print(f"  Name:    {TEST_NAME}  |  Company: {TEST_COMPANY}")
+    return user_uuid
 
 
 # ── Stap 2: wachten tot partner in Odoo staat ─────────────────────────────────
 
-def wait_for_partner(uid, models, timeout=20):
+def wait_for_partner(uid, models, user_uuid, timeout=20):
     print(f"Stap 2: wachten tot receiver klant aanmaakt in Odoo (max {timeout}s)...")
     for i in range(timeout):
         time.sleep(1)
         results = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "search_read",
-            [[["x_user_id", "=", TEST_USER_ID]]],
+            [[["x_user_id", "=", user_uuid]]],
             {"fields": ["id", "name", "x_user_id", "is_company"], "limit": 1}
         )
         if results:
@@ -229,9 +230,9 @@ def main():
     print(f"Odoo connected (uid={uid})")
     print()
 
-    publish_new_registration()
+    user_uuid = publish_new_registration()
     print()
-    partner_id = wait_for_partner(uid, models)
+    partner_id = wait_for_partner(uid, models, user_uuid)
     print()
     order_id = create_order(uid, models, partner_id)
     print()
