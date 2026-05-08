@@ -246,12 +246,26 @@ class TestBadgeScanBadgePipeline:
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
-    def test_non_entrance_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+    def test_bar_scan_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "bar"))
+
+        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
         models = MagicMock()
         models.execute_kw.return_value = [_partner()]
         mock_conn.return_value = (1, models)
 
-        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "bar"))
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "session"))
 
         mock_send.assert_not_called()
         mock_error.assert_not_called()
@@ -361,12 +375,26 @@ class TestBadgeScanQRPipeline:
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
-    def test_non_entrance_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+    def test_bar_scan_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "bar"))
+
+        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
         models = MagicMock()
         models.execute_kw.return_value = [_partner()]
         mock_conn.return_value = (1, models)
 
-        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "bar"))
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "session"))
 
         mock_send.assert_not_called()
         mock_error.assert_not_called()

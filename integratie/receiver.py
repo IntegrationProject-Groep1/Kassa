@@ -415,7 +415,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
             [[["x_user_id", "=", identity_uuid_scanned]]],
             {"fields": _partner_fields, "limit": 1},
         )
-        scan_label = "qr_code"
+        scan_label = f"qr_code({identity_uuid_scanned})"
         not_found_code = "profile_not_found"
         not_found_desc = f"identity_uuid {identity_uuid_scanned} not found in local Odoo cache."
     else:
@@ -440,7 +440,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         partner["id"], scan_label, location,
     )
 
-    if location == "entrance":
+    if location in ("entrance", "bar", "main_bar"):
         if not identity_uuid:
             logger.warning("[BADGE_SCANNED] check_in skipped: no identity_uuid for partner %s", partner["id"])
             return

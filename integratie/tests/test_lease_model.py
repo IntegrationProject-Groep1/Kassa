@@ -145,10 +145,17 @@ class TestBadgeScanCheckIn:
         mock_send.assert_not_called()
 
     @patch("receiver.send_typed_message")
-    def test_non_entrance_scan_does_not_trigger_lease(self, mock_send, odoo):
+    def test_bar_scan_triggers_lease(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[_badge_partner()], True]
+        receiver.process_badge_scan(_badge_root("bar"), uid, models)
+        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+
+    @patch("receiver.send_typed_message")
+    def test_session_scan_does_not_trigger_lease(self, mock_send, odoo):
         uid, models = odoo
         models.execute_kw.return_value = [_badge_partner()]
-        receiver.process_badge_scan(_badge_root("bar"), uid, models)
+        receiver.process_badge_scan(_badge_root("session"), uid, models)
         mock_send.assert_not_called()
 
     @patch("receiver.send_error_to_queue")
@@ -182,10 +189,17 @@ class TestQRScanCheckIn:
         mock_builder.assert_called_once_with(identity_uuid=_UUID, badge_id=None)
 
     @patch("receiver.send_typed_message")
-    def test_qr_scan_non_entrance_does_not_trigger_lease(self, mock_send, odoo):
+    def test_qr_bar_scan_triggers_lease(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[_badge_partner()], True]
+        receiver.process_badge_scan(_qr_root("bar"), uid, models)
+        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+
+    @patch("receiver.send_typed_message")
+    def test_qr_session_scan_does_not_trigger_lease(self, mock_send, odoo):
         uid, models = odoo
         models.execute_kw.return_value = [_badge_partner()]
-        receiver.process_badge_scan(_qr_root("bar"), uid, models)
+        receiver.process_badge_scan(_qr_root("session"), uid, models)
         mock_send.assert_not_called()
 
     @patch("receiver.send_typed_message")

@@ -301,7 +301,7 @@ class TestProcessBadgeScan:
             "<header><message_id>550e8400-e29b-41d4-a716-446655440004</message_id></header>"
             "<body>"
             f"<badge_id>{badge_id}</badge_id>"
-            "<location>bar</location>"
+            "<location>session</location>"
             "<scanned_at>2026-04-20T10:00:00Z</scanned_at>"
             "</body>"
             "</message>"
@@ -317,9 +317,9 @@ class TestProcessBadgeScan:
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
 
-        assert "Processing badge(BADGE-001) scan from bar at 2026-04-20T10:00:00Z" in caplog.text
+        assert "Processing badge(BADGE-001) scan from session at 2026-04-20T10:00:00Z" in caplog.text
         assert "Recognised: Odoo ID=3" in caplog.text
-        assert "Location=bar" in caplog.text
+        assert "Location=session" in caplog.text
 
     @patch("receiver.send_error_to_queue")
     def test_unknown_badge_sends_error(self, mock_send_error, odoo):
