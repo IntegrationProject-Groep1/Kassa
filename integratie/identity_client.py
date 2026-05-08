@@ -21,10 +21,25 @@ from typing import Tuple, Optional, Dict
 
 import pika
 from defusedxml import ElementTree as DET
+from lxml import etree
 
 from sender import RABBIT_HOST, RABBIT_USER, RABBIT_PASS, RABBIT_PORT, RABBIT_VHOST
 
 logger = logging.getLogger(__name__)
+
+_SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
+_IDENTITY_RESPONSE_SCHEMA_PATH = os.path.join(_SCHEMA_DIR, "schema_identity_response.xsd")
+_identity_response_schema: "etree.XMLSchema | None" = None
+
+
+def _get_identity_response_schema() -> "etree.XMLSchema | None":
+    global _identity_response_schema
+    if _identity_response_schema is None:
+        try:
+            _identity_response_schema = etree.XMLSchema(etree.parse(_IDENTITY_RESPONSE_SCHEMA_PATH))
+        except Exception as exc:
+            logger.warning("[IDENTITY] Could not load identity_response XSD: %s", exc)
+    return _identity_response_schema
 
 
 # Configuration — caller may override via environment
@@ -100,6 +115,17 @@ def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, Optional[str
     Values in the payload may be None when XML elements are missing, so
     use Optional[str] for dictionary values.
     """
+    schema = _get_identity_response_schema()
+    if schema is not None:
+        try:
+            doc = etree.fromstring(xml_text.encode("utf-8") if isinstance(xml_text, str) else xml_text)
+            if not schema.validate(doc):
+                errors = str(schema.error_log)
+                logger.warning("[IDENTITY] identity_response failed XSD validation: %s", errors)
+                raise IdentityError("Identity response did not pass XSD validation: %s" % errors)
+        except etree.XMLSyntaxError as exc:
+            raise IdentityError("Identity response is not valid XML: %s" % exc)
+
     root = DET.fromstring(xml_text)
     status = (root.findtext("status") or "").strip()
     if status == "ok":
@@ -115,11 +141,6 @@ def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, Optional[str
         error_code = (root.findtext("error_code") or "").strip()
         message = (root.findtext("message") or "").strip()
         return status, {"error_code": error_code, "message": message}
-
-    # Should be unreachable because we always return in the branches above,
-    # but provide an explicit error to satisfy static checkers.
-    raise IdentityError("Malformed identity response")
-    return status, {"error_code": None, "message": None}
 
 
 def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> str:
@@ -211,7 +232,7 @@ def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> 
 def create_user(email: str, source_system: str = "frontend") -> str:
     """Call identity.user.create.request and return master_uuid on success.
 
-    Raises IdentityEmailAlreadyExists when error_code is EMAIL_ALREADY_EXISTS.
+    Raises IdentityEmailAlreadyExists when error_code is EMAIL_ALREADY_EXISTS (§15.4).
     Raises IdentityUnavailableError when RPC fails or times out.
     Raises IdentityError for other identity errors.
     """
