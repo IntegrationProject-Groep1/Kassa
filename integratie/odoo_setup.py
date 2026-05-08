@@ -97,9 +97,13 @@ def setup_database(
 
         # 3. Wait for the database to be authenticatable
         # We try both the configured user AND 'admin' (because fresh DBs only have admin).
-        print(f"Waiting for database '{odoo_db}' to become available...", flush=True)
-        deadline = time.time() + 300
+        # Odoo database initialisation on constrained k8s nodes can take 10-15 min,
+        # so we wait up to 20 minutes before giving up.
+        timeout_seconds = 1200
+        print(f"Waiting for database '{odoo_db}' to become available (up to {timeout_seconds//60} min)...", flush=True)
+        deadline = time.time() + timeout_seconds
         uid = None
+        elapsed_report = 0
         while time.time() < deadline:
             try:
                 # Try target user first
@@ -118,9 +122,13 @@ def setup_database(
                         return True
             except Exception:
                 pass
-            time.sleep(5)
+            time.sleep(10)
+            elapsed_report += 10
+            if elapsed_report % 60 == 0:
+                remaining = int(deadline - time.time())
+                print(f"Still waiting for database '{odoo_db}'... ({remaining}s remaining)", flush=True)
 
-        print(f"Database '{odoo_db}' was not available after creation attempt.", flush=True)
+        print(f"Database '{odoo_db}' was not available after {timeout_seconds//60} minutes.", flush=True)
         return False
     except Exception as e:
         print(f"Unexpected error in setup_database: {e}", flush=True)
