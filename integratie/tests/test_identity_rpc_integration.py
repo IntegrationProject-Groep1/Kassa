@@ -1,7 +1,9 @@
 import os
 import threading
 import time
+import socket
 import pika
+import pytest
 
 from integratie import identity_client
 
@@ -32,6 +34,13 @@ def _reply_worker(rabbit_host, queue_name, reply_xml):
 def test_identity_rpc_with_real_rabbitmq():
     rabbit = os.environ.get("RABBIT_HOST", "localhost")
     queue = os.environ.get("IDENTITY_ROUTING_KEY_CREATE", "identity.user.create.request")
+
+    # Skip if no RabbitMQ is reachable on the configured host/port
+    port = int(os.environ.get("RABBIT_PORT", "5672"))
+    try:
+        socket.create_connection((rabbit, port), timeout=0.5)
+    except OSError:
+        pytest.skip("RabbitMQ not reachable on %s:%d" % (rabbit, port))
 
     # Start a background thread to reply to requests
     reply_xml = """<?xml version='1.0'?>

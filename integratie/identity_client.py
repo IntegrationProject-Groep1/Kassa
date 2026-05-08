@@ -22,7 +22,7 @@ from typing import Tuple, Optional, Dict
 import pika
 from defusedxml import ElementTree as DET
 
-from sender import connect_to_rabbitmq
+from sender import RABBIT_HOST, RABBIT_USER, RABBIT_PASS, RABBIT_PORT, RABBIT_VHOST
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,25 @@ def _build_lookup_uuid_xml(master_uuid: str) -> str:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
 
 
+def connect_to_rabbitmq():
+    """Create and return a fresh (conn, channel) pair.
+
+    Exposed at module level so tests can monkeypatch `identity_client.connect_to_rabbitmq`.
+    """
+    credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    params = pika.ConnectionParameters(
+        host=RABBIT_HOST,
+        port=RABBIT_PORT,
+        virtual_host=RABBIT_VHOST,
+        credentials=credentials,
+        heartbeat=60,
+        blocked_connection_timeout=10,
+    )
+    conn = pika.BlockingConnection(params)
+    channel = conn.channel()
+    return conn, channel
+
+
 def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, str]]:
     """Return (status, payload_dict). On error status include error_code/message."""
     root = DET.fromstring(xml_text)
@@ -102,6 +121,8 @@ def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> 
     """
     attempts = RPC_RETRIES
     for attempt in range(attempts):
+        conn = None
+        channel = None
         try:
             conn, channel = connect_to_rabbitmq()
 
@@ -118,7 +139,7 @@ def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> 
                 timestamp=int(time.time()),
             )
 
-            # Publish — use empty exchange to target a queue, or allow routing keys
+            # Publish — empty exchange targets a queue, or allow routing keys
             channel.basic_publish(
                 exchange="",
                 routing_key=routing_key,
@@ -154,6 +175,23 @@ def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> 
                 time.sleep(0.5 * (2 ** attempt))
                 continue
             raise IdentityUnavailableError("Identity service unreachable: %s" % exc)
+
+        finally:
+            # Ensure we close the channel and connection to delete the exclusive queue
+            try:
+                if channel is not None and not getattr(channel, "is_closed", False):
+                    try:
+                        channel.close()
+                    except Exception:
+                        pass
+                if conn is not None and not getattr(conn, "is_closed", False):
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            except Exception:
+                # Best-effort cleanup; do not mask the original exception
+                pass
 
 
 def create_user(email: str, source_system: str = "frontend") -> str:
