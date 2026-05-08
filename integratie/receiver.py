@@ -81,6 +81,7 @@ SCHEMA_MAP = {
     "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
     "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
+    "user_event": os.path.join(SCHEMA_DIR, "schema_user_event.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -611,9 +612,10 @@ def start_listening():
                 def _user_events_callback(ch2, method2, props2, body2):
                     try:
                         txt = body2.decode("utf-8")
-                        logger.info("[USER_EVENTS] Received minimal user event: %s", txt[:200])
-                    except Exception:
-                        logger.warning("[USER_EVENTS] Malformed user event")
+                        validate_xml(txt, "user_event")
+                        logger.info("[USER_EVENTS] Received user event: %s", txt[:200])
+                    except Exception as _ue_exc:
+                        logger.warning("[USER_EVENTS] Malformed or invalid user event: %s", _ue_exc)
                     ch2.basic_ack(delivery_tag=method2.delivery_tag)
 
                 channel.basic_consume(queue=ue_queue, on_message_callback=_user_events_callback)
