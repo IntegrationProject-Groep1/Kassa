@@ -31,7 +31,7 @@ Successful response:
 </identity_response>
 ```
 
-Error example (email exists):
+Error example:
 
 ```xml
 <identity_response>
@@ -40,6 +40,11 @@ Error example (email exists):
   <message>Een gebruiker met dit e-mailadres bestaat al. Gebruik lookup endpoint.</message>
 </identity_response>
 ```
+
+Other known error codes: `CREATE_FAILED`, `LOOKUP_FAILED`, `NOT_FOUND`.
+Note: the current identity service implementation is idempotent for create — duplicate emails
+return status=ok with the existing master_uuid. EMAIL_ALREADY_EXISTS is in the contract (§15.4)
+and handled defensively, but may not be returned by the current service version.
 
 - Caller rules:
   - Call Identity RPC (create) before sending `new_registration` to CRM.
