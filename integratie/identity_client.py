@@ -94,8 +94,12 @@ def connect_to_rabbitmq():
     return conn, channel
 
 
-def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, str]]:
-    """Return (status, payload_dict). On error status include error_code/message."""
+def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, Optional[str]]]:
+    """Return (status, payload_dict). On error status include error_code/message.
+
+    Values in the payload may be None when XML elements are missing, so
+    use Optional[str] for dictionary values.
+    """
     root = DET.fromstring(xml_text)
     status = (root.findtext("status") or "").strip()
     if status == "ok":
@@ -111,6 +115,11 @@ def _parse_identity_response(xml_text: str) -> Tuple[str, Dict[str, str]]:
         error_code = (root.findtext("error_code") or "").strip()
         message = (root.findtext("message") or "").strip()
         return status, {"error_code": error_code, "message": message}
+
+    # Should be unreachable because we always return in the branches above,
+    # but provide an explicit error to satisfy static checkers.
+    raise IdentityError("Malformed identity response")
+    return status, {"error_code": None, "message": None}
 
 
 def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> str:
@@ -193,6 +202,11 @@ def _rpc_call(routing_key: str, body_xml: str, timeout: float = RPC_TIMEOUT) -> 
                 # Best-effort cleanup; do not mask the original exception
                 pass
 
+    # Should never be reached because callers either return a response or
+    # an IdentityUnavailableError is raised above, but include an explicit
+    # raise to satisfy static analysis.
+    raise IdentityUnavailableError("Identity service did not reply")
+
 
 def create_user(email: str, source_system: str = "frontend") -> str:
     """Call identity.user.create.request and return master_uuid on success.
@@ -211,11 +225,12 @@ def create_user(email: str, source_system: str = "frontend") -> str:
         return master_uuid
     else:
         if payload.get("error_code") == "EMAIL_ALREADY_EXISTS":
-            raise IdentityEmailAlreadyExists(payload.get("message", ""), email)
-        raise IdentityError(payload.get("message", "Unknown identity error"))
+            msg = payload.get("message") or ""
+            raise IdentityEmailAlreadyExists(msg, email)
+        raise IdentityError(payload.get("message") or "Unknown identity error")
 
 
-def lookup_by_email(email: str) -> Optional[Dict[str, str]]:
+def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
     xml = _build_lookup_email_xml(email)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_EMAIL, xml)
     status, payload = _parse_identity_response(resp_xml)
@@ -224,7 +239,7 @@ def lookup_by_email(email: str) -> Optional[Dict[str, str]]:
     return None
 
 
-def lookup_by_uuid(master_uuid: str) -> Optional[Dict[str, str]]:
+def lookup_by_uuid(master_uuid: str) -> Optional[Dict[str, Optional[str]]]:
     xml = _build_lookup_uuid_xml(master_uuid)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_UUID, xml)
     status, payload = _parse_identity_response(resp_xml)
