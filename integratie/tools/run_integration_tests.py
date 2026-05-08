@@ -143,11 +143,12 @@ def ensure_opened_session(uid, models):
 def build_msg(msg_type, body_xml, message_id=None, correlation_id=None):
     m_id = message_id or str(uuid.uuid4())
     corr_id = correlation_id or str(uuid.uuid4())
-    source = "crm"
-    if msg_type in ("new_registration", "profile_update", "cancel_registration"):
-        source = "crm"
-    elif msg_type == "badge_scanned":
-        source = "iot_gateway"
+
+    source_map = {
+        "badge_scanned": "iot_gateway",
+        "event_ended":   "frontend",
+    }
+    source = source_map.get(msg_type, "crm")
 
     header_parts = [
         f"<message_id>{m_id}</message_id>",
@@ -157,14 +158,15 @@ def build_msg(msg_type, body_xml, message_id=None, correlation_id=None):
         "<version>2.0</version>"
     ]
 
-    # new_registration REQUIRES correlation_id per XSD v2.3
-    # profile_update/cancel_registration: optional
-    # badge_scanned: NO correlation_id allowed
-    if msg_type == "new_registration":
+    # Types that REQUIRE correlation_id per their XSD
+    require_corr_id = {"new_registration", "wallet_lease_grant", "wallet_remote_topup"}
+    # Types that MUST NOT include correlation_id per their XSD
+    forbid_corr_id  = {"badge_scanned"}
+
+    if msg_type in require_corr_id:
         header_parts.append(f"<correlation_id>{corr_id}</correlation_id>")
-    elif msg_type in ("profile_update", "cancel_registration"):
-        if correlation_id:  # Only add if explicitly provided for these types
-            header_parts.append(f"<correlation_id>{correlation_id}</correlation_id>")
+    elif msg_type not in forbid_corr_id and correlation_id:
+        header_parts.append(f"<correlation_id>{correlation_id}</correlation_id>")
 
     header = "".join(header_parts)
 
@@ -567,6 +569,147 @@ def test_monitoring_log():
     report_result("System: Monitoring Integration", ok, reason)
 
 
+# ── TEST CATEGORY: AUTHORITY LEASE MODEL ─────────────────────────────────────
+
+def test_lease_grant():
+    """CRM grants Kassa wallet authority — balance and lease_id must be written to Odoo."""
+    section("TEST 12: Wallet Lease Grant")
+    uid, models = get_rpc()
+
+    partner_list = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["id", "x_lease_active"], "limit": 1},
+    )
+    if not partner_list:
+        report_result("Lease: wallet_lease_grant", False, "Test partner not found — run registration first")
+        return
+
+    partner_id = partner_list[0]["id"]
+    lease_id = f"LEASE-{TEST_ID}"
+
+    # Direct Odoo write to prepare the expected pre-state (lease requested, not yet granted)
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+        [[partner_id], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
+    )
+
+    xml = (
+        f"<identity_uuid>{TEST_USER_ID}</identity_uuid>"
+        f'<current_balance currency="eur">75.00</current_balance>'
+        f"<lease_id>{lease_id}</lease_id>"
+    )
+    publish(build_msg("wallet_lease_grant", xml), "kassa.incoming.lease")
+    wait(10, "receiver processing wallet_lease_grant")
+
+    result = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["x_wallet_balance", "x_lease_id", "x_lease_active"], "limit": 1},
+    )
+    if not result:
+        report_result("Lease: wallet_lease_grant", False, "Partner not found after grant")
+        return
+
+    p = result[0]
+    ok = p["x_wallet_balance"] == 75.0 and p["x_lease_id"] == lease_id and p["x_lease_active"] is True
+    report_result(
+        "Lease: wallet_lease_grant", ok,
+        f"balance={p['x_wallet_balance']}, lease_id={p['x_lease_id']}, active={p['x_lease_active']}"
+    )
+
+
+def test_lease_remote_topup():
+    """CRM pushes a remote top-up during an active lease — balance must increase atomically."""
+    section("TEST 13: Remote Wallet Top-up")
+    uid, models = get_rpc()
+
+    result = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["id", "x_wallet_balance", "x_lease_active"], "limit": 1},
+    )
+    if not result:
+        report_result("Lease: wallet_remote_topup", False, "Test partner not found")
+        return
+
+    p = result[0]
+    if not p["x_lease_active"]:
+        report_result("Lease: wallet_remote_topup", False, "Prerequisite: no active lease (run test_lease_grant first)")
+        return
+
+    initial_balance = float(p["x_wallet_balance"] or 0.0)
+
+    xml = (
+        f"<identity_uuid>{TEST_USER_ID}</identity_uuid>"
+        f'<add_amount currency="eur">20.00</add_amount>'
+        "<reason>festival top-up</reason>"
+    )
+    publish(build_msg("wallet_remote_topup", xml), "kassa.incoming.lease")
+    wait(10, "receiver processing wallet_remote_topup")
+
+    after = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["x_wallet_balance"], "limit": 1},
+    )
+    if not after:
+        report_result("Lease: wallet_remote_topup", False, "Partner not found after topup")
+        return
+
+    new_balance = float(after[0]["x_wallet_balance"] or 0.0)
+    expected = round(initial_balance + 20.0, 2)
+    ok = abs(new_balance - expected) < 0.01
+    report_result(
+        "Lease: wallet_remote_topup", ok,
+        f"balance: {initial_balance:.2f} + 20.00 → {new_balance:.2f} (expected {expected:.2f})"
+    )
+
+
+def test_lease_topup_rejected_without_active_lease():
+    """Remote top-up must be silently rejected when no active lease exists."""
+    section("TEST 14: Remote Top-up Rejected (no active lease)")
+    uid, models = get_rpc()
+
+    result = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["id", "x_wallet_balance"], "limit": 1},
+    )
+    if not result:
+        report_result("Lease: topup_rejected_no_lease", False, "Test partner not found")
+        return
+
+    partner_id = result[0]["id"]
+    balance_before = float(result[0]["x_wallet_balance"] or 0.0)
+
+    # Explicitly clear the lease so the topup must be rejected
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+        [[partner_id], {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}],
+    )
+
+    xml = (
+        f"<identity_uuid>{TEST_USER_ID}</identity_uuid>"
+        f'<add_amount currency="eur">50.00</add_amount>'
+        "<reason>should be rejected</reason>"
+    )
+    publish(build_msg("wallet_remote_topup", xml), "kassa.incoming.lease")
+    wait(10, "receiver processing rejected topup")
+
+    after = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+        [[["x_user_id", "=", TEST_USER_ID]]],
+        {"fields": ["x_wallet_balance"], "limit": 1},
+    )
+    balance_after = float(after[0]["x_wallet_balance"] or 0.0) if after else balance_before
+    ok = abs(balance_after - balance_before) < 0.01
+    report_result(
+        "Lease: topup_rejected_no_lease", ok,
+        f"balance unchanged at {balance_after:.2f} (rejected top-up of 50.00)"
+    )
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -585,6 +728,9 @@ def main():
         test_anonymous_order_flow()
         test_xsd_rejection()
         test_monitoring_log()
+        test_lease_grant()
+        test_lease_remote_topup()
+        test_lease_topup_rejected_without_active_lease()
 
         section("SUMMARY")
         all_pass = True
