@@ -29,7 +29,7 @@ class TestVATValidationIncoming:
 
         body = ET.SubElement(root, "body")
         customer = ET.SubElement(body, "customer")
-        ET.SubElement(customer, "user_id").text = "user123"
+        ET.SubElement(customer, "identity_uuid").text = "uuid-123"
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         # Note: vat_number is intentionally missing
@@ -50,7 +50,7 @@ class TestVATValidationIncoming:
 
         body = ET.SubElement(root, "body")
         customer = ET.SubElement(body, "customer")
-        ET.SubElement(customer, "user_id").text = "user123"
+        ET.SubElement(customer, "identity_uuid").text = "uuid-123"
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         ET.SubElement(customer, "vat_number").text = "   "  # whitespace only
@@ -71,7 +71,7 @@ class TestVATValidationIncoming:
 
         body = ET.SubElement(root, "body")
         customer = ET.SubElement(body, "customer")
-        ET.SubElement(customer, "user_id").text = "user123"
+        ET.SubElement(customer, "identity_uuid").text = "uuid-123"
         ET.SubElement(customer, "name").text = "Acme Corp"
         ET.SubElement(customer, "type").text = "company"
         ET.SubElement(customer, "vat_number").text = "BE0123456789"
@@ -81,7 +81,7 @@ class TestVATValidationIncoming:
         ET.SubElement(payment_due, "amount").text = "100.00"
 
         models = MagicMock()
-        models.execute_kw.return_value = [{"id": 1, "name": "Acme Corp", "x_user_id": "user123"}]
+        models.execute_kw.return_value = [{"id": 1, "name": "Acme Corp", "x_user_id": "uuid-123"}]
 
         # Should not raise
         receiver.process_new_registration(root, uid=1, models=models)
@@ -97,7 +97,7 @@ class TestVATValidationIncoming:
 
         body = ET.SubElement(root, "body")
         customer = ET.SubElement(body, "customer")
-        ET.SubElement(customer, "user_id").text = "user456"
+        ET.SubElement(customer, "identity_uuid").text = "uuid-456"
         ET.SubElement(customer, "name").text = "John Doe"
         ET.SubElement(customer, "type").text = "private"
         # Note: vat_number is intentionally missing
@@ -252,7 +252,7 @@ class TestVATValidationCentralizedLogging:
 
         body = ET.SubElement(root, "body")
         customer = ET.SubElement(body, "customer")
-        ET.SubElement(customer, "user_id").text = "user_xyz"
+        ET.SubElement(customer, "identity_uuid").text = "uuid-xyz"
         ET.SubElement(customer, "name").text = "Missing VAT Corp"
         ET.SubElement(customer, "type").text = "company"
         # Missing vat_number

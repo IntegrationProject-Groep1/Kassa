@@ -33,8 +33,9 @@ RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 INCOMING_QUEUE = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
-TEST_USER_ID = None
+TEST_USER_ID = str(uuid.uuid4())
 TEST_NAME = "Test e2e Janssen"
+# Derive a stable test email from the generated UUID to avoid None errors
 TEST_EMAIL = f"janssen.{TEST_USER_ID[:8]}@testcompany.be"
 TEST_COMPANY = "Test e2e Company NV"
 TEST_VAT = "BE0999888777"
@@ -45,6 +46,7 @@ SEP = "-" * 60
 # ── Stap 1: new_registration XML publiceren ────────────────────────────────────
 
 def build_new_registration_xml(user_id: str) -> str:
+        """Build a new_registration XML message using the provided canonical user_id."""
         return f'''<?xml version="1.0" encoding="UTF-8"?>
 <message>
     <header>
@@ -56,19 +58,20 @@ def build_new_registration_xml(user_id: str) -> str:
     </header>
     <body>
         <customer>
+            <user_id>{user_id}</user_id>
             <email>{TEST_EMAIL}</email>
+            <date_of_birth>1996-01-01</date_of_birth>
             <contact>
                 <first_name>Test e2e</first_name>
                 <last_name>Janssen</last_name>
             </contact>
-            <company_name>{TEST_COMPANY}</company_name>
             <type>company</type>
+            <company_name>{TEST_COMPANY}</company_name>
             <vat_number>{TEST_VAT}</vat_number>
-            <user_id>{user_id}</user_id>
-                        <date_of_birth>1996-01-01</date_of_birth>
+            <session_id>sess-001</session_id>
         </customer>
         <payment_due>
-            <amount>50.00</amount>
+            <amount currency="eur">50.00</amount>
             <status>unpaid</status>
         </payment_due>
     </body>

@@ -127,14 +127,14 @@ class TestSenderXMLBuilders:
     def test_build_wallet_balance_update_xml(self):
         xml_out = sender.build_wallet_balance_update_xml("uid-555", 15.5)
         assert "<type>wallet_balance_update</type>" in xml_out
-        assert "<user_id>uid-555</user_id>" in xml_out
+        assert "<identity_uuid>uid-555</identity_uuid>" in xml_out
         assert '<wallet_balance currency="eur">15.50</wallet_balance>' in xml_out
 
     def test_build_badge_assigned_xml(self):
-        xml_out = sender.build_badge_assigned_xml("B-01", "uid-1")
+        xml_out = sender.build_badge_assigned_xml("B-01", "uid-123")
         assert "<type>badge_assigned</type>" in xml_out
         assert "<badge_id>B-01</badge_id>" in xml_out
-        assert "<user_id>uid-1</user_id>" in xml_out
+        assert "<identity_uuid>uid-123</identity_uuid>" in xml_out
 
 
 class TestSenderPublishing:

@@ -41,7 +41,7 @@ _PROFILES: list[dict[str, Any]] = [
             {"name": "Card"},
             {"name": "Customer Account", "create_if_missing": {"is_cash_count": False}},
         ],
-        "categ_names": ["Top-ups"],
+        "categ_names": ["Sessions", "Top-ups"],
     },
 ]
 

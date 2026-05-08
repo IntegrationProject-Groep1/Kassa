@@ -235,34 +235,6 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
     return True
 
 
-# ── Step 4: Custom fields ──────────────────────────────────────────────────────
-
-# Each value is a 3-tuple: (odoo_ttype, field_label, extra_vals_dict)
-# x_user_id and x_badge_id have index=True — looked up on every incoming message.
-# Note: x_age (computed from x_date_of_birth) is NOT created here — it is a
-# display-only convenience field defined in tools/setup_odoo.py for developers.
-# The runtime service uses x_date_of_birth directly and does not need x_age.
-_CUSTOM_FIELDS: dict[str, dict[str, tuple[str, str, dict]]] = {
-    "res.partner": {
-        "x_user_id":            ("char",    "External User ID",             {"index": True}),
-        "x_badge_id":           ("char",    "Badge ID",                     {"index": True}),
-        "x_wallet_balance":     ("float",   "Wallet Balance (EUR)",         {}),
-        "x_date_of_birth":      ("date",    "Date of Birth",                {}),
-        "x_outstanding_amount": ("float",   "Outstanding Amount (EUR)",     {}),
-        "x_payment_status":     ("char",    "Payment Status",               {}),
-    },
-    "pos.order": {
-        "x_rabbitmq_sent":      ("boolean", "Sent to RabbitMQ",             {}),
-        "x_wallet_updated":     ("boolean", "Wallet Update Processed",      {}),
-        "x_payment_message_id": ("char",    "Payment Message ID",           {}),
-    },
-    "product.template": {
-        "x_is_topup":       ("boolean", "Is Top-up Product",            {}),
-        "x_age_restricted": ("boolean", "Is Age Restricted (Alcohol)",  {}),
-    },
-}
-
-
 def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
     print("Checking custom fields...", flush=True)
     common, models = _common_and_models(odoo_url)
@@ -289,6 +261,8 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
         ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
     ]
+
+    fields_to_create = []
 
     for model, name, field_description, field_type, field_kwargs in fields_to_check:
         existing = _rpc(
@@ -326,7 +300,11 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
             "state": "manual",
         }
         create_vals.update(field_kwargs)
-        _rpc(models, odoo_db, uid, odoo_pass, "ir.model.fields", "create", [create_vals])
+        fields_to_create.append(create_vals)
+
+    if fields_to_create:
+        print(f"Creating {len(fields_to_create)} missing custom fields in batch...", flush=True)
+        _rpc(models, odoo_db, uid, odoo_pass, "ir.model.fields", "create", [fields_to_create])
 
     return True
 
@@ -389,11 +367,11 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
     return tax_map
 
 
-def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> tuple[int, int]:
+def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> tuple[int, int, int]:
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
-        return 0, 0
+        return 0, 0, 0
 
     def _ensure_category(name: str) -> int:
         records = _rpc(
@@ -410,7 +388,7 @@ def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass
             return records[0]["id"]
         return _rpc(models, odoo_db, uid, odoo_pass, "pos.category", "create", [{"name": name}], {"context": {}})
 
-    return _ensure_category("Top-ups"), _ensure_category("Drinks")
+    return _ensure_category("Top-ups"), _ensure_category("Drinks"), _ensure_category("Sessions")
 
 
 def ensure_payment_methods(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> list[int]:
@@ -463,6 +441,7 @@ def ensure_demo_products(
     odoo_pass: str,
     topup_cat_id: int,
     drinks_cat_id: int,
+    reg_cat_id: int,
     tax_map: dict[float, int],
 ) -> None:
     common, models = _common_and_models(odoo_url)
@@ -477,7 +456,7 @@ def ensure_demo_products(
         ("Water", "DRINK-002", 1.80, drinks_cat_id, 6.0, {}),
         ("Coffee", "DRINK-003", 2.20, drinks_cat_id, 6.0, {}),
         ("Beer", "DRINK-004", 3.00, drinks_cat_id, 21.0, {"x_age_restricted": True}),
-        ("Inschrijving", "INSCHR-001", 0.00, topup_cat_id, 0.0, {"type": "service", "pos_categ_ids": [(6, 0, [])]}),
+        ("Inschrijving", "REG-001", 0.0, reg_cat_id, 0.0, {}),
     ]
 
     for name, ref, price, pos_cat_id, tax_rate, extra_vals in products:
