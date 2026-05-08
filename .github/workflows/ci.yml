@@ -85,7 +85,7 @@ jobs:
       - name: Run Identity RPC Integration Tests
         run: |
           docker exec kassa_integratie pip install pytest --quiet
-          docker exec kassa_integratie python -m pytest integratie/tests/test_identity_rpc_integration.py -v
+          docker exec kassa_integratie python -m pytest tests/test_identity_rpc_integration.py -v
 
       - name: Cleanup
         if: always()
