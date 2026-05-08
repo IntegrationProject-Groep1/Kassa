@@ -81,6 +81,8 @@ SCHEMA_MAP = {
     "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
     "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
+    "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
+    "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -451,6 +453,70 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
         logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
 
 
+def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle a wallet_lease_grant message (Flow 26.2)."""
+    body = root.find("body")
+    if body is None:
+        raise ValueError("wallet_lease_grant: <body> missing")
+
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
+    balance = parse_xml_float(body.find("current_balance"))
+    lease_id = (body.findtext("lease_id") or "").strip()
+
+    if not identity_uuid:
+        raise ValueError("wallet_lease_grant: identity_uuid missing")
+
+    existing: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id", "name"], "limit": 1},
+    )
+
+    if existing:
+        partner_id = existing[0]["id"]
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [[partner_id], {"x_wallet_balance": balance, "x_lease_id": lease_id}],
+        )
+        logger.info("[WALLET_LEASE_GRANT] ✓ Balance updated for Odoo ID=%s: %s EUR", partner_id, balance)
+    else:
+        logger.warning("[WALLET_LEASE_GRANT] ⚠ Customer %s not found", identity_uuid)
+
+
+def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle a wallet_remote_topup message (Flow 26.6)."""
+    body = root.find("body")
+    if body is None:
+        raise ValueError("wallet_remote_topup: <body> missing")
+
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
+    amount = parse_xml_float(body.find("add_amount"))
+
+    if not identity_uuid:
+        raise ValueError("wallet_remote_topup: identity_uuid missing")
+
+    existing: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id", "x_wallet_balance"], "limit": 1},
+    )
+
+    if existing:
+        partner = existing[0]
+        new_balance = float(partner.get("x_wallet_balance", 0.0)) + amount
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [[partner["id"]], {"x_wallet_balance": new_balance}],
+        )
+        logger.info("[WALLET_REMOTE_TOPUP] ✓ Topup processed for Odoo ID=%s: +%s EUR", partner["id"], amount)
+    else:
+        logger.warning("[WALLET_REMOTE_TOPUP] ⚠ Customer %s not found", identity_uuid)
+
+
 # ── Central message processing ─────────────────────────────────────────────────
 def process_message(ch, method, properties, body):
     """
@@ -523,6 +589,10 @@ def process_message(ch, method, properties, body):
             process_badge_scan(root, uid, models)
         elif msg_type == "cancel_registration":
             process_cancel_registration(root, uid, models)
+        elif msg_type == "wallet_lease_grant":
+            process_wallet_lease_grant(root, uid, models)
+        elif msg_type == "wallet_remote_topup":
+            process_wallet_remote_topup(root, uid, models)
 
         if related_message_id:
             _remember_message_id(related_message_id)
