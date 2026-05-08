@@ -442,6 +442,9 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
 
     elif scan_type == "check_out":
+        if not identity_uuid:
+            logger.warning("[BADGE_SCANNED] check_out skipped: no identity_uuid for partner %s", partner["id"])
+            return
         if not partner.get("x_lease_active"):
             logger.info("[BADGE_SCANNED] check_out: no active lease for %s, nothing to return", identity_uuid)
             return
@@ -587,7 +590,10 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
     cleared_ids = []
     for partner in active_partners:
         try:
-            identity_uuid = partner.get("x_user_id") or ""
+            identity_uuid = partner.get("x_user_id")
+            if not identity_uuid:
+                logger.warning("[EVENT_ENDED] Skipping partner %s: no identity_uuid", partner.get("id"))
+                continue
             final_balance = float(partner.get("x_wallet_balance") or 0.0)
             lease_id = partner.get("x_lease_id") or ""
             tx_count = int(partner.get("x_lease_transaction_count") or 0)

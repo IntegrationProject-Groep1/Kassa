@@ -60,9 +60,33 @@ class PosOrder(models.Model):
         partner = self.env['res.partner'].browse(partner_id)
         if not partner.exists():
             raise ValueError(f"Partner {partner_id} does not exist.")
-        new_balance = round(float(partner.x_wallet_balance or 0.0) + float(delta), 2)
-        partner.write({'x_wallet_balance': new_balance})
-        return new_balance
+        self.env.cr.execute(
+            "UPDATE res_partner "
+            "SET x_wallet_balance = ROUND(COALESCE(x_wallet_balance, 0) + %s, 2) "
+            "WHERE id = %s RETURNING x_wallet_balance",
+            (float(delta), partner_id),
+        )
+        new_balance = self.env.cr.fetchone()[0]
+        partner.invalidate_recordset(['x_wallet_balance'])
+        return float(new_balance)
+
+    @api.model
+    def action_increment_lease_tx_count(self, partner_id):
+        """
+        Atomically increments x_lease_transaction_count by 1.
+
+        Called by order_poller after each successful consumption/top-up/refund
+        while a lease is active.  Using a direct SQL UPDATE avoids the
+        read-modify-write race between the poller and receiver threads.
+        """
+        self.env.cr.execute(
+            "UPDATE res_partner "
+            "SET x_lease_transaction_count = COALESCE(x_lease_transaction_count, 0) + 1 "
+            "WHERE id = %s RETURNING x_lease_transaction_count",
+            (partner_id,),
+        )
+        row = self.env.cr.fetchone()
+        return row[0] if row else 0
 
     @api.model
     def send_partner_bus_event(

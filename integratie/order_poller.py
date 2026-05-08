@@ -580,12 +580,16 @@ class OrderPoller:
         return success, invoice_msg_id
 
     def _increment_lease_tx_count(self, customer_info: dict) -> None:
-        """Increment x_lease_transaction_count for the active lease summary."""
-        new_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
+        """Atomically increment x_lease_transaction_count via a server-side method.
+
+        Using action_increment_lease_tx_count avoids the read-modify-write race
+        between the poller thread and the receiver thread (which can reset the
+        count to 0 on check-out at any moment).
+        """
         self.models.execute_kw(
             self.odoo_db, self.odoo_uid, self.odoo_pass,
-            'res.partner', 'write',
-            [[customer_info['id']], {'x_lease_transaction_count': new_count}]
+            'pos.order', 'action_increment_lease_tx_count',
+            [customer_info['id']],
         )
 
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> tuple[bool, str | None]:

@@ -173,6 +173,16 @@ class TestBadgeScanCheckOut:
         mock_send.assert_not_called()
         assert models.execute_kw.call_count == 1  # only search_read
 
+    @patch("receiver.send_typed_message")
+    def test_skips_if_no_identity_uuid(self, mock_send, odoo):
+        uid, models = odoo
+        partner = _badge_partner(lease_active=True)
+        partner["x_user_id"] = ""
+        models.execute_kw.return_value = [partner]
+        receiver.process_badge_scan(_badge_root("check_out"), uid, models)
+        mock_send.assert_not_called()
+        assert models.execute_kw.call_count == 1  # guard fires before any write
+
 
 # ── process_wallet_lease_grant ────────────────────────────────────────────────
 
@@ -328,6 +338,21 @@ class TestEventEnded:
         receiver.process_event_ended(_event_ended_root(), uid, models)
         assert models.execute_kw.call_count == 1  # only search_read
         mock_send.assert_not_called()
+
+    @patch("receiver.send_typed_message")
+    def test_skips_partner_without_identity_uuid(self, mock_send, odoo):
+        uid, models = odoo
+        partners = [
+            self._partner(1, "", 10.0, "L1", 2),       # no identity_uuid — must be skipped
+            self._partner(2, _UUID2, 5.0, "L2", 1),    # valid — must be processed
+        ]
+        models.execute_kw.side_effect = [partners, True]
+        receiver.process_event_ended(_event_ended_root(), uid, models)
+        assert mock_send.call_count == 1  # only the valid partner
+        write_call = models.execute_kw.call_args_list[1]
+        cleared_ids = write_call[0][5][0]
+        assert 1 not in cleared_ids
+        assert 2 in cleared_ids
 
     @patch("receiver.send_typed_message")
     def test_partial_failure_clears_only_successful_partners(self, mock_send, odoo):
