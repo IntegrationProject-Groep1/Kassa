@@ -1,10 +1,12 @@
-# Environment variables
+# Environment variables and secrets
 .env
-
-# Secrets & Keys
-keys/
-*.pem
+.env.local
+.env.*.local
 *.key
+*.pem
+secrets/
+keys/
+odoo.conf
 
 # Python
 __pycache__/
@@ -13,6 +15,8 @@ __pycache__/
 *.so
 .Python
 env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -38,11 +42,36 @@ ENV/
 env.bak/
 venv.bak/
 
-# IDEs
-.idea/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs and Editors
 .vscode/
+.idea/
 *.swp
 *.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Docker
+docker-compose.override.yml
 
 # Node
 node_modules/
+
+# Misc
+.git/
+.gitattributes
+integratie/out.txt
+.gemini/
+outbox/outbox.json

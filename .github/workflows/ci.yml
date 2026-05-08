@@ -1,0 +1,87 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "dev", "prod" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "dev", "prod" ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Least-privilege: jobs get read-only access by default.
+# Any job that needs write access must declare it explicitly.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r integratie/requirements-dev.txt
+          pip install pytest
+
+      - name: Linting
+        run: flake8 integratie/ --max-line-length=120
+
+      - name: Type Checking
+        run: mypy --config-file=mypy.ini -p integratie
+
+      - name: Unit Tests
+        run: pytest integratie/tests/ -v
+
+  integration:
+    name: Integration Tests (Docker Compose)
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: ${{ secrets.CI_POSTGRES_USER || 'odoo_test' }}
+      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'odoo_test_pwd' }}
+      ODOO_MASTER_PASS: ${{ secrets.CI_ODOO_MASTER_PASS || 'admin_test' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Odoo Config
+        run: |
+          sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
+
+      - name: Start Services
+        run: docker compose up -d --build
+
+      - name: Wait for Integration Service (Healthcheck)
+        run: |
+          echo "Waiting for kassa_integratie to become healthy..."
+          # Increased timeout to 10 minutes (60 * 10s) as Odoo setup can be slow in CI
+          for i in {1..60}; do
+            HEALTH=$(docker inspect --format='{{.State.Health.Status}}' kassa_integratie)
+            if [ "$HEALTH" == "healthy" ]; then
+              echo "✓ Service is healthy!"
+              exit 0
+            fi
+            echo "...current status: $HEALTH (waiting 10s, attempt $i/60)"
+            sleep 10
+          done
+          echo "❌ Service did not become healthy in time."
+          docker compose logs
+          exit 1
+
+      - name: Run Integration Tests
+        run: docker exec kassa_integratie python tools/run_integration_tests.py
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down

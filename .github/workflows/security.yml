@@ -1,0 +1,77 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ "main", "dev", "prod" ]
+  pull_request:
+    branches: [ "main", "dev", "prod" ]
+  schedule:
+    # Run a weekly scan on Sundays at midnight to catch newly discovered vulnerabilities
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: Python SAST & Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit pip-audit
+
+      - name: Run Bandit (Python Static Analysis)
+        run: |
+          # Scan integratie/ for security issues, ignoring the tests directory
+          # -ll limits to Medium and High severity, -ii limits to Medium and High confidence
+          bandit -r integratie/ -x integratie/tests/ -ll -ii
+
+      - name: Run pip-audit (Dependency Vulnerability Check)
+        run: |
+          # Scan requirements.txt for known vulnerable packages
+          pip-audit -r integratie/requirements.txt
+
+  secrets:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Deep fetch is required to scan the entire commit history
+
+      - name: TruffleHog Secret Scanner
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'HEAD' }}
+          extra_args: --only-verified
+
+  container-scan:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner on local filesystem
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

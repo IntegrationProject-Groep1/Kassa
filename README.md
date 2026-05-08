@@ -1,77 +1,319 @@
-# Odoo Kassa Integratie (Team Kassa)
+<div align="center">
 
-Dit project bevat de infrastructuur en bestandsstructuur voor de "Kassa" module van het Integratieproject Desideriushogeschool 2026. Het project is zo opgezet dat alle teamleden lokaal een Odoo- en Postgres-instantie kunnen draaien, gekoppeld aan een eigen Python-integratiecontainer.
+<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=230&amp;text=POS%20Integration&amp;desc=Odoo%20%E2%80%A2%20RabbitMQ%20%E2%80%A2%20Docker%20%E2%80%A2%20Python&amp;fontColor=58A6FF&amp;fontSize=54&amp;fontAlignY=42&amp;descAlignY=65&amp;descSize=18&amp;descColor=8b949e&amp;animation=fadeIn" width="100%"/>
 
-Volgens de architectuurregels schrijven we **géén code ín Odoo (geen modules)**. Alle scripts bevinden zich in de `integratie/` map en communiceren simpelweg via de XML-RPC API.
+<br>
 
-## 🚀 1. Opstarten van de omgeving (Docker)
+![Odoo](https://img.shields.io/badge/Odoo_POS-714B67?style=for-the-badge&logo=odoo&logoColor=white)
+![Python](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-1. Clone deze repository.
-2. Zorg dat je een `.env` bestand in de hoofdmap hebt (vraag aan het team als je deze niet hebt, of bekijk de placeholders).
-3. Start alle services op de achtergrond:
-   ```bash
-   docker-compose up -d --build
-   ```
+<br>
 
-De volgende containers worden nu gestart:
+> **Official repository of Team POS (Kassa) — Integration Project Desideriushogeschool 2026**
+>
+> *A generic, reusable event-driven Point of Sale system built on Odoo POS, communicating asynchronously with Salesforce CRM, Drupal, Elastic, and IoT Badge Scanners via RabbitMQ.*
 
-- `kassa-db` (Postgres database)
-- `kassa-web` (Odoo 17)
-- `kassa-integratie` (Onze Python runtime waar we onze scripts bouwen)
+<br>
 
-## ⚙️ 2. Odoo Database Initialiseren
+</div>
 
-Omdat we lokaal werken met een verse setup, moet je éénmalig de initiële database bouwen in Odoo:
+<br>
 
-1. Open je browser en ga naar de localhost dat in de .env staat.
-2. Odoo opent met het "Create Database" scherm. Vul exact deze gegevens in:
-   - **Database Name:** van de .env
-   - **Email:** van de .env
-   - **Password:** van de .env
-   - **Language / Country:** Naar keuze (Bv. English / Belgium).
-   - **Demo data:** Vink dit aan als je test-producten en dummy-klanten wil inladen.
-3. Klik op **Create database**. Na ongeveer één minuut zie je het Odoo-dashboard.
+<a id="table-of-contents"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:1f3a5f&amp;height=40&amp;text=%E2%97%88%20TABLE%20OF%20CONTENTS&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
 
-_(Installeer daarna de "Point of Sale" (Kassa) App in het Apps menu van Odoo!)_
+<br>
 
-## ✅ 3. De Connectie Testen
+- [System Architecture](#system-architecture)
+- [Message Flows & Routing](#message-flows--routing)
+- [Documentation & Data Mapping](#documentation--data-mapping)
+- [Local Development & Setup](#local-development--setup)
+- [Repository Structure](#repository-structure)
+- [CI/CD & Deployment](#cicd--deployment)
+- [Team](#team)
 
-Zodra je in het Odoo dashboard zit, kan je controleren of onze `kassa-integratie` Python-container succesvol met Odoo kan communiceren via XML-RPC. Dit doen we met een handig ping script.
+<br>
+<br>
 
-Voer in je terminal in de hoofdmap van het project dit commando uit:
+<a id="system-architecture"></a>
+<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:1a3f6f&amp;height=50&amp;text=%E2%97%88%20SYSTEM%20ARCHITECTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=16&amp;fontAlignY=62" width="100%"/>
 
-```bash
-docker-compose exec kassa-integratie python ping_odoo.py
+<br>
+
+```mermaid
+flowchart LR
+    subgraph Incoming
+        CRM[Salesforce CRM]
+        IoT[IoT Badge Scanners]
+    end
+
+    RMQ{{"RabbitMQ\nkassa.exchange"}}
+
+    subgraph POS["Team POS"]
+        PY[Python POS Integration\nsender / receiver / poller]
+        ODOO[(Odoo POS\n+ PostgreSQL)]
+    end
+
+    subgraph Outgoing
+        CRM2[Salesforce CRM]
+        DRUPAL[Drupal Frontend]
+        ELASTIC[Elastic Monitoring]
+    end
+
+    CRM -- "new_registration\nprofile_update\ncancel_registration" --> RMQ
+    IoT -- "badge_scanned" --> RMQ
+    RMQ -- "kassa.incoming" --> PY
+    PY <-->|XML-RPC| ODOO
+    PY -- "consumption_order\npayment_registered\nbadge_assigned\ninvoice_request\nrefund_processed" --> RMQ
+    RMQ -- "kassa.payments.*" --> CRM2
+    RMQ -- "kassa.frontend.*" --> DRUPAL
+    RMQ -- "kassa.errors" --> ELASTIC
 ```
 
-Als alles klopt, zie je de boodschap:
+The Python POS Integration container communicates with Odoo exclusively via the built-in **XML-RPC API**. All communication with external systems is asynchronous, through structured **XML messages over RabbitMQ**.
 
-> `✅ Authenticatie geslaagd!`  
-> `De XML-RPC verbinding werkt perfect. Integratiescripts kunnen veilig data ophalen en wegschrijven!`
+<br>
 
-## 💻 4. Verder Ontwikkelen
+<details open>
+<summary><b>Core Design Principles</b></summary>
+<br>
 
-Alle Python ontwikkeling van het team (`sender.py`, `receiver.py`, `poller.py` etc.) doen we in de map **`/integratie`**.
+| Principle | Description |
+| :--- | :--- |
+| **Loosely Coupled** | Systems never talk directly — everything flows through `kassa.exchange` (topic exchange) |
+| **Offline-first Buffering** | If RabbitMQ is down, messages queue in `outbox.json` (Docker volume `outbox-data`) and auto-retry via `flush_buffer()`. The POS continues selling. |
+| **Local Odoo Cache** | When the CRM is unreachable, the POS operates on locally cached customer profiles. Syncs on reconnect. |
+| **Error Handling** | Invalid messages are caught as `system_error`, routed to `kassa.errors`, and rejected with `basic_nack(requeue=false)` into the Dead Letter Queue. |
+| **Heartbeats** | Managed by a dedicated monitoring sidecar container — not by the POS integration itself. |
 
-- De container `kassa-integratie` draait constant een loop op de achtergrond (`main.py`) zodat hij niet crasht.
-- Wijzigingen in de code kun je lokaal testen door in de container een commando uit te voeren:
-  ```bash
-  docker-compose exec kassa-integratie bash
-  ```
-  _(Of je kan simpelweg losse scripts triggeren via `docker-compose exec kassa-integratie python scriptnaam.py`)_
-- Afhankelijkheden (zoals `pika`) voeg je toe aan `integratie/requirements.txt`. (Vergeet na het toevoegen niet de container te herbouwen via `docker-compose build`).
+</details>
 
-## 🔄 5. CI/CD & Updates (Lokaal Deployen)
+<br>
+<br>
 
-Dit project maakt gebruik van GitHub Actions voor onze **Continuous Integration (CI)**.
-Bij elke `push` naar de `dev` of `prod` branch worden de tests (`pytest`), type checking (`mypy`, statische types controleren) en linting (`flake8`, controleren van code syntax) automatisch in de cloud uitgevoerd. Hierdoor ben je zeker dat de code naar behoren werkt.
+<a id="message-flows--routing"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20MESSAGE%20FLOWS%20%26amp%3B%20ROUTING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=17&amp;fontAlignY=62" width="100%"/>
 
-Omdat we momenteel geen externe server of clouddienst gebruiken, doen we de **deployment simpelweg lokaal**. 
-Wil je de nieuwste, geteste code van het team hebben en de integratie starten? Dan open je je terminal in de hoofdmap en voer je dit in:
+<br>
 
+<details open>
+<summary><b>Incoming — <code>kassa.incoming</code></b></summary>
+<br>
+
+| Type | From | Action |
+| :--- | :--- | :--- |
+| `new_registration` | CRM | Create or update customer profile in Odoo |
+| `profile_update` | CRM | Update customer profile in Odoo |
+| `cancel_registration` | CRM | Deactivate customer profile in Odoo |
+| `badge_scanned` | IoT | Look up badge, load customer profile in POS |
+
+</details>
+
+<br>
+
+<details open>
+<summary><b>Outgoing — <code>kassa.exchange</code></b></summary>
+<br>
+
+| Type | Routing Key | Destination |
+| :--- | :--- | :--- |
+| `consumption_order` | `kassa.payments.consumption` | Salesforce CRM |
+| `payment_registered` | `kassa.payments.consumption` / `kassa.payments.registration` | Salesforce CRM |
+| `invoice_request` | `kassa.payments.invoice` | Salesforce CRM |
+| `badge_assigned` | `kassa.payments.badge` | Salesforce CRM |
+| `refund_processed` | `kassa.payments.refund` | Salesforce CRM |
+| `payment_status` | `kassa.frontend.payment` | Drupal |
+| `wallet_balance_update` | `kassa.frontend.wallet` | Drupal |
+| `system_error` | `kassa.errors` | Elastic |
+
+</details>
+
+> The Controlroom team can passively monitor **all** POS messages via the wildcard binding `kassa.#`.
+
+<br>
+<br>
+
+<a id="documentation--data-mapping"></a>
+<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:163652&amp;height=50&amp;text=%E2%97%88%20DOCUMENTATION%20%26amp%3B%20DATA%20MAPPING&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=20&amp;fontAlignY=62" width="100%"/>
+
+<br>
+
+All architecture, data flows, and XML standards live in the `documentatie/` directory *(written in Dutch)*:
+
+<br>
+
+| File | Contents |
+| :--- | :--- |
+| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all scripts with code examples, Docker setup, CI/CD |
+| [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologies, Python libraries, environment variables, architecture constraints |
+| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | Exact XML examples and XSD schemas per flow |
+| [Datamapping_Kassa.md](documentatie/Datamapping_Kassa.md) | Field mapping from Odoo to XML per message type, enum values |
+| [User_Stories_Kassa.md](documentatie/User_Stories_Kassa.md) | MVP features, BDD scenarios, acceptance criteria, Definition of Done |
+| [Vragen_Kassa.md](documentatie/Vragen_Kassa.md) | Decision log — all technical and functional choices explained |
+
+<br>
+<br>
+
+<a id="local-development--setup"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,50:1f3a5f,100:0d1117&amp;height=40&amp;text=%E2%97%88%20LOCAL%20DEVELOPMENT%20%26amp%3B%20SETUP&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=18&amp;fontAlignY=62" width="100%"/>
+
+<br>
+
+### Prerequisites
+
+![Docker](https://img.shields.io/badge/Docker_%26_Compose-required-2496ED?style=flat-square&logo=docker&logoColor=white)
+![Git](https://img.shields.io/badge/Git-required-F05032?style=flat-square&logo=git&logoColor=white)
+
+### Quickstart
+
+**1. Configure Environment**
 ```bash
-git pull
-docker-compose up -d --build
+cp .env.example .env
+# Fill in credentials in .env
 ```
 
-*(Dit commando trekt je laatste wijzigingen binnen, bouwt de integratiecontainers opnieuw op basis van je requirements/code en laat ze netjes op de achtergrond draaien, dit alles vanzelf!)*
+**2. Start the full stack**
+```bash
+docker-compose up -d
+```
+
+**3. Validate the XML-RPC connection to Odoo**
+```bash
+docker-compose exec kassa-integratie python tools/ping_odoo.py
+```
+> *Expected:* `Authenticatie geslaagd! Scripts kunnen data veilig wegschrijven.`
+
+<br>
+
+### Useful Commands
+
+| Command | What it does |
+| :--- | :--- |
+| `docker-compose up -d` | Start all containers in the background |
+| `docker-compose down` | Stop and remove all containers |
+| `docker-compose logs -f kassa-integratie` | Live logs from the integration container |
+| `docker-compose logs -f odoo` | Live logs from Odoo |
+| `docker-compose exec kassa-integratie bash` | Open a shell in the integration container |
+
+### Run Scripts
+
+```bash
+docker-compose exec kassa-integratie python integratie/tools/test_sender.py
+```
+
+<br>
+
+> [!WARNING]
+> **Known Pitfall — Odoo webassets 500 after restart**
+>
+> If Odoo POS throws a `500` error on `/web/assets/...` after a container restart, run:
+> ```bash
+> docker exec -i kassa_db psql -U odoo -d odoo_kassa -c "DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';"
+> docker-compose restart kassa-web
+> ```
+> See §3.2.1 of the Technical Guide for a full explanation.
+
+<br>
+<br>
+
+<a id="repository-structure"></a>
+<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:1a2f50&amp;height=50&amp;text=%E2%97%88%20REPOSITORY%20STRUCTURE&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=15&amp;fontAlignY=62" width="100%"/>
+
+<br>
+
+```text
+📦 Kassa/
+ ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
+ ┣ 📂 integratie/            # Python integration scripts
+ ┃ ┣ 📂 schemas/             # XSD validation files
+ ┃ ┣ 📂 tests/               # Pytest files
+ ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
+ ┃ ┣ 📄 main.py              # Entrypoint — starts receiver + poller
+ ┃ ┣ 📄 receiver.py          # Processes incoming RabbitMQ messages
+ ┃ ┣ 📄 sender.py            # Builds and dispatches outgoing XML messages
+ ┃ ┗ 📄 poller.py            # Polls Odoo for new POS orders, triggers flows
+ ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
+ ┣ 📄 .env.example           # Example environment variables
+ ┣ 📄 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
+ ┗ 📄 README.md
+```
+
+<br>
+<br>
+
+<a id="cicd--deployment"></a>
+<img src="https://capsule-render.vercel.app/api?type=rect&amp;color=0:0d1117,100:2a1f5f&amp;height=40&amp;text=%E2%97%88%20CI%2FCD%20%26amp%3B%20DEPLOYMENT&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=13&amp;fontAlignY=62" width="100%"/>
+
+<br>
+
+The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
+
+| Step | Trigger | Action |
+| :--- | :--- | :--- |
+| **Tests** | push to `dev` or `main` | `pytest tests/ -v` |
+| **Deploy** | push to `main` | SSH deploy via `docker-compose up -d --build` |
+
+### Branch Strategy
+
+| Branch | Purpose |
+| :--- | :--- |
+| `main` | Production — stable, approved code, triggers deployment |
+| `dev` | Active development |
+| `feature/...` | New features |
+| `fix/...` | Bug fixes |
+
+<br>
+<br>
+
+<a id="team"></a>
+<img src="https://capsule-render.vercel.app/api?type=soft&amp;color=0:0d1117,100:1f3a5f&amp;height=50&amp;text=%E2%97%88%20TEAM&amp;fontColor=58A6FF&amp;fontSize=18&amp;fontAlign=8&amp;fontAlignY=62" width="100%"/>
+
+<br>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="240">
+      <a href="https://github.com/Jeremy-Luyckfasseel">
+        <img src="https://github.com/Jeremy-Luyckfasseel.png" width="110" height="110" style="border-radius:50%"/>
+      </a>
+      <br/><br/>
+      <a href="https://github.com/Jeremy-Luyckfasseel"><b>Jeremy Luyckfasseel</b></a>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Team%20Lead-58A6FF?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+    <td width="40"></td>
+    <td align="center" width="240">
+      <a href="https://github.com/Ahmeedddddd">
+        <img src="https://github.com/Ahmeedddddd.png" width="110" height="110" style="border-radius:50%"/>
+      </a>
+      <br/><br/>
+      <a href="https://github.com/Ahmeedddddd"><b>Ahmed Takadoumi</b></a>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+    <td width="40"></td>
+    <td align="center" width="240">
+      <a href="https://github.com/zenoemvn">
+        <img src="https://github.com/zenoemvn.png" width="110" height="110" style="border-radius:50%"/>
+      </a>
+      <br/><br/>
+      <a href="https://github.com/zenoemvn"><b>Zeno Van Neygen</b></a>
+      <br/><br/>
+      <img src="https://img.shields.io/badge/Developer-1f3a5f?style=for-the-badge&amp;labelColor=0d1117"/>
+    </td>
+  </tr>
+</table>
+</div>
+
+<br>
+<br>
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&amp;color=0:0d1117,40:0f2744,70:1f3a5f,100:0d1117&amp;height=120&amp;section=footer&amp;text=Team%20POS%20%E2%80%94%20Desideriushogeschool%202026&amp;fontColor=8b949e&amp;fontSize=14&amp;fontAlignY=65" width="100%"/>
+
+</div>

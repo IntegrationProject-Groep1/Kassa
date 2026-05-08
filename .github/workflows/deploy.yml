@@ -1,19 +1,23 @@
-name: CI/CD Pipeline
+name: Deploy Pipeline
 
 on:
   push:
-    tags:
-      - 'v*' # Trigger bij een nieuwe release tag (bijv. v1.0.1)
-    branches:
-      - main
-      - master
-      - prod
-      - production # Trigger bij een push of merge naar een van deze productie-branches
+    branches: ["dev"]   # dev: build on every push, no tag required
+  workflow_run:
+    workflows: ["CI Pipeline"] # Must match the 'name' of your CI workflow exactly
+    types:
+      - completed
+  workflow_dispatch:
 
 jobs:
   build-and-push:
     name: Build and Push Docker Image
-    needs: [pipeline.yml] # Placeholder: Vul hier de namen in van test-jobs als die aan deze file worden toegevoegd
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,13 +26,31 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || github.event.workflow_run.head_sha }}
 
-      # STAP: Forceer repository naam naar lowercase voor Docker
-      - name: Lowercase repo name
+      - name: Set Image Tag
+        id: vars
         run: |
-          echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BRANCH="${GITHUB_REF#refs/heads/}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
 
-      - name: Log in to GitHub Container Registry
+          if [[ "$BRANCH" == "main" ]]; then
+            echo "tag=prod" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "dev" ]]; then
+            echo "tag=dev" >> $GITHUB_OUTPUT
+          else
+            echo "tag=$BRANCH" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Lowercase repo name
+        id: repo_name
+        run: echo "value=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -40,7 +62,8 @@ jobs:
         with:
           context: .
           push: true
-          # Geef automatisch tags op basis van de repository naam en de git tag/branch
           tags: |
-            ghcr.io/${{ env.REPO_LOWER }}:latest
-            ghcr.io/${{ env.REPO_LOWER }}:${{ github.ref_name }}
+            ghcr.io/${{ steps.repo_name.outputs.value }}:latest
+            ghcr.io/${{ steps.repo_name.outputs.value }}:${{ steps.vars.outputs.tag }}
+            ghcr.io/${{ steps.repo_name.outputs.value }}:${{ github.sha }}
+
