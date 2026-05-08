@@ -50,9 +50,9 @@ class TestBuildInvoiceRequestXML:
             "vat_number": "BE0123456789"
         }
         xml_str = sender.build_invoice_request_xml(
-            user_id="e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
+            identity_uuid="e8b27c1d-4f2a-4b3e-9c5f-123456789abc",
             invoice_data=invoice_data,
-            correlation_id="test-corr-123"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         # Verify XML structure
@@ -67,13 +67,13 @@ class TestBuildInvoiceRequestXML:
         # Check body
         body = root.find("body")
         assert body is not None
-        assert body.find("user_id").text == "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
+        assert body.find("identity_uuid").text == "e8b27c1d-4f2a-4b3e-9c5f-123456789abc"
 
         # Check invoice_data
         inv_data = body.find("invoice_data")
         assert inv_data is not None
-        assert inv_data.find("first_name").text == "Jan"
-        assert inv_data.find("last_name").text == "Peeters"
+        assert inv_data.find("contact/first_name").text == "Jan"
+        assert inv_data.find("contact/last_name").text == "Peeters"
         assert inv_data.find("email").text == "jan@example.com"
         assert inv_data.find("vat_number").text == "BE0123456789"
 
@@ -100,9 +100,9 @@ class TestBuildInvoiceRequestXML:
             }
         }
         xml_str = sender.build_invoice_request_xml(
-            user_id="user-123",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440123",
             invoice_data=invoice_data,
-            correlation_id="test-corr-456"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         root = etree.fromstring(xml_str.encode('utf-8'))
@@ -110,7 +110,7 @@ class TestBuildInvoiceRequestXML:
 
         # VAT number should not exist
         assert inv_data.find("vat_number") is None
-        assert inv_data.find("first_name").text == "Marie"
+        assert inv_data.find("contact/first_name").text == "Marie"
 
     def test_build_invoice_request_with_correlation_id(self):
         """Build invoice_request XML with correlation_id from original sale."""
@@ -125,10 +125,10 @@ class TestBuildInvoiceRequestXML:
                 "country": "be"
             }
         }
-        correlation_id = "abc-def-123-456"
+        correlation_id = "550e8400-e29b-41d4-a716-446655440000"
 
         xml_str = sender.build_invoice_request_xml(
-            user_id="user-xyz",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440999",
             invoice_data=invoice_data,
             correlation_id=correlation_id
         )
@@ -170,9 +170,9 @@ class TestInvoiceRequestXMLValidation:
             "vat_number": "BE0987654321"
         }
         xml_str = sender.build_invoice_request_xml(
-            user_id="test-user-123",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440124",
             invoice_data=invoice_data,
-            correlation_id="test-corr-valid"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         # Validate
@@ -288,17 +288,17 @@ class TestOrderPollerInvoiceRequestDetection:
             mock_sender.send_typed_message.return_value = True
             mock_sender.build_invoice_request_xml.return_value = "<xml/>"
 
-            poller._process_invoice_request(order, customer_info, correlation_id="test-corr-789")
+            poller._process_invoice_request(order, customer_info, correlation_id="550e8400-e29b-41d4-a716-446655440000")
 
             # Verify build_invoice_request_xml was called with correct data
             mock_sender.build_invoice_request_xml.assert_called_once()
             call_kwargs = mock_sender.build_invoice_request_xml.call_args[1]
 
-            assert call_kwargs['user_id'] == 'e8b27c1d-4f2a-4b3e-9c5f-123456789abc'
+            assert call_kwargs['identity_uuid'] == 'e8b27c1d-4f2a-4b3e-9c5f-123456789abc'
             assert call_kwargs['invoice_data']['email'] == 'jan@example.com'
             assert call_kwargs['invoice_data']['address']['street'] == 'Kiekenmarkt'
             assert call_kwargs['invoice_data']['vat_number'] == 'BE0123456789'
-            assert call_kwargs['correlation_id'] == 'test-corr-789'
+            assert call_kwargs['correlation_id'] == '550e8400-e29b-41d4-a716-446655440000'
 
 
 class TestInvoiceRequestMessaging:
@@ -320,9 +320,9 @@ class TestInvoiceRequestMessaging:
         }
 
         xml_str = sender.build_invoice_request_xml(
-            user_id="user-123",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440123",
             invoice_data=invoice_data,
-            correlation_id="test-corr-456"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         # Mock successful publish
@@ -356,16 +356,16 @@ class TestInvoiceRequestDoD:
         }
 
         xml_str = sender.build_invoice_request_xml(
-            user_id="user-123",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440123",
             invoice_data=invoice_data,
-            correlation_id="test-corr-456"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         root = etree.fromstring(xml_str.encode('utf-8'))
         inv_data = root.find("body/invoice_data")
 
-        assert inv_data.find("first_name").text == "Test"
-        assert inv_data.find("last_name").text == "User"
+        assert inv_data.find("contact/first_name").text == "Test"
+        assert inv_data.find("contact/last_name").text == "User"
         assert inv_data.find("email").text == "test@example.com"
         assert inv_data.find("address/street").text == "Main St"
         assert inv_data.find("vat_number").text == "BE0123456789"
@@ -487,9 +487,9 @@ class TestInvoiceRequestWithAddressSplitting:
         }
 
         xml_str = sender.build_invoice_request_xml(
-            user_id="user-123",
+            identity_uuid="550e8400-e29b-41d4-a716-446655440123",
             invoice_data=invoice_data,
-            correlation_id="test-corr-456"
+            correlation_id="550e8400-e29b-41d4-a716-446655440000"
         )
 
         root = etree.fromstring(xml_str.encode('utf-8'))
@@ -522,7 +522,7 @@ class TestInvoiceRequestWithAddressSplitting:
             mock_sender.send_typed_message.return_value = True
             mock_sender.build_invoice_request_xml.return_value = "<xml/>"
 
-            poller._process_invoice_request(order, customer_info, correlation_id="test-corr-789")
+            poller._process_invoice_request(order, customer_info, correlation_id="550e8400-e29b-41d4-a716-446655440000")
 
             # Verify address was split correctly
             mock_sender.build_invoice_request_xml.assert_called_once()

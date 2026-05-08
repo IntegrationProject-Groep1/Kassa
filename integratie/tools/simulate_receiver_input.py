@@ -9,9 +9,6 @@
 #   python simulate_receiver_input.py badge_scanned
 #   python simulate_receiver_input.py cancel_registration
 #   python simulate_receiver_input.py all   (sends all 4 types)
-#
-# Requires a local RabbitMQ – start with:
-#   docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3
 
 import os
 import sys
@@ -59,13 +56,13 @@ def send(xml_text: str, label: str) -> None:
     except Exception as e:
         print(f"[SIMULATE] ✗ Error sending '{label}': {e}")
         print(f"[SIMULATE]   Tip: make sure RabbitMQ is reachable on {RABBIT_HOST}:{RABBIT_PORT}")
-        print(f"[SIMULATE]   Current vhost: {RABBIT_VHOST}")
 
 
 # ── XML builders for all 4 message types ──────────────────────────────────────
 
 def build_new_registration(company: bool = False) -> str:
     msg_id = str(uuid.uuid4())
+    corr_id = str(uuid.uuid4())
     timestamp = now_utc()
     if company:
         return f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -76,16 +73,23 @@ def build_new_registration(company: bool = False) -> str:
     <source>crm</source>
     <type>new_registration</type>
     <version>2.0</version>
+    <correlation_id>{corr_id}</correlation_id>
   </header>
   <body>
     <customer>
+      <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
       <email>info@techbedrijf.be</email>
+      <date_of_birth>1985-05-15</date_of_birth>
+      <contact>
+        <first_name>Jan</first_name>
+        <last_name>Peeters</last_name>
+      </contact>
       <type>company</type>
       <company_name>TechCompany NV</company_name>
       <vat_number>BE0123456789</vat_number>
-      <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+      <session_id>session-uuid-001</session_id>
       <payment_due>
-        <amount>50.00</amount>
+        <amount currency="eur">50.00</amount>
         <status>paid</status>
       </payment_due>
     </customer>
@@ -100,19 +104,21 @@ def build_new_registration(company: bool = False) -> str:
     <source>crm</source>
     <type>new_registration</type>
     <version>2.0</version>
+    <correlation_id>{corr_id}</correlation_id>
   </header>
   <body>
     <customer>
+      <identity_uuid>a1b2c3d4-1111-2222-3333-444455556666</identity_uuid>
       <email>sophie@gmail.com</email>
+      <date_of_birth>1998-05-15</date_of_birth>
       <contact>
         <first_name>Sophie</first_name>
         <last_name>Martens</last_name>
       </contact>
       <type>private</type>
-      <user_id>a1b2c3d4-1111-2222-3333-444455556666</user_id>
-      <date_of_birth>1998-05-15</date_of_birth>
+      <session_id>session-uuid-001</session_id>
       <payment_due>
-        <amount>25.00</amount>
+        <amount currency="eur">25.00</amount>
         <status>unpaid</status>
       </payment_due>
     </customer>
@@ -133,18 +139,18 @@ def build_profile_update() -> str:
     <version>2.0</version>
   </header>
   <body>
-    <user_id>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</user_id>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
     <email>nieuw@techbedrijf.be</email>
+    <date_of_birth>1985-05-15</date_of_birth>
     <contact>
       <first_name>Jan</first_name>
       <last_name>Peeters</last_name>
     </contact>
-    <company_name>TechCompany NV (Hernoemd)</company_name>
-    <date_of_birth>1985-05-15</date_of_birth>
     <type>company</type>
+    <company_name>TechCompany NV (Hernoemd)</company_name>
     <vat_number>BE0123456789</vat_number>
     <payment_due>
-      <amount>0.00</amount>
+      <amount currency="eur">0.00</amount>
       <status>paid</status>
     </payment_due>
   </body>
@@ -166,7 +172,7 @@ def build_badge_scanned(known: bool = True) -> str:
   </header>
   <body>
     <badge_id>{badge}</badge_id>
-    <location>bar</location>
+    <location>main_bar</location>
     <scanned_at>{timestamp}</scanned_at>
   </body>
 </message>"""
@@ -185,7 +191,7 @@ def build_cancel_registration() -> str:
     <version>2.0</version>
   </header>
   <body>
-    <user_id>a1b2c3d4-1111-2222-3333-444455556666</user_id>
+    <identity_uuid>a1b2c3d4-1111-2222-3333-444455556666</identity_uuid>
     <session_id>session-uuid-001</session_id>
   </body>
 </message>"""

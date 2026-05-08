@@ -11,7 +11,7 @@
         computed getters added via the PartnerLine patch in pos_custom.js.
     -->
     <t t-inherit="point_of_sale.PartnerLine" t-inherit-mode="extension">
-        <xpath expr="//tr[hasclass('partner-line')]/td[1]/b" position="after">
+        <xpath expr="//td[1]/b" position="after">
             <t t-if="kassaHasOutstanding">
                 <div class="kassa-outstanding-info d-flex gap-1 mt-1">
                     <span class="badge bg-warning text-dark">

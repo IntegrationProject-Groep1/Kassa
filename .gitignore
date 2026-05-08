@@ -74,3 +74,4 @@ node_modules/
 .gitattributes
 integratie/out.txt
 .gemini/
+outbox/outbox.json

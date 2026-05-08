@@ -23,6 +23,7 @@
                   <xs:enumeration value="planning"/>
                   <xs:enumeration value="mailing"/>
                   <xs:enumeration value="identity-service"/>
+                  <xs:enumeration value="iot_gateway"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
               <xs:element name="type">
