@@ -35,7 +35,11 @@ class FakeChannel:
 
 
 def test_rpc_success(monkeypatch):
-    sample = b"<?xml version='1.0'?><identity_response><status>ok</status><user><master_uuid>rpc-1</master_uuid></user></identity_response>"
+    sample = (
+        b"<?xml version='1.0'?>"
+        b"<identity_response><status>ok</status><user>"
+        b"<master_uuid>rpc-1</master_uuid></user></identity_response>"
+    )
     fake = FakeChannel(reply_body=sample, respond=True)
     monkeypatch.setattr(identity_client, "connect_to_rabbitmq", lambda: (None, fake))
 
@@ -44,7 +48,11 @@ def test_rpc_success(monkeypatch):
 
 
 def test_rpc_email_exists(monkeypatch):
-    sample = b"<?xml version='1.0'?><identity_response><status>error</status><error_code>EMAIL_ALREADY_EXISTS</error_code><message>Exists</message></identity_response>"
+    sample = (
+        b"<?xml version='1.0'?>"
+        b"<identity_response><status>error</status>"
+        b"<error_code>EMAIL_ALREADY_EXISTS</error_code><message>Exists</message></identity_response>"
+    )
     fake = FakeChannel(reply_body=sample, respond=True)
     monkeypatch.setattr(identity_client, "connect_to_rabbitmq", lambda: (None, fake))
 

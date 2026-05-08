@@ -46,8 +46,8 @@ SEP = "-" * 60
 # ── Stap 1: new_registration XML publiceren ────────────────────────────────────
 
 def build_new_registration_xml(user_id: str) -> str:
-        """Build a new_registration XML message using the provided canonical user_id."""
-        return f'''<?xml version="1.0" encoding="UTF-8"?>
+    """Build a new_registration XML message using the provided canonical user_id."""
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
 <message>
     <header>
         <message_id>{uuid.uuid4()}</message_id>
@@ -84,7 +84,7 @@ def publish_new_registration():
     try:
         user_uuid = identity_client.create_user(TEST_EMAIL, source_system="crm")
         print(f"  Identity service returned master_uuid={user_uuid}")
-    except identity_client.IdentityEmailAlreadyExists as e:
+    except identity_client.IdentityEmailAlreadyExists:
         print("  Email already exists in Identity — looking up existing UUID")
         existing = identity_client.lookup_by_email(TEST_EMAIL)
         if existing and existing.get("master_uuid"):
