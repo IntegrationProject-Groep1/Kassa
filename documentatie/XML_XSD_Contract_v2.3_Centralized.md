@@ -27,6 +27,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |----------|---|---|---|
 |  **ONTVANGT** | `new_registration`, `profile_update`, `cancel_registration` | ← CRM | [10. CRM → Kassa](#10-crm--kassa) |
 |  **ONTVANGT** | `badge_scanned` | ← IoT (Raspberry Pi) of Kassa (QR) | [6.3](#63-badge_scanned) |
+|  **ONTVANGT** | `event_ended` | ← Frontend | [11.7](#117-event_ended-frontend--kassa) |
 |  **VERZENDT** | `payment_registered` | → CRM | [6.6 Kassa → CRM](#66-payment_registered-kassa--rabbitmq) |
 |  **VERZENDT** | `payment_status`, `wallet_balance_update` | → Frontend | [18](#18-frontend--kassa-direct-flows) |
 |  **BROADCAST** | `heartbeat` | → Monitoring | [3. Heartbeat](#3-heartbeat--alle-teams--monitoring) |
@@ -80,7 +81,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.4](#54-user_deleted) |
 |  **VERZENDT** | `user_registered` | → CRM |  v1.0 header + dotted type + verkeerde queue | [5.5](#55-user_registered) |
 |  **VERZENDT** | `user_checkin` | → CRM |  v1.0 header + `user.checkin` | [19.1](#191-user_checkin) |
-|  **VERZENDT** | `event_ended` | → CRM, Facturatie |  | [5.7](#57-event_ended), [11.6](#116-event_ended-frontend--facturatie) |
+|  **VERZENDT** | `event_ended` | → CRM, Facturatie, Kassa |  | [5.7](#57-event_ended), [11.6](#116-event_ended-frontend--facturatie), [11.7](#117-event_ended-frontend--kassa) |
 |  **VERZENDT** | `calendar_invite` | → Planning |  dotted type + mist `version` | [17.2](#172-calendar_invite-frontend--planning) |
 |  **VERZENDT** | `payment_registered` | → Facturatie |  **ONTBREEKT** — nog niet geïmplementeerd | [11.5](#115-payment_registered-frontend--facturatie) |
 |  **ONTVANGT** | `payment_registered` | ← CRM |  | [13.1](#131-payment_registered-crm--frontend) |
@@ -98,6 +99,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 -  CalendarInviteSender.php: v1.0 header → v2.0, type `calendar.invite` → `calendar_invite`, voeg `version` toe
 -  **NIEUW — PaymentRegisteredSender.php (→ Facturatie)**: implementeer sender die `payment_registered` stuurt naar queue `facturatie.incoming` conform sectie 11.5
 -  **NIEUW — event_ended (→ Facturatie)**: implementeer sender die `event_ended` ook naar `facturatie.incoming` stuurt conform sectie 11.6 (Issue #34)
+-  **NIEUW — event_ended (→ Kassa)**: publiceer `event_ended` ook naar `kassa.incoming` conform sectie 11.7 (derde publish, naast `event.ended` en `facturatie.incoming`)
 
 ---
 
@@ -4233,6 +4235,72 @@ Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kas
 > **Actiepunt Frontend:** Zorg dat de `event_ended` sender ook publiceert naar queue `facturatie.incoming`.
 >
 > **Actiepunt Facturatie:** Voeg een consumer toe op `facturatie.incoming` die berichten met `source=frontend` en `type=event_ended` verwerkt → trigger mailing van openstaande facturen.
+
+---
+
+### 11.7 `event_ended` (Frontend → Kassa)
+
+> **Consistentie:** Structureel identiek aan §5.7 en §11.6. Frontend publiceert hetzelfde bericht een derde keer, nu naar `kassa.incoming`.
+
+- **Queue:** `kassa.incoming`
+- **Source:** `frontend`
+- **Wanneer:** onmiddellijk na het beëindigen van een event/sessie in de frontend.
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"         type="xs:string" fixed="frontend"/>
+          <xs:element name="type"           type="xs:string" fixed="event_ended"/>
+          <xs:element name="version"        type="xs:string" fixed="2.0"/>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="session_id" type="xs:string"/>
+          <xs:element name="ended_at"   type="xs:dateTime"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>b3a8c7d6-e5f4-3210-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-15T22:00:00Z</timestamp>
+    <source>frontend</source>
+    <type>event_ended</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <session_id>sess-keynote-001</session_id>
+    <ended_at>2026-05-15T22:00:00Z</ended_at>
+  </body>
+</message>
+```
+
+> **Actiepunt Frontend:** Publiceer `event_ended` ook naar queue `kassa.incoming` (derde publish, naast `event.ended` en `facturatie.incoming`).
+>
+> **Actiepunt Kassa:** Voeg een consumer toe op `kassa.incoming` die berichten met `source=frontend` en `type=event_ended` verwerkt → trigger `wallet_lease_return` (§26.3) voor alle actieve leases van de betreffende sessie.
 
 ---
 
