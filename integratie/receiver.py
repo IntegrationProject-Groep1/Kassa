@@ -383,7 +383,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on entrance scan."""
+    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on entrance or kassa scan."""
     body = root.find("body")
     if body is None:
         raise ValueError("badge_scanned: <body> missing")
