@@ -29,7 +29,6 @@
                 <xs:element name="message" type="xs:string"/>
               </xs:choice>
               <xs:element name="component" type="xs:string" minOccurs="0"/>
-              <!-- related_message_id: message_id van het bericht dat de fout veroorzaakte -->
               <xs:element name="related_message_id" type="xs:string" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
