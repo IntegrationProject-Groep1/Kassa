@@ -48,6 +48,23 @@ class PosOrder(models.Model):
         return new_balance
 
     @api.model
+    def action_add_wallet_amount(self, partner_id, delta):
+        """
+        Atomically adds delta to the partner's x_wallet_balance.
+
+        Runs inside a single PostgreSQL transaction, preventing the
+        read-modify-write race between the order poller and the receiver
+        (e.g. a remote top-up arriving while a bar purchase is being processed).
+        Pass a negative delta to deduct.
+        """
+        partner = self.env['res.partner'].browse(partner_id)
+        if not partner.exists():
+            raise ValueError(f"Partner {partner_id} does not exist.")
+        new_balance = round(float(partner.x_wallet_balance or 0.0) + float(delta), 2)
+        partner.write({'x_wallet_balance': new_balance})
+        return new_balance
+
+    @api.model
     def send_partner_bus_event(
         self, partner_id: int, outstanding_amount: float,
         payment_status: str, name: str,

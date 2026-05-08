@@ -549,11 +549,10 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         logger.warning("[REMOTE_TOPUP] No active lease for %s – rejecting remote top-up", identity_uuid)
         return
 
-    new_balance = float(partner.get("x_wallet_balance") or 0.0) + add_amount
-    models.execute_kw(
+    new_balance = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "write",
-        [[partner["id"]], {"x_wallet_balance": new_balance}],
+        "pos.order", "action_add_wallet_amount",
+        [partner["id"], add_amount],
     )
 
     update_xml = build_wallet_balance_update_xml(
