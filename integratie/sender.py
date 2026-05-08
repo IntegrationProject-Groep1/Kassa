@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 # ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
+from typing import Optional
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
@@ -714,13 +715,14 @@ def build_wallet_balance_update_xml(
     return _to_xml(root)
 
 
-def build_wallet_lease_request_xml(identity_uuid: str, badge_id: str) -> str:
+def build_wallet_lease_request_xml(identity_uuid: str, badge_id: Optional[str] = None) -> str:
     """Build wallet_lease_request: Kassa claims authority over visitor's balance."""
     root = ET.Element("message")
     _make_header(root, "wallet_lease_request")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
-    ET.SubElement(body, "badge_id").text = str(badge_id)
+    if badge_id:
+        ET.SubElement(body, "badge_id").text = str(badge_id)
     return _to_xml(root)
 
 

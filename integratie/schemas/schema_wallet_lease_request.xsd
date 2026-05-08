@@ -20,7 +20,7 @@
       <xs:element name="body">
         <xs:complexType><xs:sequence>
           <xs:element name="identity_uuid" type="UUIDType"/>
-          <xs:element name="badge_id"      type="xs:string"/>
+          <xs:element name="badge_id"      type="xs:string" minOccurs="0"/>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>

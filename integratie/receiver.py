@@ -383,38 +383,52 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on check_in/check_out."""
+    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on entrance scan."""
     body = root.find("body")
     if body is None:
         raise ValueError("badge_scanned: <body> missing")
 
     badge_id = (body.findtext("badge_id") or "").strip()
+    identity_uuid_scanned = (body.findtext("identity_uuid") or "").strip()
     location = (body.findtext("location") or "unknown").strip()
     scanned_at = (body.findtext("scanned_at") or "").strip()
-
-    if not badge_id:
-        raise ValueError("badge_scanned: badge_id missing in <body>")
-
-    logger.info("[BADGE_SCANNED] Processing scan from %s at %s", location, scanned_at)
-
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_badge_id", "=", badge_id]]],
-        {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
-                    "x_date_of_birth", "is_company",
-                    "x_lease_active", "x_lease_id", "x_lease_transaction_count"],
-         "limit": 1},
-    )
-
     message_id = root.findtext("header/message_id")
 
+    _partner_fields = ["id", "name", "x_user_id", "x_wallet_balance",
+                       "x_date_of_birth", "is_company",
+                       "x_lease_active", "x_lease_id", "x_lease_transaction_count"]
+
+    if badge_id:
+        existing: List[OdooRecord] = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_badge_id", "=", badge_id]]],
+            {"fields": _partner_fields, "limit": 1},
+        )
+        scan_label = f"badge({badge_id})"
+        not_found_code = "badge_not_found"
+        not_found_desc = f"Badge {badge_id} not found in local Odoo cache."
+    elif identity_uuid_scanned:
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_user_id", "=", identity_uuid_scanned]]],
+            {"fields": _partner_fields, "limit": 1},
+        )
+        scan_label = "qr_code"
+        not_found_code = "profile_not_found"
+        not_found_desc = f"identity_uuid {identity_uuid_scanned} not found in local Odoo cache."
+    else:
+        raise ValueError("badge_scanned: neither badge_id nor identity_uuid present in <body>")
+
+    logger.info("[BADGE_SCANNED] Processing %s scan from %s at %s", scan_label, location, scanned_at)
+
     if not existing:
-        logger.warning("[BADGE_SCANNED] ⚠ Badge NOT found in local cache – sending system_error")
+        logger.warning("[BADGE_SCANNED] ⚠ %s not found in local cache – sending system_error", scan_label)
         send_error_to_queue(
-            error_code="badge_not_found",
+            error_code=not_found_code,
             related_message_id=message_id,
-            error_description=f"Badge {badge_id} not found in local Odoo cache.",
+            error_description=not_found_desc,
         )
         return
 
@@ -422,8 +436,8 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
     identity_uuid = partner.get("x_user_id") or ""
 
     logger.info(
-        "[BADGE_SCANNED] ✓ Badge recognised: Odoo ID=%s | Location=%s",
-        partner["id"], location,
+        "[BADGE_SCANNED] ✓ Recognised: Odoo ID=%s | %s | Location=%s",
+        partner["id"], scan_label, location,
     )
 
     if location == "entrance":
@@ -433,7 +447,10 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         if partner.get("x_lease_active"):
             logger.info("[BADGE_SCANNED] check_in: lease already active for %s, skipping", identity_uuid)
             return
-        xml = build_wallet_lease_request_xml(identity_uuid=identity_uuid, badge_id=badge_id)
+        xml = build_wallet_lease_request_xml(
+            identity_uuid=identity_uuid,
+            badge_id=badge_id or None,
+        )
         send_typed_message("wallet_lease_request", xml)
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,

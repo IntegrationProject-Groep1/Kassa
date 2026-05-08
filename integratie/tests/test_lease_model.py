@@ -41,6 +41,16 @@ def _badge_root(location: str = "entrance", badge_id: str = "BADGE1") -> ET.Elem
     )
 
 
+def _qr_root(location: str = "entrance", identity_uuid: str = _UUID) -> ET.Element:
+    return ET.fromstring(
+        "<message><header/>"
+        f"<body><identity_uuid>{identity_uuid}</identity_uuid>"
+        f"<location>{location}</location>"
+        "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+        "</body></message>"
+    )
+
+
 def _grant_root(identity_uuid: str, balance: str, lease_id: str) -> ET.Element:
     return ET.fromstring(
         "<message><header/>"
@@ -149,6 +159,63 @@ class TestBadgeScanCheckIn:
         receiver.process_badge_scan(_badge_root("entrance"), uid, models)
         mock_send.assert_not_called()
         mock_error.assert_called_once()
+
+
+# ── process_badge_scan — QR code path ─────────────────────────────────────────
+
+class TestQRScanCheckIn:
+
+    @patch("receiver.send_typed_message")
+    def test_qr_scan_sends_lease_request_on_entrance(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[_badge_partner()], True]
+        receiver.process_badge_scan(_qr_root("entrance"), uid, models)
+        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+
+    @patch("receiver.send_typed_message")
+    def test_qr_scan_lease_request_has_no_badge_id(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[_badge_partner()], True]
+        with patch("receiver.build_wallet_lease_request_xml") as mock_builder:
+            mock_builder.return_value = "<xml/>"
+            receiver.process_badge_scan(_qr_root("entrance"), uid, models)
+        mock_builder.assert_called_once_with(identity_uuid=_UUID, badge_id=None)
+
+    @patch("receiver.send_typed_message")
+    def test_qr_scan_non_entrance_does_not_trigger_lease(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = [_badge_partner()]
+        receiver.process_badge_scan(_qr_root("bar"), uid, models)
+        mock_send.assert_not_called()
+
+    @patch("receiver.send_typed_message")
+    def test_qr_scan_skips_if_lease_already_active(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = [_badge_partner(lease_active=True)]
+        receiver.process_badge_scan(_qr_root("entrance"), uid, models)
+        mock_send.assert_not_called()
+
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.send_typed_message")
+    def test_qr_scan_sends_error_when_profile_not_found(self, mock_send, mock_error, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = []
+        receiver.process_badge_scan(_qr_root("entrance"), uid, models)
+        mock_send.assert_not_called()
+        mock_error.assert_called_once()
+        assert mock_error.call_args[1]["error_code"] == "profile_not_found"
+
+    def test_qr_scan_raises_when_neither_id_present(self, odoo):
+        uid, models = odoo
+        root = ET.fromstring(
+            "<message><header/>"
+            "<body>"
+            "<location>entrance</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        )
+        with pytest.raises(ValueError, match="neither badge_id nor identity_uuid"):
+            receiver.process_badge_scan(root, uid, models)
 
 
 # ── _return_lease ──────────────────────────────────────────────────────────────
