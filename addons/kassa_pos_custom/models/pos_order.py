@@ -48,6 +48,50 @@ class PosOrder(models.Model):
         return new_balance
 
     @api.model
+    def action_add_wallet_amount(self, partner_id, delta):
+        """
+        Atomically adds delta to the partner's x_wallet_balance.
+
+        Runs inside a single PostgreSQL transaction, preventing the
+        read-modify-write race between the order poller and the receiver
+        (e.g. a remote top-up arriving while a bar purchase is being processed).
+        Pass a negative delta to deduct.
+        """
+        partner = self.env['res.partner'].browse(partner_id)
+        if not partner.exists():
+            raise ValueError(f"Partner {partner_id} does not exist.")
+        self.env.cr.execute(
+            "UPDATE res_partner "
+            "SET x_wallet_balance = ROUND((COALESCE(x_wallet_balance, 0) + %s)::numeric, 2) "
+            "WHERE id = %s RETURNING x_wallet_balance",
+            (float(delta), partner_id),
+        )
+        row = self.env.cr.fetchone()
+        if row is None:
+            raise ValueError(f"Partner {partner_id} was deleted during balance update.")
+        new_balance = row[0]
+        partner.invalidate_recordset(['x_wallet_balance'])
+        return float(new_balance)
+
+    @api.model
+    def action_increment_lease_tx_count(self, partner_id):
+        """
+        Atomically increments x_lease_transaction_count by 1.
+
+        Called by order_poller after each successful consumption/top-up/refund
+        while a lease is active.  Using a direct SQL UPDATE avoids the
+        read-modify-write race between the poller and receiver threads.
+        """
+        self.env.cr.execute(
+            "UPDATE res_partner "
+            "SET x_lease_transaction_count = COALESCE(x_lease_transaction_count, 0) + 1 "
+            "WHERE id = %s RETURNING x_lease_transaction_count",
+            (partner_id,),
+        )
+        row = self.env.cr.fetchone()
+        return row[0] if row else 0
+
+    @api.model
     def send_partner_bus_event(
         self, partner_id: int, outstanding_amount: float,
         payment_status: str, name: str,
