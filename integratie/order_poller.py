@@ -215,7 +215,8 @@ class OrderPoller:
 
             base_fields = [
                 'id', 'name', 'email', 'is_company', 'parent_id', 'x_badge_id',
-                'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id'
+                'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id',
+                'x_lease_active', 'x_lease_id', 'x_lease_transaction_count',
             ]
             try:
                 # Attempt to read all integration fields
@@ -373,12 +374,22 @@ class OrderPoller:
                         [[order_id], {'x_wallet_updated': True}]
                     )
 
+                    lease_active = customer_info.get('x_lease_active')
                     wallet_xml = sender.build_wallet_balance_update_xml(
                         identity_uuid=customer_info.get('x_user_id'),
-                        new_balance=new_balance
+                        new_balance=new_balance,
+                        authority="kassa" if lease_active else None,
+                        status="active" if lease_active else None,
                     )
                     wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
                     all_sent = all_sent and wallet_sent
+                    if lease_active:
+                        new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
+                        )
                 except Exception as e:
                     logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
                     all_sent = False
@@ -601,11 +612,21 @@ class OrderPoller:
                 [[order_id], {'x_wallet_updated': True}]
             )
 
+            lease_active = customer_info.get('x_lease_active')
             wallet_xml = sender.build_wallet_balance_update_xml(
                 identity_uuid=customer_info.get('x_user_id'),
-                new_balance=new_balance
+                new_balance=new_balance,
+                authority="kassa" if lease_active else None,
+                status="active" if lease_active else None,
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+            if lease_active:
+                new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'res.partner', 'write',
+                    [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
+                )
 
         original_msg_id = str(uuid.uuid4())
         line_ids = [item[0] if isinstance(
@@ -782,8 +803,21 @@ class OrderPoller:
                     'pos.order', 'action_process_wallet_payment',
                     [order_id, customer_info['id'], pay_info["wallet_amount"]]
                 )
-                wallet_xml = sender.build_wallet_balance_update_xml(customer_info.get('x_user_id'), new_balance)
+                lease_active = customer_info.get('x_lease_active')
+                wallet_xml = sender.build_wallet_balance_update_xml(
+                    identity_uuid=customer_info.get('x_user_id'),
+                    new_balance=new_balance,
+                    authority="kassa" if lease_active else None,
+                    status="active" if lease_active else None,
+                )
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+                if lease_active:
+                    new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'write',
+                        [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
+                    )
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
                 monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
