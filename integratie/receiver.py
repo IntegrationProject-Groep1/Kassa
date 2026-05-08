@@ -222,6 +222,11 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         {"fields": ["id", "name", "x_user_id"], "limit": 1},
     )
 
+    # Mapping note: `x_user_id` stores the canonical user identifier.
+    # The system-wide canonical ID is `master_uuid` from the Identity Service.
+    # Incoming `new_registration` messages MUST contain `user_id` equal to
+    # the Identity `master_uuid` so that all teams (CRM/Kassa/Frontend)
+    # reference the same UID. Do NOT generate local UUIDs as a fallback.
     partner_vals: Dict[str, Any] = {
         "name": name or company_name or "Unknown",
         "email": email,
@@ -577,6 +582,26 @@ def start_listening():
 
     try:
         setup_exchange(channel)
+        # Optional subscription to user.events fanout for minimal user notifications.
+        if os.environ.get("SUBSCRIBE_USER_EVENTS", "False").lower() in ("1", "true", "yes"):
+            try:
+                channel.exchange_declare(exchange="user.events", exchange_type="fanout", durable=True)
+                ue_queue = f"{QUEUE_NAME}.user.events"
+                channel.queue_declare(queue=ue_queue, durable=True)
+                channel.queue_bind(exchange="user.events", queue=ue_queue)
+
+                def _user_events_callback(ch2, method2, props2, body2):
+                    try:
+                        txt = body2.decode("utf-8")
+                        logger.info("[USER_EVENTS] Received minimal user event: %s", txt[:200])
+                    except Exception:
+                        logger.warning("[USER_EVENTS] Malformed user event")
+                    ch2.basic_ack(delivery_tag=method2.delivery_tag)
+
+                channel.basic_consume(queue=ue_queue, on_message_callback=_user_events_callback)
+                logger.info("[RECEIVER] Subscribed to user.events fanout via queue %s", ue_queue)
+            except Exception as e:
+                logger.warning("[RECEIVER] Could not bind to user.events fanout: %s", e)
         dead_letter_exchange = DLX_NAME
         if DLX_NAME != EXCHANGE_NAME:
             channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)

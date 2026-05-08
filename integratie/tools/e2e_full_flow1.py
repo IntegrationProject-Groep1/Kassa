@@ -18,6 +18,7 @@ import pika
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config_utils import parse_rabbit_port  # noqa: E402
+from integratie import identity_client  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 ODOO_URL = os.environ.get("ODOO_URL")
@@ -32,7 +33,7 @@ RABBIT_PASS = os.environ.get("RABBIT_PASS", "guest")
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 INCOMING_QUEUE = os.environ.get("RABBIT_INCOMING_QUEUE", "kassa.incoming")
 
-TEST_USER_ID = str(uuid.uuid4())   # fresh UUID on every run
+TEST_USER_ID = None
 TEST_NAME = "Test e2e Janssen"
 TEST_EMAIL = f"janssen.{TEST_USER_ID[:8]}@testcompany.be"
 TEST_COMPANY = "Test e2e Company NV"
@@ -43,38 +44,56 @@ SEP = "-" * 60
 
 # ── Stap 1: new_registration XML publiceren ────────────────────────────────────
 
-NEW_REGISTRATION_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
+def build_new_registration_xml(user_id: str) -> str:
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
 <message>
-  <header>
-    <message_id>{uuid.uuid4()}</message_id>
-    <type>new_registration</type>
-    <source>crm</source>
-    <timestamp>2026-03-31T10:00:00Z</timestamp>
-    <version>2.0</version>
-  </header>
-  <body>
-    <customer>
-      <email>{TEST_EMAIL}</email>
-      <contact>
-        <first_name>Test e2e</first_name>
-        <last_name>Janssen</last_name>
-      </contact>
-      <company_name>{TEST_COMPANY}</company_name>
-      <type>company</type>
-      <vat_number>{TEST_VAT}</vat_number>
-      <user_id>{TEST_USER_ID}</user_id>
-            <date_of_birth>1996-01-01</date_of_birth>
-    </customer>
-    <payment_due>
-      <amount>50.00</amount>
-      <status>unpaid</status>
-    </payment_due>
-  </body>
-</message>"""
+    <header>
+        <message_id>{uuid.uuid4()}</message_id>
+        <type>new_registration</type>
+        <source>crm</source>
+        <timestamp>2026-03-31T10:00:00Z</timestamp>
+        <version>2.0</version>
+    </header>
+    <body>
+        <customer>
+            <email>{TEST_EMAIL}</email>
+            <contact>
+                <first_name>Test e2e</first_name>
+                <last_name>Janssen</last_name>
+            </contact>
+            <company_name>{TEST_COMPANY}</company_name>
+            <type>company</type>
+            <vat_number>{TEST_VAT}</vat_number>
+            <user_id>{user_id}</user_id>
+                        <date_of_birth>1996-01-01</date_of_birth>
+        </customer>
+        <payment_due>
+            <amount>50.00</amount>
+            <status>unpaid</status>
+        </payment_due>
+    </body>
+</message>'''
 
 
 def publish_new_registration():
     print("Step 1: sending new_registration to kassa.incoming...")
+    # Ensure identity exists and get canonical master_uuid before sending
+    try:
+        user_uuid = identity_client.create_user(TEST_EMAIL, source_system="crm")
+        print(f"  Identity service returned master_uuid={user_uuid}")
+    except identity_client.IdentityEmailAlreadyExists as e:
+        print("  Email already exists in Identity — looking up existing UUID")
+        existing = identity_client.lookup_by_email(TEST_EMAIL)
+        if existing and existing.get("master_uuid"):
+            user_uuid = existing["master_uuid"]
+            print(f"  Found existing master_uuid={user_uuid}")
+        else:
+            print("  Could not retrieve existing identity — aborting")
+            raise SystemExit(1)
+    except identity_client.IdentityUnavailableError as e:
+        print(f"  Identity service unavailable: {e}")
+        raise SystemExit(1)
+
     creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     conn = pika.BlockingConnection(pika.ConnectionParameters(
         host=RABBIT_HOST, port=RABBIT_PORT,
@@ -82,14 +101,15 @@ def publish_new_registration():
         heartbeat=30, blocked_connection_timeout=10
     ))
     ch = conn.channel()
+    xml = build_new_registration_xml(user_uuid)
     ch.basic_publish(
         exchange="",
         routing_key=INCOMING_QUEUE,
-        body=NEW_REGISTRATION_XML.encode("utf-8"),
+        body=xml.encode("utf-8"),
         properties=pika.BasicProperties(delivery_mode=2)
     )
     conn.close()
-    print(f"  Sent:    user_id={TEST_USER_ID}")
+    print(f"  Sent:    user_id={user_uuid}")
     print(f"  Name:    {TEST_NAME}  |  Company: {TEST_COMPANY}")
 
 
