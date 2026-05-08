@@ -128,6 +128,30 @@ class TestValidateXml:
         )
         receiver.validate_xml(xml, "badge_scanned")  # should not raise
 
+    def test_valid_user_event_passes(self):
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<user_event>"
+            "<event>UserCreated</event>"
+            "<master_uuid>a1b2c3d4-e5f6-7890-abcd-ef1234567890</master_uuid>"
+            "<email>jan.peeters@ehb.be</email>"
+            "<source_system>frontend</source_system>"
+            "<timestamp>2026-05-08T10:00:00</timestamp>"
+            "</user_event>"
+        )
+        receiver.validate_xml(xml, "user_event")  # should not raise
+
+    def test_invalid_user_event_raises(self):
+        # Missing required fields — should fail XSD validation
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<user_event>"
+            "<event>UserCreated</event>"
+            "</user_event>"
+        )
+        with pytest.raises(ValueError, match="XSD validation failed"):
+            receiver.validate_xml(xml, "user_event")
+
 
 # ── process_new_registration ───────────────────────────────────────────────────
 

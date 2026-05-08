@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <!--
+    TYPE   : identity_response
+    FLOW   : Identity Service → caller (via reply_to queue)
+    SOURCE : XML_XSD_Contract_v2.3_Centralized.md §15.4
+    NOTE   : No <message><header> wrapper — flat XML exception per §15
+             Always check status = "ok" before using master_uuid.
+  -->
+  <xs:element name="identity_response">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="status">
+          <xs:simpleType>
+            <xs:restriction base="xs:string">
+              <xs:enumeration value="ok"/>
+              <xs:enumeration value="error"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:element>
+        <xs:element name="user" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="master_uuid" type="xs:string"/>
+              <xs:element name="email"       type="xs:string"/>
+              <xs:element name="created_by"  type="xs:string"/>
+              <xs:element name="created_at"  type="xs:dateTime"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="error_code" type="xs:string" minOccurs="0"/>
+        <xs:element name="message"    type="xs:string" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
