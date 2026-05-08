@@ -81,3 +81,49 @@ class TestXSDCompliance:
         xml = sender._to_xml(root)
         valid, errors = validate_xml(xml, "schema_error.xsd")
         assert valid, f"XSD Error in system_error: {errors}"
+
+    def test_wallet_lease_request_compliance(self):
+        xml = sender.build_wallet_lease_request_xml(
+            identity_uuid=str(uuid.uuid4()),
+            badge_id="BADGE-001",
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_request.xsd")
+        assert valid, f"XSD Error in wallet_lease_request: {errors}"
+
+    def test_wallet_lease_return_compliance(self):
+        xml = sender.build_wallet_lease_return_xml(
+            identity_uuid=str(uuid.uuid4()),
+            final_balance=42.50,
+            lease_id="LEASE-ABC",
+            transaction_count=7,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_return.xsd")
+        assert valid, f"XSD Error in wallet_lease_return: {errors}"
+
+    def test_wallet_lease_return_zero_balance_compliance(self):
+        xml = sender.build_wallet_lease_return_xml(
+            identity_uuid=str(uuid.uuid4()),
+            final_balance=0.0,
+            lease_id="",
+            transaction_count=0,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_return.xsd")
+        assert valid, f"XSD Error in wallet_lease_return (zero balance): {errors}"
+
+    def test_wallet_balance_update_with_authority_and_status_compliance(self):
+        xml = sender.build_wallet_balance_update_xml(
+            identity_uuid=str(uuid.uuid4()),
+            new_balance=15.75,
+            authority="kassa",
+            status="active",
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_balance_update.xsd")
+        assert valid, f"XSD Error in wallet_balance_update (with authority/status): {errors}"
+
+    def test_wallet_balance_update_without_optional_fields_still_valid(self):
+        xml = sender.build_wallet_balance_update_xml(
+            identity_uuid=str(uuid.uuid4()),
+            new_balance=0.0,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_balance_update.xsd")
+        assert valid, f"XSD Error in wallet_balance_update (no authority/status): {errors}"
