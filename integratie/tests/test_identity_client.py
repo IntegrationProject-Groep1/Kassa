@@ -27,6 +27,8 @@ def test_create_user_success(monkeypatch):
   <user>
     <master_uuid>abcd-1234</master_uuid>
     <email>e@test</email>
+    <created_by>test</created_by>
+    <created_at>2026-05-08T10:00:00</created_at>
   </user>
 </identity_response>'''
 
