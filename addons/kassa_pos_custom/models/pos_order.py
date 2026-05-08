@@ -66,7 +66,10 @@ class PosOrder(models.Model):
             "WHERE id = %s RETURNING x_wallet_balance",
             (float(delta), partner_id),
         )
-        new_balance = self.env.cr.fetchone()[0]
+        row = self.env.cr.fetchone()
+        if row is None:
+            raise ValueError(f"Partner {partner_id} was deleted during balance update.")
+        new_balance = row[0]
         partner.invalidate_recordset(['x_wallet_balance'])
         return float(new_balance)
 

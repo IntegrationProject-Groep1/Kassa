@@ -202,7 +202,7 @@ class TestWalletRemoteTopupPipeline:
         uid = 1
         models = MagicMock()
         partner = {"id": 5, "x_wallet_balance": 20.0, "x_lease_active": True}
-        models.execute_kw.side_effect = [[partner], 25.0]
+        models.execute_kw.side_effect = [[partner], 25.0, 1]
         mock_conn.return_value = (uid, models)
 
         body = _wallet_remote_topup_xml(_UUID, 5.0)
@@ -217,6 +217,10 @@ class TestWalletRemoteTopupPipeline:
         assert second_call[0][3] == "pos.order"
         assert second_call[0][4] == "action_add_wallet_amount"
 
+        # action_increment_lease_tx_count was called after
+        third_call = models.execute_kw.call_args_list[2]
+        assert third_call[0][4] == "action_increment_lease_tx_count"
+
         # wallet_balance_update was broadcast
         mock_send.assert_called_once_with("wallet_balance_update", ANY)
 
@@ -226,7 +230,7 @@ class TestWalletRemoteTopupPipeline:
     def test_duplicate_topup_is_silently_skipped(self, mock_conn, mock_error, mock_send, ch, method):
         uid, models = 1, MagicMock()
         partner = {"id": 5, "x_wallet_balance": 20.0, "x_lease_active": True}
-        models.execute_kw.side_effect = [[partner], 25.0, [partner], 25.0]
+        models.execute_kw.side_effect = [[partner], 25.0, 1]
         mock_conn.return_value = (uid, models)
 
         mid = _make_id()

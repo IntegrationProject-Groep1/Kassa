@@ -31,11 +31,12 @@ _UUID2 = "550e8400-e29b-41d4-a716-446655440001"
 _LEASE = "LEASE-001"
 
 
-def _badge_root(scan_type: str, badge_id: str = "BADGE1") -> ET.Element:
+def _badge_root(location: str = "entrance", badge_id: str = "BADGE1") -> ET.Element:
     return ET.fromstring(
         "<message><header/>"
         f"<body><badge_id>{badge_id}</badge_id>"
-        f"<scan_type>{scan_type}</scan_type>"
+        f"<location>{location}</location>"
+        "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
         "</body></message>"
     )
 
@@ -79,34 +80,48 @@ def _badge_partner(lease_active: bool = False) -> dict:
     }
 
 
-# ── process_badge_scan — check_in ─────────────────────────────────────────────
+# ── process_badge_scan — entrance (check_in) ──────────────────────────────────
 
 class TestBadgeScanCheckIn:
 
     @patch("receiver.send_typed_message")
-    def test_sends_wallet_lease_request(self, mock_send, odoo):
+    def test_sends_wallet_lease_request_on_entrance(self, mock_send, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [[_badge_partner()], True]
-        receiver.process_badge_scan(_badge_root("check_in"), uid, models)
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
         mock_send.assert_called_once_with("wallet_lease_request", ANY)
 
     @patch("receiver.send_typed_message")
-    def test_writes_lease_active_true_before_send(self, mock_send, odoo):
+    def test_writes_lease_active_true_after_send(self, mock_send, odoo):
+        """Send fires first; Odoo write follows so a send failure leaves state clean."""
         uid, models = odoo
-        models.execute_kw.side_effect = [[_badge_partner()], True]
-        receiver.process_badge_scan(_badge_root("check_in"), uid, models)
+        call_order = []
+
+        def track(msg_type, xml):
+            call_order.append("send")
+
+        def track_kw(*args):
+            if args[4] == "search_read":
+                return [_badge_partner()]
+            call_order.append("write")
+            return True
+
+        mock_send.side_effect = track
+        models.execute_kw.side_effect = track_kw
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
+
+        assert call_order == ["send", "write"]
         write_call = models.execute_kw.call_args_list[1]
-        assert write_call[0][3] == "res.partner"
-        assert write_call[0][4] == "write"
         vals = write_call[0][5][1]
         assert vals["x_lease_active"] is True
+        assert vals["x_lease_id"] == ""
         assert vals["x_lease_transaction_count"] == 0
 
     @patch("receiver.send_typed_message")
     def test_skips_if_lease_already_active(self, mock_send, odoo):
         uid, models = odoo
         models.execute_kw.return_value = [_badge_partner(lease_active=True)]
-        receiver.process_badge_scan(_badge_root("check_in"), uid, models)
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
         mock_send.assert_not_called()
         assert models.execute_kw.call_count == 1  # only search_read
 
@@ -116,7 +131,14 @@ class TestBadgeScanCheckIn:
         partner = _badge_partner()
         partner["x_user_id"] = ""
         models.execute_kw.return_value = [partner]
-        receiver.process_badge_scan(_badge_root("check_in"), uid, models)
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
+        mock_send.assert_not_called()
+
+    @patch("receiver.send_typed_message")
+    def test_non_entrance_scan_does_not_trigger_lease(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = [_badge_partner()]
+        receiver.process_badge_scan(_badge_root("bar"), uid, models)
         mock_send.assert_not_called()
 
     @patch("receiver.send_error_to_queue")
@@ -124,64 +146,77 @@ class TestBadgeScanCheckIn:
     def test_sends_error_when_badge_not_found(self, mock_send, mock_error, odoo):
         uid, models = odoo
         models.execute_kw.return_value = []
-        receiver.process_badge_scan(_badge_root("check_in"), uid, models)
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
         mock_send.assert_not_called()
         mock_error.assert_called_once()
 
 
-# ── process_badge_scan — check_out ────────────────────────────────────────────
+# ── _return_lease ──────────────────────────────────────────────────────────────
 
-class TestBadgeScanCheckOut:
+class TestReturnLease:
 
-    @patch("receiver.send_typed_message")
-    def test_sends_wallet_lease_return(self, mock_send, odoo):
-        uid, models = odoo
-        models.execute_kw.side_effect = [[_badge_partner(lease_active=True)], True]
-        receiver.process_badge_scan(_badge_root("check_out"), uid, models)
-        mock_send.assert_called_once_with("wallet_lease_return", ANY)
-
-    @patch("receiver.send_typed_message")
-    def test_clears_lease_fields_after_return(self, mock_send, odoo):
-        uid, models = odoo
-        models.execute_kw.side_effect = [[_badge_partner(lease_active=True)], True]
-        receiver.process_badge_scan(_badge_root("check_out"), uid, models)
-        write_call = models.execute_kw.call_args_list[1]
-        vals = write_call[0][5][1]
-        assert vals["x_lease_active"] is False
-        assert vals["x_lease_id"] == ""
-        assert vals["x_lease_transaction_count"] == 0
+    def _fresh_partner(self) -> dict:
+        return {
+            "id": 99, "x_user_id": _UUID, "x_wallet_balance": 30.0,
+            "x_lease_id": _LEASE, "x_lease_transaction_count": 5,
+        }
 
     @patch("receiver.send_typed_message")
-    def test_lease_return_includes_correct_balance_and_tx_count(self, mock_send, odoo):
+    def test_fetches_fresh_data_immediately_before_acting(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[_badge_partner(lease_active=True)], True]
+        models.execute_kw.side_effect = [[self._fresh_partner()], True]
+        receiver._return_lease(99, uid, models)
+        first_call = models.execute_kw.call_args_list[0]
+        assert first_call[0][4] == "search_read"
+        assert first_call[0][5] == [[["id", "=", 99]]]
+
+    @patch("receiver.send_typed_message")
+    def test_write_happens_before_send(self, mock_send, odoo):
+        """Odoo cleared before publishing to prevent duplicate returns on retry."""
+        uid, models = odoo
+        call_order = []
+
+        def track_kw(*args):
+            if args[4] == "search_read":
+                return [self._fresh_partner()]
+            call_order.append("write")
+            return True
+
+        mock_send.side_effect = lambda *a: call_order.append("send")
+        models.execute_kw.side_effect = track_kw
+        receiver._return_lease(99, uid, models)
+        assert call_order == ["write", "send"]
+
+    @patch("receiver.send_typed_message")
+    def test_sends_fresh_balance_lease_id_and_tx_count(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[self._fresh_partner()], True]
         with patch("receiver.build_wallet_lease_return_xml") as mock_builder:
             mock_builder.return_value = "<xml/>"
-            receiver.process_badge_scan(_badge_root("check_out"), uid, models)
+            receiver._return_lease(99, uid, models)
         mock_builder.assert_called_once_with(
             identity_uuid=_UUID,
-            final_balance=25.0,
+            final_balance=30.0,
             lease_id=_LEASE,
-            transaction_count=3,
+            transaction_count=5,
         )
 
     @patch("receiver.send_typed_message")
-    def test_skips_if_no_active_lease(self, mock_send, odoo):
+    def test_clears_all_lease_fields_in_odoo(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.return_value = [_badge_partner(lease_active=False)]
-        receiver.process_badge_scan(_badge_root("check_out"), uid, models)
-        mock_send.assert_not_called()
-        assert models.execute_kw.call_count == 1  # only search_read
+        models.execute_kw.side_effect = [[self._fresh_partner()], True]
+        receiver._return_lease(99, uid, models)
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals == {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}
 
     @patch("receiver.send_typed_message")
-    def test_skips_if_no_identity_uuid(self, mock_send, odoo):
+    def test_noop_if_partner_not_found(self, mock_send, odoo):
         uid, models = odoo
-        partner = _badge_partner(lease_active=True)
-        partner["x_user_id"] = ""
-        models.execute_kw.return_value = [partner]
-        receiver.process_badge_scan(_badge_root("check_out"), uid, models)
+        models.execute_kw.return_value = []
+        receiver._return_lease(99, uid, models)
         mock_send.assert_not_called()
-        assert models.execute_kw.call_count == 1  # guard fires before any write
+        assert models.execute_kw.call_count == 1  # only the search_read
 
 
 # ── process_wallet_lease_grant ────────────────────────────────────────────────
@@ -235,7 +270,7 @@ class TestWalletRemoteTopup:
     @patch("receiver.send_typed_message")
     def test_calls_atomic_add_wallet_amount(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[self._partner()], 25.0]
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
         receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
         second_call = models.execute_kw.call_args_list[1]
         assert second_call[0][3] == "pos.order"
@@ -243,9 +278,19 @@ class TestWalletRemoteTopup:
         assert second_call[0][5] == [7, 5.0]
 
     @patch("receiver.send_typed_message")
+    def test_increments_lease_tx_count_after_topup(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
+        receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
+        third_call = models.execute_kw.call_args_list[2]
+        assert third_call[0][3] == "pos.order"
+        assert third_call[0][4] == "action_increment_lease_tx_count"
+        assert third_call[0][5] == [7]
+
+    @patch("receiver.send_typed_message")
     def test_sends_balance_update_with_authority_kassa(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[self._partner()], 25.0]
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
         with patch("receiver.build_wallet_balance_update_xml") as mock_builder:
             mock_builder.return_value = "<xml/>"
             receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
@@ -353,6 +398,12 @@ class TestEventEnded:
         cleared_ids = write_call[0][5][0]
         assert 1 not in cleared_ids
         assert 2 in cleared_ids
+
+    def test_raises_when_body_missing(self, odoo):
+        uid, models = odoo
+        root = ET.fromstring("<message><header/></message>")
+        with pytest.raises(ValueError, match="<body> missing"):
+            receiver.process_event_ended(root, uid, models)
 
     @patch("receiver.send_typed_message")
     def test_partial_failure_clears_only_successful_partners(self, mock_send, odoo):
