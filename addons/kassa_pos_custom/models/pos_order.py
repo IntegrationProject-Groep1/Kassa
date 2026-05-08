@@ -62,7 +62,7 @@ class PosOrder(models.Model):
             raise ValueError(f"Partner {partner_id} does not exist.")
         self.env.cr.execute(
             "UPDATE res_partner "
-            "SET x_wallet_balance = ROUND(COALESCE(x_wallet_balance, 0) + %s, 2) "
+            "SET x_wallet_balance = ROUND((COALESCE(x_wallet_balance, 0) + %s)::numeric, 2) "
             "WHERE id = %s RETURNING x_wallet_balance",
             (float(delta), partner_id),
         )
