@@ -384,12 +384,7 @@ class OrderPoller:
                     wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
                     all_sent = all_sent and wallet_sent
                     if lease_active:
-                        new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'res.partner', 'write',
-                            [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
-                        )
+                        self._increment_lease_tx_count(customer_info)
                 except Exception as e:
                     logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
                     all_sent = False
@@ -584,6 +579,15 @@ class OrderPoller:
         success = sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
         return success, invoice_msg_id
 
+    def _increment_lease_tx_count(self, customer_info: dict) -> None:
+        """Increment x_lease_transaction_count for the active lease summary."""
+        new_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
+        self.models.execute_kw(
+            self.odoo_db, self.odoo_uid, self.odoo_pass,
+            'res.partner', 'write',
+            [[customer_info['id']], {'x_lease_transaction_count': new_count}]
+        )
+
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> tuple[bool, str | None]:
         """Handle refund logic."""
         payment_ids = order.get('payment_ids', [])
@@ -621,12 +625,7 @@ class OrderPoller:
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
             if lease_active:
-                new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
-                self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'res.partner', 'write',
-                    [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
-                )
+                self._increment_lease_tx_count(customer_info)
 
         original_msg_id = str(uuid.uuid4())
         line_ids = [item[0] if isinstance(
@@ -812,12 +811,7 @@ class OrderPoller:
                 )
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
                 if lease_active:
-                    new_tx_count = int(customer_info.get('x_lease_transaction_count') or 0) + 1
-                    self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'write',
-                        [[customer_info['id']], {'x_lease_transaction_count': new_tx_count}]
-                    )
+                    self._increment_lease_tx_count(customer_info)
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
                 monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")

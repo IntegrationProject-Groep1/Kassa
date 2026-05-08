@@ -585,15 +585,32 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
                     "x_lease_id", "x_lease_transaction_count"]},
     )
 
-    returned = 0
+    cleared_ids = []
     for partner in active_partners:
         try:
-            _return_lease(partner, uid, models)
-            returned += 1
+            identity_uuid = partner.get("x_user_id") or ""
+            final_balance = float(partner.get("x_wallet_balance") or 0.0)
+            lease_id = partner.get("x_lease_id") or ""
+            tx_count = int(partner.get("x_lease_transaction_count") or 0)
+            xml = build_wallet_lease_return_xml(
+                identity_uuid=identity_uuid,
+                final_balance=final_balance,
+                lease_id=lease_id,
+                transaction_count=tx_count,
+            )
+            send_typed_message("wallet_lease_return", xml)
+            cleared_ids.append(partner["id"])
         except Exception as exc:
-            logger.error("[EVENT_ENDED] Failed to return lease for partner %s: %s", partner.get("id"), exc)
+            logger.error("[EVENT_ENDED] Failed to send lease_return for partner %s: %s", partner.get("id"), exc)
 
-    logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", returned, len(active_partners))
+    if cleared_ids:
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [cleared_ids, {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}],
+        )
+
+    logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
