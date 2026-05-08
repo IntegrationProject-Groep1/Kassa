@@ -32,10 +32,10 @@ jobs:
       - name: Set Image Tag
         id: vars
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            BRANCH="${GITHUB_REF#refs/heads/}"
-          else
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             BRANCH="${{ github.event.workflow_run.head_branch }}"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
           fi
 
           if [[ "$BRANCH" == "main" ]]; then
