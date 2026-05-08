@@ -23,7 +23,11 @@
       </xs:element>
       <xs:element name="body">
         <xs:complexType><xs:sequence>
-          <xs:element name="badge_id"   type="xs:string"/>
+          <!-- xs:choice enforces exactly one identifier: badge_id (badge scan) or identity_uuid (QR scan) -->
+          <xs:choice>
+            <xs:element name="badge_id"      type="xs:string"/>
+            <xs:element name="identity_uuid" type="UUIDType"/>
+          </xs:choice>
           <xs:element name="location">
             <xs:simpleType><xs:restriction base="xs:string">
               <xs:enumeration value="entrance"/>
