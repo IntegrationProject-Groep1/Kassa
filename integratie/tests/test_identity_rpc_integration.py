@@ -5,8 +5,12 @@ import socket
 import pika
 import pytest
 
-from integratie import identity_client
-from integratie import receiver
+try:
+    from integratie import identity_client
+    from integratie import receiver
+except ImportError:
+    import identity_client  # type: ignore[no-redef]
+    import receiver  # type: ignore[no-redef]
 
 
 def _broker_reachable():
