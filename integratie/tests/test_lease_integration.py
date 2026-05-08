@@ -4,7 +4,6 @@
 # The only mocked surfaces are Odoo XML-RPC and RabbitMQ publishing.
 
 import uuid
-import xml.etree.ElementTree as ET
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -257,8 +256,10 @@ class TestEventEndedPipeline:
         uid = 1
         models = MagicMock()
         active_partners = [
-            {"id": 1, "x_user_id": _UUID, "x_wallet_balance": 10.0, "x_lease_id": "L1", "x_lease_transaction_count": 2},
-            {"id": 2, "x_user_id": "550e8400-e29b-41d4-a716-446655440001", "x_wallet_balance": 5.0, "x_lease_id": "L2", "x_lease_transaction_count": 0},
+            {"id": 1, "x_user_id": _UUID, "x_wallet_balance": 10.0,
+             "x_lease_id": "L1", "x_lease_transaction_count": 2},
+            {"id": 2, "x_user_id": "550e8400-e29b-41d4-a716-446655440001",
+             "x_wallet_balance": 5.0, "x_lease_id": "L2", "x_lease_transaction_count": 0},
         ]
         models.execute_kw.side_effect = [active_partners, True]
         mock_conn.return_value = (uid, models)

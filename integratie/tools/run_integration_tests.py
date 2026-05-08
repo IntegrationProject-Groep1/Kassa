@@ -161,7 +161,7 @@ def build_msg(msg_type, body_xml, message_id=None, correlation_id=None):
     # Types that REQUIRE correlation_id per their XSD
     require_corr_id = {"new_registration", "wallet_lease_grant", "wallet_remote_topup"}
     # Types that MUST NOT include correlation_id per their XSD
-    forbid_corr_id  = {"badge_scanned"}
+    forbid_corr_id = {"badge_scanned"}
 
     if msg_type in require_corr_id:
         header_parts.append(f"<correlation_id>{corr_id}</correlation_id>")
