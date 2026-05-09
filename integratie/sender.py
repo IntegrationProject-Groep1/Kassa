@@ -637,7 +637,7 @@ def build_invoice_request_xml(
         raise ValueError("correlation_id is required for invoice_request")
 
     root = ET.Element("message")
-    _make_header(root, "invoice_request", correlation_id, source="crm")
+    _make_header(root, "invoice_request", correlation_id, source="kassa")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = identity_uuid
 
