@@ -872,6 +872,10 @@ def start_listening():
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
     except pika.exceptions.ChannelClosedByBroker as exc:
+        # If the broker reports PRECONDITION_FAILED (406), it usually means the
+        # queue/exchange already exists with different arguments. Do not crash
+        # the whole receiver — attempt to open a fresh channel and continue
+        # consuming from the existing queue without trying to redeclare it.
         if getattr(exc, "reply_code", None) == 406:
             logger.critical(
                 "RabbitMQ topology conflict (406 PRECONDITION_FAILED) while declaring "
@@ -882,7 +886,16 @@ def start_listening():
                 RETRY_QUEUE,
                 getattr(exc, "reply_text", ""),
             )
-        raise
+            # Try to recover: open a fresh connection/channel and skip topology setup
+            try:
+                conn = connect_to_rabbitmq()
+                channel = conn.channel()
+                logger.info("[RECEIVER] Recovered with existing broker topology; will consume from existing queue %s", QUEUE_NAME)
+            except Exception as e:
+                logger.critical("[RECEIVER] Could not recover from topology conflict: %s", e)
+                raise
+        else:
+            raise
     except Exception:
         logger.critical("Failed to setup RabbitMQ topology")
         raise

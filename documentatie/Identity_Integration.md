@@ -55,3 +55,19 @@ and handled defensively, but may not be returned by the current service version.
 - Mapping:
   - `master_uuid` from Identity is the canonical user identifier across services.
   - In Kassa/Odoo we store it as `res.partner.x_user_id`.
+
+## Local Odoo Customer Linking Flow
+
+When a customer is created directly in Odoo/POS (e.g., by a kassamedewerker) with only an email address, the integration service automatically links them to the Identity Service.
+
+- **Trigger:** A new `res.partner` record is created in Odoo with an email address but no `x_user_id`.
+- **Flow:**
+  1. The `PartnerIdentityPoller` detects the unlinked partner.
+  2. It checks Odoo for any other partner with the same email that already has an `x_user_id` to reuse the link.
+  3. If no local link exists, it calls `identity.user.create.request`.
+  4. If the email already exists in Identity, it performs a lookup via `identity.user.lookup.email.request`.
+  5. The returned `master_uuid` is stored in `res.partner.x_user_id`.
+  6. No message is sent to CRM or other systems for this local-only flow.
+- **Status Tracking:**
+  - `res.partner.x_identity_status`: tracks the linking progress (`pending`, `linked`, `error`).
+  - `res.partner.x_identity_last_sync`: timestamp of the last attempt.
