@@ -754,8 +754,13 @@ def test_update_partner_registration_paid_does_not_raise_on_error(poller):
 # ---------------------------------------------------------------------------
 
 @patch('order_poller.sender')
-def test_process_consumption_marks_partner_paid_for_inschrijvingskassa(mock_sender, poller):
-    """Partner is marked paid when the order comes from Inschrijvingskassa."""
+def test_process_consumption_never_marks_partner_paid(mock_sender, poller):
+    """_process_consumption does NOT call _update_partner_registration_paid.
+
+    Inschrijvingskassa orders are now routed to _process_registration() in
+    process_order() before they reach _process_consumption(), so
+    _process_consumption() itself no longer contains any partner-paid logic.
+    """
     mock_sender.build_consumption_order_xml.return_value = (
         '<message><header><message_id>corr-1</message_id></header></message>'
     )
@@ -767,23 +772,17 @@ def test_process_consumption_marks_partner_paid_for_inschrijvingskassa(mock_send
     customer_info = {
         'id': 55, 'name': 'Eve', 'is_company': False,
         'parent_id': False, 'x_user_id': 'u-55', 'email': '',
+        'customer_type': 'private',
     }
     order = {
         'id': 30, 'lines': [], 'amount_total': 10.0,
         'payment_ids': [], 'create_date': '2026-04-29 10:00:00',
         'session_id': (5, 'POS/2026/00001'),
     }
-    # Session lookup → config id 7; config lookup → name 'Inschrijvingskassa'
-    poller.models.execute_kw.side_effect = [
-        [{'config_id': (7, 'Inschrijvingskassa')}],
-        [{'name': 'Inschrijvingskassa'}],
-        True,   # res.partner write (x_outstanding_amount / x_payment_status)
-        True,   # bus.bus sendone
-    ]
 
     with patch.object(poller, '_update_partner_registration_paid') as mock_update:
         poller._process_consumption(order, customer_info, is_anonymous=False)
-        mock_update.assert_called_once_with(55, 'Eve')
+        mock_update.assert_not_called()
 
 
 @patch('order_poller.sender')
