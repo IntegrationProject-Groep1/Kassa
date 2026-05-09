@@ -452,8 +452,10 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     assert len(atomic_calls) == 1
 
     mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
-        'USR-1',
-        8.5,
+        identity_uuid='USR-1',
+        new_balance=8.5,
+        authority=None,
+        status=None,
     )
 
     msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]

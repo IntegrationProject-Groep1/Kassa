@@ -81,3 +81,136 @@ class TestXSDCompliance:
         xml = sender._to_xml(root)
         valid, errors = validate_xml(xml, "schema_error.xsd")
         assert valid, f"XSD Error in system_error: {errors}"
+
+    def test_wallet_lease_request_compliance(self):
+        xml = sender.build_wallet_lease_request_xml(
+            identity_uuid=str(uuid.uuid4()),
+            badge_id="BADGE-001",
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_request.xsd")
+        assert valid, f"XSD Error in wallet_lease_request: {errors}"
+
+    def test_wallet_lease_request_no_badge_id_compliance(self):
+        """QR-path lease_request (badge_id omitted) must pass XSD."""
+        xml = sender.build_wallet_lease_request_xml(
+            identity_uuid=str(uuid.uuid4()),
+            badge_id=None,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_request.xsd")
+        assert valid, f"XSD Error in wallet_lease_request (no badge_id): {errors}"
+
+    def test_badge_scanned_badge_path_compliance(self):
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+            "<source>iot_gateway</source>"
+            "<type>badge_scanned</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            "<badge_id>BADGE-001</badge_id>"
+            "<location>entrance</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_badge_scanned.xsd")
+        assert valid, f"XSD Error in badge_scanned (badge path): {errors}"
+
+    def test_badge_scanned_qr_path_compliance(self):
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+            "<source>iot_gateway</source>"
+            "<type>badge_scanned</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            f"<identity_uuid>{uuid.uuid4()}</identity_uuid>"
+            "<location>bar</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_badge_scanned.xsd")
+        assert valid, f"XSD Error in badge_scanned (QR path): {errors}"
+
+    def test_badge_scanned_both_ids_rejected_by_xsd(self):
+        """xs:choice enforces exactly one — both badge_id and identity_uuid must fail."""
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+            "<source>iot_gateway</source>"
+            "<type>badge_scanned</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            "<badge_id>BADGE-001</badge_id>"
+            f"<identity_uuid>{uuid.uuid4()}</identity_uuid>"
+            "<location>entrance</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        )
+        valid, _ = validate_xml(xml, "schema_badge_scanned.xsd")
+        assert not valid, "xs:choice should reject message with both badge_id and identity_uuid"
+
+    def test_badge_scanned_neither_id_rejected_by_xsd(self):
+        """xs:choice enforces exactly one — neither badge_id nor identity_uuid must fail."""
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+            "<source>iot_gateway</source>"
+            "<type>badge_scanned</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            "<location>entrance</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        )
+        valid, _ = validate_xml(xml, "schema_badge_scanned.xsd")
+        assert not valid, "xs:choice should reject message with neither badge_id nor identity_uuid"
+
+    def test_wallet_lease_return_compliance(self):
+        xml = sender.build_wallet_lease_return_xml(
+            identity_uuid=str(uuid.uuid4()),
+            final_balance=42.50,
+            lease_id="LEASE-ABC",
+            transaction_count=7,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_return.xsd")
+        assert valid, f"XSD Error in wallet_lease_return: {errors}"
+
+    def test_wallet_lease_return_zero_balance_compliance(self):
+        xml = sender.build_wallet_lease_return_xml(
+            identity_uuid=str(uuid.uuid4()),
+            final_balance=0.0,
+            lease_id="",
+            transaction_count=0,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_return.xsd")
+        assert valid, f"XSD Error in wallet_lease_return (zero balance): {errors}"
+
+    def test_wallet_balance_update_with_authority_and_status_compliance(self):
+        xml = sender.build_wallet_balance_update_xml(
+            identity_uuid=str(uuid.uuid4()),
+            new_balance=15.75,
+            authority="kassa",
+            status="active",
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_balance_update.xsd")
+        assert valid, f"XSD Error in wallet_balance_update (with authority/status): {errors}"
+
+    def test_wallet_balance_update_without_optional_fields_still_valid(self):
+        xml = sender.build_wallet_balance_update_xml(
+            identity_uuid=str(uuid.uuid4()),
+            new_balance=0.0,
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_balance_update.xsd")
+        assert valid, f"XSD Error in wallet_balance_update (no authority/status): {errors}"

@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 # ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
+from typing import Optional
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
@@ -84,6 +85,8 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
+    "wallet_lease_request":  "kassa.to.crm.wallet_lease_request",
+    "wallet_lease_return":   "kassa.to.crm.wallet_lease_return",
     "system_error": "kassa.errors",
     "log": "logs",
 }
@@ -362,6 +365,8 @@ _OUTGOING_SCHEMA_MAP = {
     "badge_assigned": _SCHEMA_DIR / "schema_badge_assigned.xsd",
     "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
     "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
+    "wallet_lease_request":  _SCHEMA_DIR / "schema_wallet_lease_request.xsd",
+    "wallet_lease_return":   _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
     "log": _SCHEMA_DIR / "schema_log.xsd",
 }
@@ -686,8 +691,13 @@ def build_badge_assigned_xml(badge_id: str, identity_uuid: str) -> str:
     return _to_xml(root)
 
 
-def build_wallet_balance_update_xml(identity_uuid: str, new_balance: float) -> str:
-    """Build wallet_balance_update message"""
+def build_wallet_balance_update_xml(
+    identity_uuid: str,
+    new_balance: float,
+    authority: str | None = None,
+    status: str | None = None,
+) -> str:
+    """Build wallet_balance_update message. Pass authority/status during an active lease."""
     root = ET.Element("message")
     _make_header(root, "wallet_balance_update")
     body = ET.SubElement(root, "body")
@@ -697,6 +707,43 @@ def build_wallet_balance_update_xml(identity_uuid: str, new_balance: float) -> s
     bal.text = f"{new_balance:.2f}"
     bal.set("currency", "eur")
 
+    if authority:
+        ET.SubElement(body, "authority").text = authority
+    if status:
+        ET.SubElement(body, "status").text = status
+
+    return _to_xml(root)
+
+
+def build_wallet_lease_request_xml(identity_uuid: str, badge_id: Optional[str] = None) -> str:
+    """Build wallet_lease_request: Kassa claims authority over visitor's balance."""
+    root = ET.Element("message")
+    _make_header(root, "wallet_lease_request")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
+    if badge_id:
+        ET.SubElement(body, "badge_id").text = str(badge_id)
+    return _to_xml(root)
+
+
+def build_wallet_lease_return_xml(
+    identity_uuid: str,
+    final_balance: float,
+    lease_id: str,
+    transaction_count: int,
+) -> str:
+    """Build wallet_lease_return: Kassa returns authority to CRM with final balance."""
+    root = ET.Element("message")
+    _make_header(root, "wallet_lease_return")
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
+
+    bal = ET.SubElement(body, "final_balance")
+    bal.text = f"{final_balance:.2f}"
+    bal.set("currency", "eur")
+
+    ET.SubElement(body, "lease_id").text = str(lease_id) if lease_id else ""
+    ET.SubElement(body, "transaction_count").text = str(transaction_count)
     return _to_xml(root)
 
 
@@ -782,11 +829,10 @@ def send_error_to_queue(
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
+    ET.SubElement(body, "error_description").text = error_description[:500]
 
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
-
-    ET.SubElement(body, "error_description").text = error_description[:500]
 
     error_xml = _to_xml(root)
 

@@ -128,6 +128,30 @@ class TestValidateXml:
         )
         receiver.validate_xml(xml, "badge_scanned")  # should not raise
 
+    def test_valid_user_event_passes(self):
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<user_event>"
+            "<event>UserCreated</event>"
+            "<master_uuid>a1b2c3d4-e5f6-7890-abcd-ef1234567890</master_uuid>"
+            "<email>jan.peeters@ehb.be</email>"
+            "<source_system>frontend</source_system>"
+            "<timestamp>2026-05-08T10:00:00</timestamp>"
+            "</user_event>"
+        )
+        receiver.validate_xml(xml, "user_event")  # should not raise
+
+    def test_invalid_user_event_raises(self):
+        # Missing required fields — should fail XSD validation
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<user_event>"
+            "<event>UserCreated</event>"
+            "</user_event>"
+        )
+        with pytest.raises(ValueError, match="XSD validation failed"):
+            receiver.validate_xml(xml, "user_event")
+
 
 # ── process_new_registration ───────────────────────────────────────────────────
 
@@ -277,7 +301,7 @@ class TestProcessBadgeScan:
             "<header><message_id>550e8400-e29b-41d4-a716-446655440004</message_id></header>"
             "<body>"
             f"<badge_id>{badge_id}</badge_id>"
-            "<location>bar</location>"
+            "<location>session</location>"
             "<scanned_at>2026-04-20T10:00:00Z</scanned_at>"
             "</body>"
             "</message>"
@@ -293,9 +317,9 @@ class TestProcessBadgeScan:
         ]
         receiver.process_badge_scan(self._root("BADGE-001"), uid, models)
 
-        assert "Processing scan from bar at 2026-04-20T10:00:00Z" in caplog.text
-        assert "Badge recognised: Odoo ID=3" in caplog.text
-        assert "Location=bar" in caplog.text
+        assert "Processing badge(BADGE-001) scan from session at 2026-04-20T10:00:00Z" in caplog.text
+        assert "Recognised: Odoo ID=3" in caplog.text
+        assert "Location=session" in caplog.text
 
     @patch("receiver.send_error_to_queue")
     def test_unknown_badge_sends_error(self, mock_send_error, odoo):
@@ -308,12 +332,12 @@ class TestProcessBadgeScan:
             error_description="Badge BADGE-UNKNOWN not found in local Odoo cache.",
         )
 
-    def test_missing_badge_id_raises(self, odoo):
+    def test_missing_identifier_raises(self, odoo):
         uid, models = odoo
         root = ET.fromstring(
             "<message><header/><body><location>bar</location></body></message>"
         )
-        with pytest.raises(ValueError, match="badge_id missing"):
+        with pytest.raises(ValueError, match="neither badge_id nor identity_uuid"):
             receiver.process_badge_scan(root, uid, models)
 
 

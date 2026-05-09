@@ -4,12 +4,17 @@ receiver.py — RabbitMQ consumer for the Kassa integration service.
 Connects to the broker defined by RABBIT_HOST/PORT/VHOST and listens on the
 queue set by RABBIT_INCOMING_QUEUE (default: kassa.incoming).
 
-Handles four incoming message types sent by the CRM / IoT teams:
+Handles seven incoming message types sent by the CRM / IoT teams:
     - new_registration     → creates or updates a res.partner in Odoo
     - profile_update       → updates name, email, age, VAT on an existing partner
-    - badge_scanned        → looks up a customer by x_badge_id; sends a
-                             system_error to kassa.errors if the badge is unknown
+    - badge_scanned        → looks up a customer by x_badge_id; drives the
+                             wallet lease lifecycle on check_in / check_out
     - cancel_registration  → sets active=False on the partner (soft delete)
+    - wallet_lease_grant   → CRM confirms balance authority; reconciles wallet
+                             balance and stores the lease_id on the partner
+    - wallet_remote_topup  → CRM pushes an online top-up to the active lease;
+                             updates balance and broadcasts wallet_balance_update
+    - event_ended          → festival ended; returns all active leases to CRM
 
 Error handling:
     - Unparseable XML          → basic_nack(requeue=False) + system_error sent
@@ -34,7 +39,12 @@ from typing import Any, List, Dict, Tuple, cast
 from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
-from sender import send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME
+from sender import (
+    send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME,
+    send_typed_message,
+    build_wallet_lease_request_xml, build_wallet_lease_return_xml,
+    build_wallet_balance_update_xml,
+)
 from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
 
@@ -77,23 +87,17 @@ MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration": os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
-    "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
-    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
+    "new_registration":    os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
+    "profile_update":      os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
+    "badge_scanned":       os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
-    "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
+    "user_event": os.path.join(SCHEMA_DIR, "schema_user_event.xsd"),
+    "wallet_lease_grant":  os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
+    "event_ended":         os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
-
-
-def _normalize_for_validation(xml_text: str, msg_type: str) -> str:
-    """
-    Contract v2.3 alignment: No normalization required as CRM and Kassa
-    now follow the same centralized schema definitions.
-    """
-    return xml_text
 
 
 # ── Idempotency cache ──────────────────────────────────────────────────────────
@@ -145,8 +149,7 @@ def validate_xml(xml_text: str, msg_type: str) -> None:
         schema_doc = etree.parse(schema_path)
         _schema_cache[msg_type] = etree.XMLSchema(schema_doc)
 
-    validation_xml = _normalize_for_validation(xml_text, msg_type)
-    xml_doc = etree.fromstring(validation_xml.encode("utf-8"))
+    xml_doc = etree.fromstring(xml_text.encode("utf-8"))
 
     if not _schema_cache[msg_type].validate(xml_doc):
         errors = str(_schema_cache[msg_type].error_log)
@@ -240,6 +243,11 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         {"fields": ["id", "name", "x_user_id"], "limit": 1},
     )
 
+    # Mapping note: `x_user_id` stores the canonical user identifier.
+    # The system-wide canonical ID is `master_uuid` from the Identity Service.
+    # Incoming `new_registration` messages MUST contain `user_id` equal to
+    # the Identity `master_uuid` so that all teams (CRM/Kassa/Frontend)
+    # reference the same UID. Do NOT generate local UUIDs as a fallback.
     partner_vals: Dict[str, Any] = {
         "name": name or company_name or "Unknown",
         "email": email,
@@ -375,45 +383,277 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a badge_scanned message (Flow 2)."""
+    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on entrance or kassa scan."""
     body = root.find("body")
     if body is None:
         raise ValueError("badge_scanned: <body> missing")
 
     badge_id = (body.findtext("badge_id") or "").strip()
-    scan_type = (body.findtext("scan_type") or "").strip()
-    location = (body.findtext("location") or scan_type or "unknown").strip()
+    identity_uuid_scanned = (body.findtext("identity_uuid") or "").strip()
+    location = (body.findtext("location") or "unknown").strip()
     scanned_at = (body.findtext("scanned_at") or "").strip()
+    message_id = root.findtext("header/message_id")
 
-    if not badge_id:
-        raise ValueError("badge_scanned: badge_id missing in <body>")
+    _partner_fields = ["id", "name", "x_user_id", "x_wallet_balance",
+                       "x_date_of_birth", "is_company",
+                       "x_lease_active", "x_lease_id", "x_lease_transaction_count"]
 
-    logger.info("[BADGE_SCANNED] Processing scan from %s at %s", location, scanned_at)
+    if badge_id:
+        existing: List[OdooRecord] = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_badge_id", "=", badge_id]]],
+            {"fields": _partner_fields, "limit": 1},
+        )
+        scan_label = f"badge({badge_id})"
+        not_found_code = "badge_not_found"
+        not_found_desc = f"Badge {badge_id} not found in local Odoo cache."
+    elif identity_uuid_scanned:
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_user_id", "=", identity_uuid_scanned]]],
+            {"fields": _partner_fields, "limit": 1},
+        )
+        scan_label = f"qr_code({identity_uuid_scanned})"
+        not_found_code = "profile_not_found"
+        not_found_desc = f"identity_uuid {identity_uuid_scanned} not found in local Odoo cache."
+    else:
+        raise ValueError("badge_scanned: neither badge_id nor identity_uuid present in <body>")
+
+    logger.info("[BADGE_SCANNED] Processing %s scan from %s at %s", scan_label, location, scanned_at)
+
+    if not existing:
+        logger.warning("[BADGE_SCANNED] ⚠ %s not found in local cache – sending system_error", scan_label)
+        send_error_to_queue(
+            error_code=not_found_code,
+            related_message_id=message_id,
+            error_description=not_found_desc,
+        )
+        return
+
+    partner = existing[0]
+    identity_uuid = partner.get("x_user_id") or ""
+
+    logger.info(
+        "[BADGE_SCANNED] ✓ Recognised: Odoo ID=%s | %s | Location=%s",
+        partner["id"], scan_label, location,
+    )
+
+    if location in ("entrance", "bar", "main_bar"):
+        if not identity_uuid:
+            logger.warning("[BADGE_SCANNED] check_in skipped: no identity_uuid for partner %s", partner["id"])
+            return
+        if partner.get("x_lease_active"):
+            logger.info("[BADGE_SCANNED] check_in: lease already active for %s, skipping", identity_uuid)
+            return
+        xml = build_wallet_lease_request_xml(
+            identity_uuid=identity_uuid,
+            badge_id=badge_id or None,
+        )
+        send_typed_message("wallet_lease_request", xml)
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
+        )
+        logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
+
+
+def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
+    """Clear Odoo lease state then notify CRM via wallet_lease_return.
+
+    Always fetches fresh partner data right before acting so the final
+    balance, lease_id, and tx_count in the message reflect true state
+    regardless of how long ago the badge was scanned.
+
+    Odoo is cleared before the message is published: if the send fails,
+    Kassa remains consistent and CRM reconciles at event-end rather than
+    receiving a duplicate return on the next check-out.
+    """
+    fresh: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["id", "=", partner_id]]],
+        {"fields": ["id", "x_user_id", "x_wallet_balance",
+                    "x_lease_id", "x_lease_transaction_count"], "limit": 1},
+    )
+    if not fresh:
+        logger.warning("[LEASE_RETURN] Partner %s not found during lease return", partner_id)
+        return
+
+    partner = fresh[0]
+    identity_uuid = partner.get("x_user_id") or ""
+    final_balance = float(partner.get("x_wallet_balance") or 0.0)
+    lease_id = partner.get("x_lease_id") or ""
+    tx_count = int(partner.get("x_lease_transaction_count") or 0)
+
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "write",
+        [[partner_id], {
+            "x_lease_active": False,
+            "x_lease_id": "",
+            "x_lease_transaction_count": 0,
+        }],
+    )
+
+    xml = build_wallet_lease_return_xml(
+        identity_uuid=identity_uuid,
+        final_balance=final_balance,
+        lease_id=lease_id,
+        transaction_count=tx_count,
+    )
+    send_typed_message("wallet_lease_return", xml)
+    logger.info("[LEASE_RETURN] ✅ Lease returned for %s (balance=%.2f, tx=%d)", identity_uuid, final_balance, tx_count)
+
+
+def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """CRM confirms balance authority transferred to Kassa. Reconcile balance and store lease_id."""
+    body = root.find("body")
+    if body is None:
+        raise ValueError("wallet_lease_grant: <body> missing")
+
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
+    lease_id = (body.findtext("lease_id") or "").strip()
+    current_balance_text = (body.findtext("current_balance") or "0").strip()
+
+    if not identity_uuid:
+        raise ValueError("wallet_lease_grant: identity_uuid missing")
+
+    try:
+        current_balance = float(current_balance_text)
+    except ValueError:
+        raise ValueError(f"wallet_lease_grant: invalid current_balance '{current_balance_text}'")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
-        [[["x_badge_id", "=", badge_id]]],
-        {"fields": ["id", "name", "x_user_id", "x_wallet_balance",
-                    "x_date_of_birth", "is_company"], "limit": 1},
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id"], "limit": 1},
+    )
+    if not existing:
+        logger.warning("[LEASE_GRANT] No partner found for identity_uuid=%s", identity_uuid)
+        return
+
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "write",
+        [[existing[0]["id"]], {
+            "x_wallet_balance": current_balance,
+            "x_lease_id": lease_id,
+            "x_lease_active": True,
+        }],
+    )
+    logger.info("[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | lease_id=%s",
+                identity_uuid, current_balance, lease_id)
+
+
+def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """CRM pushes an online top-up to the active lease. Updates balance and broadcasts wallet_balance_update."""
+    body = root.find("body")
+    if body is None:
+        raise ValueError("wallet_remote_topup: <body> missing")
+
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
+    add_amount_text = (body.findtext("add_amount") or "0").strip()
+    reason = (body.findtext("reason") or "").strip()
+
+    if not identity_uuid:
+        raise ValueError("wallet_remote_topup: identity_uuid missing")
+
+    try:
+        add_amount = float(add_amount_text)
+    except ValueError:
+        raise ValueError(f"wallet_remote_topup: invalid add_amount '{add_amount_text}'")
+
+    existing: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id", "x_lease_active"], "limit": 1},
+    )
+    if not existing:
+        logger.warning("[REMOTE_TOPUP] No partner found for identity_uuid=%s", identity_uuid)
+        return
+
+    partner = existing[0]
+    if not partner.get("x_lease_active"):
+        logger.warning("[REMOTE_TOPUP] No active lease for %s – rejecting remote top-up", identity_uuid)
+        return
+
+    new_balance = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "pos.order", "action_add_wallet_amount",
+        [partner["id"], add_amount],
     )
 
-    message_id = root.findtext("header/message_id")
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "pos.order", "action_increment_lease_tx_count",
+        [partner["id"]],
+    )
 
-    if existing:
-        partner = existing[0]
-        logger.info(
-            "[BADGE_SCANNED] ✓ Badge recognised: Odoo ID=%s | Location=%s",
-            partner['id'],
-            location,
+    update_xml = build_wallet_balance_update_xml(
+        identity_uuid=identity_uuid,
+        new_balance=new_balance,
+        authority="kassa",
+        status="active",
+    )
+    send_typed_message("wallet_balance_update", update_xml)
+    logger.info("[REMOTE_TOPUP] ✅ Balance updated for %s: +%.2f → %.2f (reason=%s)",
+                identity_uuid, add_amount, new_balance, reason)
+
+
+def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Festival ended. Return all active leases to CRM.
+
+    Note: event_ended is currently only routed to facturatie.incoming by Frontend.
+    This handler is ready for when Frontend also routes it to kassa.incoming.
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("event_ended: <body> missing")
+    session_id = (body.findtext("session_id") or "").strip()
+    logger.info("[EVENT_ENDED] Received — returning all active leases (session_id=%s)", session_id)
+
+    active_partners: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_lease_active", "=", True]]],
+        {"fields": ["id", "x_user_id", "x_wallet_balance",
+                    "x_lease_id", "x_lease_transaction_count"]},
+    )
+
+    cleared_ids = []
+    for partner in active_partners:
+        try:
+            identity_uuid = partner.get("x_user_id")
+            if not identity_uuid:
+                logger.warning("[EVENT_ENDED] Skipping partner %s: no identity_uuid", partner.get("id"))
+                continue
+            final_balance = float(partner.get("x_wallet_balance") or 0.0)
+            lease_id = partner.get("x_lease_id") or ""
+            tx_count = int(partner.get("x_lease_transaction_count") or 0)
+            xml = build_wallet_lease_return_xml(
+                identity_uuid=identity_uuid,
+                final_balance=final_balance,
+                lease_id=lease_id,
+                transaction_count=tx_count,
+            )
+            send_typed_message("wallet_lease_return", xml)
+            cleared_ids.append(partner["id"])
+        except Exception as exc:
+            logger.error("[EVENT_ENDED] Failed to send lease_return for partner %s: %s", partner.get("id"), exc)
+
+    if cleared_ids:
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [cleared_ids, {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}],
         )
-    else:
-        logger.warning("[BADGE_SCANNED] ⚠ Badge NOT found in local cache – sending system_error")
-        send_error_to_queue(
-            error_code="badge_not_found",
-            related_message_id=message_id,
-            error_description=f"Badge {badge_id} not found in local Odoo cache.",
-        )
+
+    logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -451,70 +691,6 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
         )
     else:
         logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
-
-
-def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a wallet_lease_grant message (Flow 26.2)."""
-    body = root.find("body")
-    if body is None:
-        raise ValueError("wallet_lease_grant: <body> missing")
-
-    identity_uuid = (body.findtext("identity_uuid") or "").strip()
-    balance = parse_xml_float(body.find("current_balance"))
-    lease_id = (body.findtext("lease_id") or "").strip()
-
-    if not identity_uuid:
-        raise ValueError("wallet_lease_grant: identity_uuid missing")
-
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name"], "limit": 1},
-    )
-
-    if existing:
-        partner_id = existing[0]["id"]
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "write",
-            [[partner_id], {"x_wallet_balance": balance, "x_lease_id": lease_id}],
-        )
-        logger.info("[WALLET_LEASE_GRANT] ✓ Balance updated for Odoo ID=%s: %s EUR", partner_id, balance)
-    else:
-        logger.warning("[WALLET_LEASE_GRANT] ⚠ Customer %s not found", identity_uuid)
-
-
-def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a wallet_remote_topup message (Flow 26.6)."""
-    body = root.find("body")
-    if body is None:
-        raise ValueError("wallet_remote_topup: <body> missing")
-
-    identity_uuid = (body.findtext("identity_uuid") or "").strip()
-    amount = parse_xml_float(body.find("add_amount"))
-
-    if not identity_uuid:
-        raise ValueError("wallet_remote_topup: identity_uuid missing")
-
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "x_wallet_balance"], "limit": 1},
-    )
-
-    if existing:
-        partner = existing[0]
-        new_balance = float(partner.get("x_wallet_balance", 0.0)) + amount
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "write",
-            [[partner["id"]], {"x_wallet_balance": new_balance}],
-        )
-        logger.info("[WALLET_REMOTE_TOPUP] ✓ Topup processed for Odoo ID=%s: +%s EUR", partner["id"], amount)
-    else:
-        logger.warning("[WALLET_REMOTE_TOPUP] ⚠ Customer %s not found", identity_uuid)
 
 
 # ── Central message processing ─────────────────────────────────────────────────
@@ -593,6 +769,8 @@ def process_message(ch, method, properties, body):
             process_wallet_lease_grant(root, uid, models)
         elif msg_type == "wallet_remote_topup":
             process_wallet_remote_topup(root, uid, models)
+        elif msg_type == "event_ended":
+            process_event_ended(root, uid, models)
 
         if related_message_id:
             _remember_message_id(related_message_id)
@@ -665,6 +843,27 @@ def start_listening():
 
     try:
         setup_exchange(channel)
+        # Optional subscription to user.events fanout for minimal user notifications.
+        if os.environ.get("SUBSCRIBE_USER_EVENTS", "False").lower() in ("1", "true", "yes"):
+            try:
+                channel.exchange_declare(exchange="user.events", exchange_type="fanout", durable=True)
+                ue_queue = f"{QUEUE_NAME}.user.events"
+                channel.queue_declare(queue=ue_queue, durable=True)
+                channel.queue_bind(exchange="user.events", queue=ue_queue)
+
+                def _user_events_callback(ch2, method2, props2, body2):
+                    try:
+                        txt = body2.decode("utf-8")
+                        validate_xml(txt, "user_event")
+                        logger.info("[USER_EVENTS] Received user event: %s", txt[:200])
+                    except Exception as _ue_exc:
+                        logger.warning("[USER_EVENTS] Malformed or invalid user event: %s", _ue_exc)
+                    ch2.basic_ack(delivery_tag=method2.delivery_tag)
+
+                channel.basic_consume(queue=ue_queue, on_message_callback=_user_events_callback)
+                logger.info("[RECEIVER] Subscribed to user.events fanout via queue %s", ue_queue)
+            except Exception as e:
+                logger.warning("[RECEIVER] Could not bind to user.events fanout: %s", e)
         dead_letter_exchange = DLX_NAME
         if DLX_NAME != EXCHANGE_NAME:
             channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
