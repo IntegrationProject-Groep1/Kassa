@@ -20,9 +20,7 @@ from typing import List, Dict, Any, Optional
 
 import identity_client
 from config_utils import require_env
-from monitoring import monitor
 
-logger = logging.getLogger(__name__)
 
 class PartnerIdentityPoller:
     def __init__(self):
@@ -31,7 +29,7 @@ class PartnerIdentityPoller:
         self.odoo_db = env["ODOO_DB"]
         self.odoo_user = env["ODOO_USER"]
         self.odoo_pass = env["ODOO_PASS"]
-        
+
         self.uid = None
         self.models = None
 
@@ -66,7 +64,7 @@ class PartnerIdentityPoller:
             )
             if not partner_ids:
                 return []
-            
+
             return self.models.execute_kw(
                 self.odoo_db, self.uid, self.odoo_pass,
                 "res.partner", "read",
@@ -100,9 +98,9 @@ class PartnerIdentityPoller:
         partner_id = partner["id"]
         email = partner["email"].strip()
         name = partner.get("name") or email
-        
+
         logger.info("Processing unlinked partner: %s (%s)", name, email)
-        
+
         # 1. Check for existing link in Odoo
         existing_uuid = self._find_existing_link_in_odoo(email)
         if existing_uuid:
@@ -151,7 +149,7 @@ class PartnerIdentityPoller:
         if error_msg:
             # Reuse x_rabbitmq_error for logging identity errors too
             vals["x_rabbitmq_error"] = f"Identity Link Error: {error_msg}"
-        
+
         try:
             self.models.execute_kw(
                 self.odoo_db, self.uid, self.odoo_pass,
@@ -170,13 +168,14 @@ class PartnerIdentityPoller:
                     logger.info("Found %d unlinked partners", len(partners))
                     for p in partners:
                         self.process_partner(p)
-                
+
                 time.sleep(interval)
             except KeyboardInterrupt:
                 break
             except Exception as e:
                 logger.error("Unexpected error in PartnerIdentityPoller loop: %s", e)
                 time.sleep(interval)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
