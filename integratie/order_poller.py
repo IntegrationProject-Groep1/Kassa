@@ -344,13 +344,20 @@ class OrderPoller:
             else:
                 is_anonymous = True
 
+            is_registration = False
             if order.get('amount_total', 0) < 0:
                 all_sent, payment_msg_id = self._process_refund(order, order_id, customer_info, is_anonymous)
                 consumption_msg_id = None
             else:
-                all_sent, consumption_msg_id, payment_msg_id = (
-                    self._process_consumption(order, customer_info, is_anonymous)
-                )
+                config_name = self._get_pos_config_name(order.get('session_id'))
+                if config_name == 'Inschrijvingskassa' and customer_info and not is_anonymous:
+                    is_registration = True
+                    all_sent, payment_msg_id = self._process_registration(order, customer_info)
+                    consumption_msg_id = None
+                else:
+                    all_sent, consumption_msg_id, payment_msg_id = (
+                        self._process_consumption(order, customer_info, is_anonymous)
+                    )
 
             if (
                 self._last_consumption_has_topup
@@ -390,7 +397,7 @@ class OrderPoller:
                     all_sent = False
 
             # Story 7 & B2B Auto-Invoice: Invoice Request logic
-            should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous
+            should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous and not is_registration
             is_company = customer_info and customer_info.get('customer_type') == 'company'
 
             # Check if invoice request should be sent:
@@ -846,13 +853,60 @@ class OrderPoller:
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
 
-        # After a successful Inschrijvingskassa payment, mark the partner as fully paid.
-        config_name = self._get_pos_config_name(order.get('session_id'))
-        if config_name == 'Inschrijvingskassa' and customer_info and not is_anonymous:
-            self._update_partner_registration_paid(
-                customer_info['id'], customer_info.get('name', ''))
-
         return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
+
+    def _process_registration(self, order: dict, customer_info: dict) -> tuple[bool, str | None]:
+        """Send registration payment messages for an Inschrijvingskassa order.
+
+        Emits two messages in order:
+          1. ``payment_registered`` (routing key ``kassa.payments.registration``) to CRM
+          2. ``payment_status`` (routing key ``kassa.frontend.payment``) to the POS frontend
+
+        Then updates the partner record via ``_update_partner_registration_paid``.
+
+        ``correlation_id`` is intentionally omitted because the POS order name
+        (e.g. "POS/001") is not a valid UUID and would fail XSD validation.
+
+        Returns ``(all_sent, payment_msg_id)``.  ``all_sent`` is True only when both
+        messages were accepted by the broker or written to the offline outbox.
+        """
+        self._last_consumption_has_topup = False  # no wallet top-ups on Inschrijvingskassa
+
+        order_id = order['id']
+        identity_uuid = customer_info.get('x_user_id')
+
+        due_date = (
+            order.get('create_date', '').split(' ')[0]
+            if order.get('create_date')
+            else '1970-01-01'
+        )
+
+        payment_xml = sender.build_payment_registered_xml(
+            payment_context='registration',
+            invoice_status='paid',
+            amount_paid=float(order.get('amount_total', 0.0)),
+            due_date=due_date,
+            trx_id=order.get('name', str(order_id)),
+            payment_method='on_site',
+            invoice_id=None,
+            identity_uuid=identity_uuid,
+            correlation_id=None,
+            email=customer_info.get('email'),
+        )
+        ok_payment = sender.send_typed_message(
+            'payment_registered_registration', payment_xml, record_id=order_id
+        )
+        payment_msg_id = self._extract_message_id(payment_xml)
+
+        status_xml = sender.build_payment_status_xml(
+            identity_uuid=identity_uuid,
+            status='paid',
+        )
+        ok_status = sender.send_typed_message('payment_status', status_xml, record_id=order_id)
+
+        self._update_partner_registration_paid(customer_info['id'], customer_info.get('name', ''))
+
+        return (ok_payment and ok_status), payment_msg_id
 
     def poll_badge_assignments(self):
         """
