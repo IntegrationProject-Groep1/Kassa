@@ -242,7 +242,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
     if not uid:
         return False
 
-    fields_to_check = [
+    fields_to_check: list[tuple[str, str, str, str, dict[str, Any]]] = [
         ("res.partner", "x_user_id", "External CRM User ID", "char", {"index": True}),
         ("res.partner", "x_badge_id", "IoT Badge ID", "char", {"index": True}),
         ("res.partner", "x_badge_sent", "Badge Assignment Sent to CRM", "boolean", {}),
