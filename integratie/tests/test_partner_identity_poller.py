@@ -21,7 +21,7 @@ class TestPartnerIdentityPoller(unittest.TestCase):
     @patch("identity_client.create_user")
     @patch("partner_identity_poller.datetime")
     def test_process_partner_success_create(self, mock_datetime, mock_create_user):
-        mock_datetime.now.return_value.strftime.return_value = "2026-05-09 12:00:00"
+        mock_datetime.utcnow.return_value.strftime.return_value = "2026-05-09 12:00:00"
         mock_create_user.return_value = "new-uuid-123"
 
         # Mock no existing link in Odoo
