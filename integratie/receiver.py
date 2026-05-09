@@ -877,9 +877,15 @@ def start_listening():
         # the whole receiver — attempt to open a fresh channel and continue
         # consuming from the existing queue without trying to redeclare it.
         if getattr(exc, "reply_code", None) == 406:
-            logger.critical(
+            msg_template = (
                 "RabbitMQ topology conflict (406 PRECONDITION_FAILED) while declaring "
-                "exchange=%s queue=%s dlq=%s retry_queue=%s: %s",
+                "exchange=%s "
+                "queue=%s "
+                "dlq=%s "
+                "retry_queue=%s: %s"
+            )
+            logger.critical(
+                msg_template,
                 EXCHANGE_NAME,
                 QUEUE_NAME,
                 DLQ_NAME,
@@ -890,7 +896,11 @@ def start_listening():
             try:
                 conn = connect_to_rabbitmq()
                 channel = conn.channel()
-                logger.info("[RECEIVER] Recovered with existing broker topology; will consume from existing queue %s", QUEUE_NAME)
+                info_msg = (
+                    "[RECEIVER] Recovered with existing broker topology; "
+                    "will consume from existing queue %s"
+                )
+                logger.info(info_msg, QUEUE_NAME)
             except Exception as e:
                 logger.critical("[RECEIVER] Could not recover from topology conflict: %s", e)
                 raise

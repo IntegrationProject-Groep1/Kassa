@@ -4,6 +4,8 @@ Creates a new partner in Odoo and monitors the PartnerIdentityPoller's progress.
 """
 import os
 import time
+import importlib
+from datetime import datetime
 
 try:
     # Prefer defusedxml's xmlrpc interface for safe parsing (Bandit B411 mitigation)
@@ -14,9 +16,7 @@ except Exception:
     # Fall back to stdlib xmlrpc if defusedxml isn't installed in this environment
     pass
 
-import xmlrpc.client
-
-from datetime import datetime
+xmlrpc_client = importlib.import_module("xmlrpc.client")
 
 
 def test_linking():
@@ -31,9 +31,9 @@ def test_linking():
     print(f"🚀 Testing Local Customer Linking for: {email}")
 
     try:
-        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common", allow_none=True)
+        common = xmlrpc_client.ServerProxy(f"{url}/xmlrpc/2/common", allow_none=True)
         uid = common.authenticate(db, user, password, {})
-        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
+        models = xmlrpc_client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
 
         # 1. Create a minimal partner
         print(f"📝 Creating partner '{name}' in Odoo...")
