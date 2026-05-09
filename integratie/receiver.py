@@ -907,8 +907,12 @@ def start_listening():
         if flushed_ids:
             uid, models = get_odoo_connection()
             models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, 'pos.order', 'write',
-                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}]
+                ODOO_DB,
+                uid,
+                ODOO_PASS,
+                'pos.order',
+                'write',
+                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}],
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
