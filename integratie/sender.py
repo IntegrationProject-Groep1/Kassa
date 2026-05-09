@@ -566,7 +566,7 @@ def build_consumption_order_xml(
 def build_payment_registered_xml(
     payment_context, invoice_status, amount_paid,
     due_date, trx_id, payment_method,
-    invoice_id=None, identity_uuid=None, correlation_id=None, email=None
+    invoice_id=None, identity_uuid=None, correlation_id=None
 ) -> str:
     """
     Build a payment_registered message confirming a payment was processed.
@@ -576,7 +576,7 @@ def build_payment_registered_xml(
                          flow this payment belongs to.
         invoice_status:  Current invoice state, e.g. 'paid' or 'partial'.
         amount_paid:     Amount actually paid (EUR).
-        due_date:        Invoice due date as an ISO-8601 date string.
+        due_date:        Invoice due date as an ISO-8601 date string, or None.
         trx_id:          Unique transaction ID from the payment terminal.
         payment_method:  How the customer paid, e.g. 'cash', 'card', 'wallet'.
         invoice_id:      Odoo invoice ID, included if available.
@@ -599,7 +599,8 @@ def build_payment_registered_xml(
     ap.text = str(amount_paid)
     ap.set("currency", "eur")
     ET.SubElement(inv, "status").text = invoice_status
-    ET.SubElement(inv, "due_date").text = due_date
+    if due_date:
+        ET.SubElement(inv, "due_date").text = due_date
 
     ET.SubElement(body, "payment_context").text = payment_context
 

@@ -36,6 +36,15 @@ class TestXSDCompliance:
         valid, errors = validate_xml(xml, "schema_payment_registered_v2.1.xsd")
         assert valid, f"XSD Error in payment_registered: {errors}"
 
+    def test_payment_registered_no_due_date_compliance(self):
+        """due_date is optional (minOccurs=0) — must be omitted, not empty."""
+        xml = sender.build_payment_registered_xml(
+            "registration", "paid", 50.0, None, "TRX2", "on_site",
+            identity_uuid=str(uuid.uuid4()),
+        )
+        valid, errors = validate_xml(xml, "schema_payment_registered_v2.1.xsd")
+        assert valid, f"XSD Error in payment_registered (no due_date): {errors}"
+
     def test_refund_processed_compliance(self):
         xml = sender.build_refund_processed_xml(
             str(uuid.uuid4()), "consumption_item", 5.0, "cash", "customer_request",

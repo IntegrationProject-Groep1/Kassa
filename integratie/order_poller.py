@@ -836,12 +836,11 @@ class OrderPoller:
             payment_context="consumption",
             invoice_status=invoice_status,
             amount_paid=amount_paid,
-            due_date=order.get('create_date', '').split(" ")[0] if order.get('create_date') else "1970-01-01",
+            due_date=order.get('create_date', '').split(" ")[0] if order.get('create_date') else None,
             trx_id=str(order['id']),
             payment_method=payment_method,
             identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             correlation_id=correlation_id,
-            email=customer_info.get('email') if customer_info else None
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
