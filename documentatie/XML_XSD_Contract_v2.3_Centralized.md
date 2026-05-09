@@ -48,6 +48,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **ONTVANGT** | `user_registered` | ← Frontend |  v1.0 header + verkeerde queue | [5.5](#55-user_registered) |
 |  **ONTVANGT** | `user_created`, `user_updated`, `user_deleted` | ← Frontend |  dotted type | [5.2-5.4](#52-user_updated) |
 |  **ONTVANGT** | `cancel_registration` | ← Frontend | NIEUW | [5.6](#56-cancel_registration-frontend--crm) |
+|  **ONTVANGT** | `company_member_removed` | ← Frontend | NIEUW | [5.8](#58-company_member_removed) |
 |  **ONTVANGT** | `session_created`, `session_updated` | ← Planning |  `session_update` (fout) | [7.1-7.2](#71-session_created) |
 |  **ONTVANGT** | `payment_registered` | ← Kassa |  | [6.6](#66-payment_registered-kassa--rabbitmq) |
 |  **ONTVANGT** | `invoice_created_notification` | ← Facturatie |  | [8.1](#81-invoice_status) |
@@ -66,7 +67,8 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 3.  Regel line 45-63: `invoice_request` body → `<invoice_data>` i.p.v. `<items>`
 4.  Regel line 85: type `mailing_status` → `send_mailing`
 5.  Regel line 124: queue `crm.to.facturatie` → `facturatie.incoming`
-6.  NIEUW: Forward `cancel_registration` naar Planning (Option A)
+7.  NIEUW: Implementeer consumer voor `company_member_removed` (§5.8) om bedrijfslinks te verbreken.
+8.  NIEUW: Forward `cancel_registration` naar Planning (Option A)
 
 ---
 
@@ -81,6 +83,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.4](#54-user_deleted) |
 |  **VERZENDT** | `user_registered` | → CRM |  v1.0 header + dotted type + verkeerde queue | [5.5](#55-user_registered) |
 |  **VERZENDT** | `user_checkin` | → CRM |  v1.0 header + `user.checkin` | [19.1](#191-user_checkin) |
+|  **VERZENDT** | `company_member_removed` | → CRM | NIEUW | [5.8](#58-company_member_removed) |
 |  **VERZENDT** | `event_ended` | → CRM, Facturatie, Kassa |  | [5.7](#57-event_ended), [11.6](#116-event_ended-frontend--facturatie), [11.7](#117-event_ended-frontend--kassa) |
 |  **VERZENDT** | `calendar_invite` | → Planning |  dotted type + mist `version` | [17.2](#172-calendar_invite-frontend--planning) |
 |  **VERZENDT** | `payment_registered` | → Facturatie |  **ONTBREEKT** — nog niet geïmplementeerd | [11.5](#115-payment_registered-frontend--facturatie) |
@@ -1824,6 +1827,92 @@ Wanneer een sessie of event is afgelopen.
 
 ---
 
+### 5.8 `company_member_removed` (Frontend → CRM)
+
+Wanneer een bedrijfsbeheerder een uitnodiging intrekt voordat de gebruiker zich heeft geregistreerd, of wanneer een lid van een bedrijf handmatig wordt ontkoppeld. Dit bericht instrueert CRM om de koppeling tussen de gebruiker (`identity_uuid`) en het bedrijf (`company_id`) te verwijderen.
+
+- **Queue:** `crm.incoming`
+- **Richting:** Frontend → CRM
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="company_member_removed"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="customer">
+            <xs:complexType><xs:sequence>
+              <xs:element name="identity_uuid" type="UUIDType"/>
+              <xs:element name="email"         type="xs:string"/>
+              <xs:element name="company_id"   type="xs:string"/>
+              <xs:element name="reason">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="invite_revoked"/>
+                  <xs:enumeration value="admin_removed"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-08T14:30:00Z</timestamp>
+    <source>frontend</source>
+    <type>company_member_removed</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <customer>
+      <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+      <email>uitgenodigde@example.com</email>
+      <company_id>uid-3</company_id>
+      <reason>invite_revoked</reason>
+    </customer>
+  </body>
+</message>
+```
+
+#### Verwacht Gedrag CRM
+1. Zoek de gebruiker op via `identity_uuid`.
+2. Verwijder de koppeling tussen de gebruiker en het bedrijf (`company_id`).
+3. **Zet het gebruikerstype terug naar `private`** als er geen andere bedrijfskoppeling meer overblijft voor deze gebruiker.
+4. Als de gebruiker nog geen account heeft aangemaakt (invite was pending), verwijdert CRM de pre-registratie.
+5. Log de actie met de meegeleverde `reason`.
+
+---
+
 ## 6. Kassa → CRM
 
 - **Queue:** `crm.incoming`
@@ -2434,6 +2523,8 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
 - **consumption** → routing key `kassa.payments.consumption` (samen met `consumption_order`)
 - **registration** → routing key `kassa.payments.registration` (inschrijvingsgeld aan kassa)
 
+> **`identity_uuid` & `invoice.id`:** Deze zijn optioneel (`minOccurs="0"`) om "anonieme" kassabetalingen of betalingen waarvoor de CRM-sync nog niet is afgerond te ondersteunen. In dat geval koppelt Facturatie de betaling aan een generieke "Bar Klant" in FossBilling.
+>
 > **`correlation_id`:** bij consumption = `message_id` van de bijhorende `consumption_order`. Bij registration = `message_id` van de originele `new_registration`.
 >
 > **`payment_method`:** `company_link` (bedrijfsrekening), `on_site` (cash/kaart/badge wallet), `online`.
@@ -2470,12 +2561,9 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
             <xs:sequence>
               <xs:element name="message_id"     type="UUIDType"/>
               <xs:element name="timestamp"      type="xs:dateTime"/>
-              <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="kassa"/></xs:restriction></xs:simpleType></xs:element>
-              <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="payment_registered"/></xs:restriction></xs:simpleType></xs:element>
-              <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+              <xs:element name="source"         type="xs:string"/>
+              <xs:element name="type"           type="xs:string"/>
+              <xs:element name="version"        type="xs:string"/>
               <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -3216,9 +3304,9 @@ Facturatie stuurt dit naar CRM nadat een online betaling (via de facturatie-link
             <xs:sequence>
               <xs:element name="message_id"     type="UUIDType"/>
               <xs:element name="timestamp"      type="xs:dateTime"/>
-              <xs:element name="source"         type="xs:string" fixed="facturatie"/>
-              <xs:element name="type"           type="xs:string" fixed="payment_registered"/>
-              <xs:element name="version"        type="xs:string" fixed="2.0"/>
+              <xs:element name="source"         type="xs:string"/>
+              <xs:element name="type"           type="xs:string"/>
+              <xs:element name="version"        type="xs:string"/>
               <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -3226,11 +3314,11 @@ Facturatie stuurt dit naar CRM nadat een online betaling (via de facturatie-link
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="identity_uuid" type="UUIDType"/>
+              <xs:element name="identity_uuid" type="UUIDType" minOccurs="0"/>
               <xs:element name="invoice">
                 <xs:complexType>
                   <xs:sequence>
-                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="id" type="xs:string" minOccurs="0"/>
                     <xs:element name="amount_paid" type="CurrencyAmountType"/>
                     <xs:element name="status">
                       <xs:simpleType>
@@ -4068,9 +4156,9 @@ Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kas
     <xs:sequence>
       <xs:element name="message_id" type="UUIDType"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
-      <xs:element name="source" type="SourceType" fixed="frontend"/>
-      <xs:element name="type" type="xs:string" fixed="payment_registered"/>
-      <xs:element name="version" type="xs:string" fixed="2.0"/>
+      <xs:element name="source" type="xs:string"/>
+      <xs:element name="type" type="xs:string"/>
+      <xs:element name="version" type="xs:string"/>
       <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
@@ -6927,6 +7015,7 @@ Maar: dit document IS nu de canonieke bron. Zolang er geen issue + update gewees
 *Document v2.3 — Gegenereerd op basis van volledige repo-audit + bestaande v2.0 contract — April 2026*
 *Sectie 10.4, 27 en 28 toegevoegd Mei 2026 — gap resolution na repo-scan*
 *Volgende geplande revisie: na demo 3 — toevoegen of aanpassen via Pull Request*
+
 
 
 
