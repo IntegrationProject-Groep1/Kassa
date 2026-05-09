@@ -12,7 +12,7 @@ Tests for the Inschrijvingskassa routing in OrderPoller:
 """
 import os
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture(autouse=True)
