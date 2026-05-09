@@ -145,7 +145,7 @@ class PartnerIdentityPoller:
     def _update_partner(self, partner_id: int, x_user_id: Optional[str], status: str, error_msg: Optional[str] = None):
         vals = {
             "x_identity_status": status,
-            "x_identity_last_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "x_identity_last_sync": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         }
         if x_user_id:
             vals["x_user_id"] = x_user_id
