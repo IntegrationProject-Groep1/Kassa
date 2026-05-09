@@ -894,6 +894,10 @@ def start_listening():
             )
             # Try to recover: open a fresh connection/channel and skip topology setup
             try:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
                 conn = connect_to_rabbitmq()
                 channel = conn.channel()
                 info_msg = (
