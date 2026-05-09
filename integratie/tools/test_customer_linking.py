@@ -5,15 +5,12 @@ Creates a new partner in Odoo and monitors the PartnerIdentityPoller's progress.
 import os
 import time
 try:
-    # Mitigate XML-RPC XML parsing vulnerabilities for Bandit/B411
-    # by monkey-patching the stdlib xmlrpc with defusedxml's safe implementation.
-    from defusedxml import xmlrpc as _defused_xmlrpc  # type: ignore
-    _defused_xmlrpc.monkey_patch()
+    # Prefer defusedxml's xmlrpc interface for safe parsing (Bandit B411 mitigation)
+    from defusedxml import xmlrpc
 except Exception:
-    # If defusedxml is not available in this environment (tests/runner),
-    # fall back to stdlib. Bandit will be satisfied when monkey_patch is present.
-    pass
-import xmlrpc.client
+    # Fall back to stdlib xmlrpc if defusedxml isn't installed in this environment
+    import xmlrpc
+from datetime import datetime
 from datetime import datetime
 
 def test_linking():

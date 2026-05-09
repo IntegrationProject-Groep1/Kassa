@@ -912,7 +912,8 @@ def start_listening():
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
-        monitor.log("warning", "system_error", f"Startup flush failure: {str(e)[:500]}")
+        msg = f"Startup flush failure: {str(e)[:500]}"
+        monitor.log("warning", "system_error", msg)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

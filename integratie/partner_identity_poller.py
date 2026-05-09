@@ -21,6 +21,9 @@ from typing import List, Dict, Any, Optional
 import identity_client
 from config_utils import require_env
 
+# Module logger
+logger = logging.getLogger(__name__)
+
 
 class PartnerIdentityPoller:
     def __init__(self):

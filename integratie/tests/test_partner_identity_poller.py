@@ -8,8 +8,8 @@ os.environ["ODOO_DB"] = "test-db"
 os.environ["ODOO_USER"] = "test-user"
 os.environ["ODOO_PASS"] = "test-pass"
 
-from partner_identity_poller import PartnerIdentityPoller
-import identity_client
+from partner_identity_poller import PartnerIdentityPoller  # noqa: E402
+import identity_client  # noqa: E402
 
 class TestPartnerIdentityPoller(unittest.TestCase):
     def setUp(self):
@@ -25,8 +25,8 @@ class TestPartnerIdentityPoller(unittest.TestCase):
         
         # Mock no existing link in Odoo
         self.poller.models.execute_kw.side_effect = [
-            [], # _find_existing_link_in_odoo search result
-            True # write result
+            [],  # _find_existing_link_in_odoo search result
+            True  # write result
         ]
         
         partner = {"id": 101, "name": "Test User", "email": "test@example.com"}
@@ -54,8 +54,8 @@ class TestPartnerIdentityPoller(unittest.TestCase):
         
         # Mock no existing link in Odoo
         self.poller.models.execute_kw.side_effect = [
-            [], # _find_existing_link_in_odoo
-            True # write
+            [],  # _find_existing_link_in_odoo
+            True  # write
         ]
         
         partner = {"id": 102, "name": "Test User 2", "email": "test@example.com"}
@@ -73,8 +73,8 @@ class TestPartnerIdentityPoller(unittest.TestCase):
     def test_process_partner_reuse_odoo_link(self):
         # Mock an existing link found in Odoo
         self.poller.models.execute_kw.side_effect = [
-            [{"x_user_id": "reused-uuid-789"}], # _find_existing_link_in_odoo
-            True # write
+            [{"x_user_id": "reused-uuid-789"}],  # _find_existing_link_in_odoo
+            True  # write
         ]
         
         partner = {"id": 103, "name": "Duplicate User", "email": "dup@example.com"}
@@ -94,8 +94,8 @@ class TestPartnerIdentityPoller(unittest.TestCase):
         
         # Mock no existing link in Odoo
         self.poller.models.execute_kw.side_effect = [
-            [], # _find_existing_link_in_odoo
-            True # write
+            [],  # _find_existing_link_in_odoo
+            True  # write
         ]
         
         partner = {"id": 104, "name": "Offline User", "email": "offline@example.com"}
