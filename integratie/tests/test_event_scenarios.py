@@ -83,6 +83,199 @@ def _make_order(order_id, config_id=1, total=10.0):
 
 
 # ── Scenario Tests ─────────────────────────────────────────────────────────────
+# ── Story 6 × Leasing Integration Tests ───────────────────────────────────────
+
+
+class TestStory6LeaseIntegration:
+    """
+    End-to-end scenarios where Story 6 (Inschrijvingskassa registration) and
+    the wallet-lease lifecycle interact.
+    """
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_registration_with_topup_while_lease_active(self, mock_send, poller):
+        """
+        Scenario: visitor already has an active CRM lease when they pay at the
+        Inschrijvingskassa and also buy a top-up in the same order.
+
+        Expected behaviour:
+        - payment_registered_registration + payment_status are sent (Story 6).
+        - wallet_balance_update is sent with authority='kassa' and status='active'
+          because the lease is already active at topup time (Story 11 × Lease).
+        - lease transaction count is incremented.
+        """
+        customer = _make_customer(balance=20.0, lease=True)
+        order = _make_order(order_id=200, total=35.0)
+
+        poller.models.execute_kw.side_effect = [
+            [customer],                                          # get_customer_info res.partner.read
+            [{'config_id': [1, 'Inschrijvingskassa']}],         # _get_pos_config_name: session read
+            [{'name': 'Inschrijvingskassa'}],                   # _get_pos_config_name: config read
+            [{'id': 1200, 'product_id': [5, 'Topup 15'],        # order line details
+              'price_subtotal_incl': 15.0}],
+            [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],  # product check
+            True,                                               # res.partner write (x_outstanding_amount)
+            True,                                               # pos.order send_partner_bus_event
+            35.0,                                               # action_add_wallet_amount → new balance
+            True,                                               # pos.order write x_wallet_updated
+            6,                                                  # _increment_lease_tx_count write → new count
+            True,                                               # pos.order write x_payment_message_id
+            True,                                               # pos.order write x_rabbitmq_sent
+        ]
+
+        poller.process_order(order)
+
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert 'payment_registered_registration' in sent_types
+        assert 'payment_status' in sent_types
+        assert 'wallet_balance_update' in sent_types
+
+        # wallet_balance_update must carry lease authority metadata
+        balance_call = next(c for c in mock_send.call_args_list if c[0][0] == 'wallet_balance_update')
+        xml_str = balance_call[0][1]
+        tree = ET.fromstring(xml_str)
+        body = tree.find('body')
+        assert body.findtext('authority') == 'kassa'
+        assert body.findtext('status') == 'active'
+
+        # lease tx count must have been incremented
+        odoo_methods = [c[0][4] for c in poller.models.execute_kw.call_args_list if len(c[0]) > 4]
+        assert 'action_add_wallet_amount' in odoo_methods
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_registration_with_topup_no_active_lease(self, mock_send, poller):
+        """
+        Scenario: visitor pays registration + topup but no lease is active yet.
+
+        wallet_balance_update must NOT carry authority/status fields (lease is
+        granted later by CRM after the wallet_lease_request response).
+        """
+        customer = _make_customer(balance=0.0, lease=False)
+        order = _make_order(order_id=201, total=30.0)
+
+        poller.models.execute_kw.side_effect = [
+            [customer],
+            [{'config_id': [1, 'Inschrijvingskassa']}],
+            [{'name': 'Inschrijvingskassa'}],
+            [{'id': 1201, 'product_id': [5, 'Topup 10'], 'price_subtotal_incl': 10.0}],
+            [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],
+            True,
+            True,
+            10.0,   # new balance
+            True,
+            True,
+            True,
+        ]
+
+        poller.process_order(order)
+
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert 'payment_registered_registration' in sent_types
+        assert 'wallet_balance_update' in sent_types
+
+        balance_call = next(c for c in mock_send.call_args_list if c[0][0] == 'wallet_balance_update')
+        xml_str = balance_call[0][1]
+        tree = ET.fromstring(xml_str)
+        body = tree.find('body')
+        assert body.find('authority') is None
+        assert body.find('status') is None
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_registration_without_topup_does_not_send_wallet_update(self, mock_send, poller):
+        """
+        Scenario: visitor pays registration only (ticket only, no top-up product).
+
+        No wallet_balance_update should be sent — wallet is untouched.
+        """
+        customer = _make_customer(balance=50.0, lease=True)
+        order = _make_order(order_id=202, total=25.0)
+
+        poller.models.execute_kw.side_effect = [
+            [customer],
+            [{'config_id': [1, 'Inschrijvingskassa']}],
+            [{'name': 'Inschrijvingskassa'}],
+            [{'id': 1202, 'product_id': [3, 'Ticket'], 'price_subtotal_incl': 25.0}],
+            [{'id': 3, 'x_is_topup': False, 'pos_categ_ids': []}],
+            True,
+            True,
+            True,
+            True,
+        ]
+
+        poller.process_order(order)
+
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert 'payment_registered_registration' in sent_types
+        assert 'payment_status' in sent_types
+        assert 'wallet_balance_update' not in sent_types
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_lease_grant_then_bar_consumption_increments_tx_count(self, mock_send, poller):
+        """
+        Scenario: CRM has already granted a lease. Visitor buys drinks at the
+        bar (Badge Wallet payment). The poller must decrement the wallet via
+        action_add_wallet_amount and increment the lease transaction count.
+        """
+        customer = _make_customer(balance=30.0, lease=True)
+        bar_order = _make_order(order_id=203, config_id=2, total=8.0)
+
+        poller.models.execute_kw.side_effect = [
+            [customer],                                               # get_customer_info
+            [{'config_id': [2, 'Bar Kassa']}],                       # pos.session read
+            [{'name': 'Bar Kassa'}],                                  # pos.config read
+            [{'id': 1203, 'product_id': [10, 'Beer'], 'qty': 1,
+              'price_unit': 8.0, 'price_subtotal_incl': 8.0}],       # pos.order.line read
+            [{'id': 10, 'x_is_topup': False, 'pos_categ_ids': []}],  # product.product read
+            [{'payment_method_id': [2, 'Badge Wallet'], 'amount': 8.0}],  # pos.payment read
+            22.0,                                                     # action_process_wallet_payment
+            6,                                                        # _increment_lease_tx_count write
+            True,                                                     # pos.order write x_payment_message_id
+            True,                                                     # pos.order write x_rabbitmq_sent
+        ]
+
+        poller.process_order(bar_order)
+
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert 'consumption_order' in sent_types
+        assert 'payment_registered_consumption' in sent_types
+        assert 'wallet_balance_update' in sent_types
+
+        balance_call = next(c for c in mock_send.call_args_list if c[0][0] == 'wallet_balance_update')
+        xml_str = balance_call[0][1]
+        tree = ET.fromstring(xml_str)
+        body = tree.find('body')
+        assert body.findtext('authority') == 'kassa'
+        assert body.findtext('status') == 'active'
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_invoice_request_suppressed_for_registration_even_with_company_customer(self, mock_send, poller):
+        """
+        Scenario: a company (B2B) customer pays at the Inschrijvingskassa.
+        The B2B auto-invoice logic must NOT fire for registration orders —
+        invoice_request should be suppressed regardless of customer type.
+        """
+        customer = _make_customer()
+        customer['is_company'] = True
+        customer['customer_type'] = 'company'
+        customer['vat'] = 'BE0123456789'
+        order = _make_order(order_id=204, total=50.0)
+
+        poller.models.execute_kw.side_effect = [
+            [customer],
+            [{'config_id': [1, 'Inschrijvingskassa']}],
+            [{'name': 'Inschrijvingskassa'}],
+            [],   # no order lines (no topup check needed)
+            True, True, True, True,
+        ]
+
+        with patch.object(poller, '_process_invoice_request') as mock_inv:
+            poller.process_order(order)
+            mock_inv.assert_not_called()
+
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert 'payment_registered_registration' in sent_types
+        assert 'invoice_request' not in sent_types
+
 
 class TestComplexEventScenarios:
 
