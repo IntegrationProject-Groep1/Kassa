@@ -268,9 +268,9 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("pos.order", "x_payment_message_id", "CRM Payment Correlation ID", "char", {}),
         ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
         ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
-        ("res.partner", "x_lease_active",            "Wallet Lease Active",        "boolean", {}),
-        ("res.partner", "x_lease_id",                "Wallet Lease ID",             "char",    {}),
-        ("res.partner", "x_lease_transaction_count", "Lease Transaction Count",     "integer", {}),
+        ("res.partner", "x_lease_active", "Wallet Lease Active", "boolean", {}),
+        ("res.partner", "x_lease_id", "Wallet Lease ID", "char", {}),
+        ("res.partner", "x_lease_transaction_count", "Lease Transaction Count", "integer", {}),
     ]
 
     fields_to_create = []

@@ -85,8 +85,8 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
-    "wallet_lease_request":  "kassa.to.crm.wallet_lease_request",
-    "wallet_lease_return":   "kassa.to.crm.wallet_lease_return",
+    "wallet_lease_request": "kassa.to.crm.wallet_lease_request",
+    "wallet_lease_return": "kassa.to.crm.wallet_lease_return",
     "system_error": "kassa.errors",
     "log": "logs",
 }

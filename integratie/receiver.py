@@ -87,14 +87,14 @@ MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration":    os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
-    "profile_update":      os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
-    "badge_scanned":       os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
+    "new_registration": os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
+    "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
+    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
     "user_event": os.path.join(SCHEMA_DIR, "schema_user_event.xsd"),
-    "wallet_lease_grant":  os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
+    "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
-    "event_ended":         os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
+    "event_ended": os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -451,13 +451,19 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
             identity_uuid=identity_uuid,
             badge_id=badge_id or None,
         )
-        send_typed_message("wallet_lease_request", xml)
+        send_typed_message("wallet_lease_request", xml, record_id=partner["id"], model="res.partner")
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
             [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
         )
         logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
+
+    elif location in ("exit", "checkout"):
+        if partner.get("x_lease_active"):
+            _return_lease(partner["id"], uid, models)
+        else:
+            logger.info("[BADGE_SCANNED] check_out: no active lease for %s, skipping", identity_uuid)
 
 
 def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
@@ -504,7 +510,7 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
         lease_id=lease_id,
         transaction_count=tx_count,
     )
-    send_typed_message("wallet_lease_return", xml)
+    send_typed_message("wallet_lease_return", xml, record_id=partner_id, model="res.partner")
     logger.info("[LEASE_RETURN] ✅ Lease returned for %s (balance=%.2f, tx=%d)", identity_uuid, final_balance, tx_count)
 
 
