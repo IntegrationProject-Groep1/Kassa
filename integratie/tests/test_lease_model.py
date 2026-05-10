@@ -438,7 +438,7 @@ class TestEventEnded:
             self._partner(2, _UUID2, 5.0, "L2", 1),
         ]
         models.execute_kw.side_effect = [partners, True]
-        receiver.process_event_ended(_event_ended_root(), uid, models)
+        receiver._do_return_all_leases(uid, models)
         assert mock_send.call_count == 2
         assert all(c[0][0] == "wallet_lease_return" for c in mock_send.call_args_list)
 
@@ -450,7 +450,7 @@ class TestEventEnded:
             self._partner(2, _UUID2, 5.0, "L2", 1),
         ]
         models.execute_kw.side_effect = [partners, True]
-        receiver.process_event_ended(_event_ended_root(), uid, models)
+        receiver._do_return_all_leases(uid, models)
         # Exactly 2 execute_kw calls: search_read + bulk write
         assert models.execute_kw.call_count == 2
         write_call = models.execute_kw.call_args_list[1]
@@ -465,7 +465,7 @@ class TestEventEnded:
     def test_no_write_when_no_active_leases(self, mock_send, odoo):
         uid, models = odoo
         models.execute_kw.return_value = []
-        receiver.process_event_ended(_event_ended_root(), uid, models)
+        receiver._do_return_all_leases(uid, models)
         assert models.execute_kw.call_count == 1  # only search_read
         mock_send.assert_not_called()
 
@@ -477,7 +477,7 @@ class TestEventEnded:
             self._partner(2, _UUID2, 5.0, "L2", 1),    # valid — must be processed
         ]
         models.execute_kw.side_effect = [partners, True]
-        receiver.process_event_ended(_event_ended_root(), uid, models)
+        receiver._do_return_all_leases(uid, models)
         assert mock_send.call_count == 1  # only the valid partner
         write_call = models.execute_kw.call_args_list[1]
         cleared_ids = write_call[0][5][0]
@@ -507,7 +507,7 @@ class TestEventEnded:
                 raise RuntimeError("RabbitMQ unavailable")
 
         mock_send.side_effect = raise_on_first
-        receiver.process_event_ended(_event_ended_root(), uid, models)
+        receiver._do_return_all_leases(uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
         cleared_ids = write_call[0][5][0]

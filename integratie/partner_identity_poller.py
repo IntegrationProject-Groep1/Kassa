@@ -18,7 +18,7 @@ import re
 import time
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 import identity_client
@@ -124,7 +124,8 @@ class PartnerIdentityPoller:
             last_sync = partner.get("x_identity_last_sync")
             if last_sync and isinstance(last_sync, str):
                 try:
-                    sync_age = (datetime.utcnow() - datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                    last_sync_dt = datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    sync_age = (datetime.now(timezone.utc) - last_sync_dt).total_seconds()
                     if sync_age < _ERROR_RETRY_AFTER:
                         return
                 except ValueError:
@@ -173,7 +174,7 @@ class PartnerIdentityPoller:
     def _update_partner(self, partner_id: int, x_user_id: Optional[str], status: str, error_msg: Optional[str] = None):
         vals = {
             "x_identity_status": status,
-            "x_identity_last_sync": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            "x_identity_last_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         }
         if x_user_id:
             vals["x_user_id"] = x_user_id
