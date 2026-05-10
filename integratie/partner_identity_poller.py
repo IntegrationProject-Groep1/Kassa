@@ -124,7 +124,8 @@ class PartnerIdentityPoller:
             last_sync = partner.get("x_identity_last_sync")
             if last_sync and isinstance(last_sync, str):
                 try:
-                    sync_age = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                    now = datetime.now(timezone.utc).replace(tzinfo=None)
+                    sync_age = (now - datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S")).total_seconds()
                     if sync_age < _ERROR_RETRY_AFTER:
                         return
                 except ValueError:
