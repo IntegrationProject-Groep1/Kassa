@@ -87,14 +87,14 @@ MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
 SCHEMA_MAP = {
-    "new_registration":    os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
-    "profile_update":      os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
-    "badge_scanned":       os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
+    "new_registration": os.path.join(SCHEMA_DIR, "schema_new_registration.xsd"),
+    "profile_update": os.path.join(SCHEMA_DIR, "schema_profile_update.xsd"),
+    "badge_scanned": os.path.join(SCHEMA_DIR, "schema_badge_scanned.xsd"),
     "cancel_registration": os.path.join(SCHEMA_DIR, "schema_cancel_registration.xsd"),
     "user_event": os.path.join(SCHEMA_DIR, "schema_user_event.xsd"),
-    "wallet_lease_grant":  os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
+    "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
-    "event_ended":         os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
+    "event_ended": os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -451,13 +451,19 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
             identity_uuid=identity_uuid,
             badge_id=badge_id or None,
         )
-        send_typed_message("wallet_lease_request", xml)
+        send_typed_message("wallet_lease_request", xml, record_id=partner["id"], model="res.partner")
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
             [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
         )
         logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
+
+    elif location in ("exit", "checkout"):
+        if partner.get("x_lease_active"):
+            _return_lease(partner["id"], uid, models)
+        else:
+            logger.info("[BADGE_SCANNED] check_out: no active lease for %s, skipping", identity_uuid)
 
 
 def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
@@ -504,7 +510,7 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
         lease_id=lease_id,
         transaction_count=tx_count,
     )
-    send_typed_message("wallet_lease_return", xml)
+    send_typed_message("wallet_lease_return", xml, record_id=partner_id, model="res.partner")
     logger.info("[LEASE_RETURN] ✅ Lease returned for %s (balance=%.2f, tx=%d)", identity_uuid, final_balance, tx_count)
 
 
@@ -889,17 +895,44 @@ def start_listening():
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
     except pika.exceptions.ChannelClosedByBroker as exc:
+        # If the broker reports PRECONDITION_FAILED (406), it usually means the
+        # queue/exchange already exists with different arguments. Do not crash
+        # the whole receiver — attempt to open a fresh channel and continue
+        # consuming from the existing queue without trying to redeclare it.
         if getattr(exc, "reply_code", None) == 406:
-            logger.critical(
+            msg_template = (
                 "RabbitMQ topology conflict (406 PRECONDITION_FAILED) while declaring "
-                "exchange=%s queue=%s dlq=%s retry_queue=%s: %s",
+                "exchange=%s "
+                "queue=%s "
+                "dlq=%s "
+                "retry_queue=%s: %s"
+            )
+            logger.critical(
+                msg_template,
                 EXCHANGE_NAME,
                 QUEUE_NAME,
                 DLQ_NAME,
                 RETRY_QUEUE,
                 getattr(exc, "reply_text", ""),
             )
-        raise
+            # Try to recover: open a fresh connection/channel and skip topology setup
+            try:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = connect_to_rabbitmq()
+                channel = conn.channel()
+                info_msg = (
+                    "[RECEIVER] Recovered with existing broker topology; "
+                    "will consume from existing queue %s"
+                )
+                logger.info(info_msg, QUEUE_NAME)
+            except Exception as e:
+                logger.critical("[RECEIVER] Could not recover from topology conflict: %s", e)
+                raise
+        else:
+            raise
     except Exception:
         logger.critical("Failed to setup RabbitMQ topology")
         raise
@@ -911,12 +944,17 @@ def start_listening():
         if flushed_ids:
             uid, models = get_odoo_connection()
             models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, 'pos.order', 'write',
-                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}]
+                ODOO_DB,
+                uid,
+                ODOO_PASS,
+                'pos.order',
+                'write',
+                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}],
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
-        monitor.log("warning", "system_error", f"Startup flush failure: {str(e)[:500]}")
+        msg = f"Startup flush failure: {str(e)[:500]}"
+        monitor.log("warning", "system_error", msg)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

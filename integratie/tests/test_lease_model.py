@@ -3,7 +3,7 @@
 # No live services required; all Odoo XML-RPC and RabbitMQ calls are mocked.
 
 import xml.etree.ElementTree as ET
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -99,7 +99,8 @@ class TestBadgeScanCheckIn:
         uid, models = odoo
         models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_badge_root("entrance"), uid, models)
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     def test_writes_lease_active_true_after_send(self, mock_send, odoo):
@@ -107,7 +108,7 @@ class TestBadgeScanCheckIn:
         uid, models = odoo
         call_order = []
 
-        def track(msg_type, xml):
+        def track(msg_type, xml, **kwargs):
             call_order.append("send")
 
         def track_kw(*args):
@@ -149,7 +150,8 @@ class TestBadgeScanCheckIn:
         uid, models = odoo
         models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_badge_root("bar"), uid, models)
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     def test_session_scan_does_not_trigger_lease(self, mock_send, odoo):
@@ -177,7 +179,8 @@ class TestQRScanCheckIn:
         uid, models = odoo
         models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_qr_root("entrance"), uid, models)
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     def test_qr_scan_lease_request_has_no_badge_id(self, mock_send, odoo):
@@ -193,7 +196,8 @@ class TestQRScanCheckIn:
         uid, models = odoo
         models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_qr_root("bar"), uid, models)
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     def test_qr_session_scan_does_not_trigger_lease(self, mock_send, odoo):
@@ -263,7 +267,7 @@ class TestReturnLease:
             call_order.append("write")
             return True
 
-        mock_send.side_effect = lambda *a: call_order.append("send")
+        mock_send.side_effect = lambda *a, **kw: call_order.append("send")
         models.execute_kw.side_effect = track_kw
         receiver._return_lease(99, uid, models)
         assert call_order == ["write", "send"]

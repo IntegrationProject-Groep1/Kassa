@@ -213,7 +213,8 @@ class TestBadgeScanBadgePipeline:
         mock_error.assert_not_called()
         ch.basic_nack.assert_not_called()
         ch.basic_ack.assert_called_once()
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
@@ -253,7 +254,8 @@ class TestBadgeScanBadgePipeline:
 
         receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "bar"))
 
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
         mock_error.assert_not_called()
         ch.basic_ack.assert_called_once()
 
@@ -317,7 +319,8 @@ class TestBadgeScanQRPipeline:
         mock_error.assert_not_called()
         ch.basic_nack.assert_not_called()
         ch.basic_ack.assert_called_once()
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
@@ -346,7 +349,7 @@ class TestBadgeScanQRPipeline:
         mock_conn.return_value = (1, models)
 
         captured: dict = {}
-        mock_send.side_effect = lambda t, x: captured.update({"type": t, "xml": x})
+        mock_send.side_effect = lambda t, x, **kw: captured.update({"type": t, "xml": x})
 
         receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
 
@@ -382,7 +385,8 @@ class TestBadgeScanQRPipeline:
 
         receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "bar"))
 
-        mock_send.assert_called_once_with("wallet_lease_request", ANY)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
         mock_error.assert_not_called()
         ch.basic_ack.assert_called_once()
 
