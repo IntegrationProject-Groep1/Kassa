@@ -779,7 +779,7 @@ class OrderPoller:
                     self._last_consumption_topup_amount += total_incl
 
         customer_type = "anonymous" if is_anonymous else (
-            customer_info.get('customer_type', 'private') if customer_info else 'private'
+            customer_info.get('customer_type') or 'private' if customer_info else 'private'
         )
 
         # Split street address into street name and house number for non-anonymous customers
@@ -798,9 +798,9 @@ class OrderPoller:
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
-            identity_uuid=customer_info.get('x_user_id') if customer_info else None,
+            identity_uuid=customer_info.get('x_user_id') or None if customer_info else None,
             customer_type=customer_type,
-            email=customer_info.get('email', '') if customer_info else None,
+            email=customer_info.get('email') or None if customer_info else None,
             address=address,
             is_anonymous=is_anonymous)
 

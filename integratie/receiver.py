@@ -29,6 +29,7 @@ with FIFO eviction.
 
 import os
 import logging
+import threading
 import pika
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
@@ -459,12 +460,6 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         )
         logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
 
-    elif location in ("exit", "checkout"):
-        if partner.get("x_lease_active"):
-            _return_lease(partner["id"], uid, models)
-        else:
-            logger.info("[BADGE_SCANNED] check_out: no active lease for %s, skipping", identity_uuid)
-
 
 def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
     """Clear Odoo lease state then notify CRM via wallet_lease_return.
@@ -611,17 +606,14 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
                 identity_uuid, add_amount, new_balance, reason)
 
 
-def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Festival ended. Return all active leases to CRM.
+_EVENT_ENDED_DELAY = int(os.environ.get("EVENT_ENDED_LEASE_RETURN_DELAY", str(3 * 60 * 60)))
+_event_ended_timer: threading.Timer | None = None
+_event_ended_timer_lock = threading.Lock()
 
-    Note: event_ended is currently only routed to facturatie.incoming by Frontend.
-    This handler is ready for when Frontend also routes it to kassa.incoming.
-    """
-    body = root.find("body")
-    if body is None:
-        raise ValueError("event_ended: <body> missing")
-    session_id = (body.findtext("session_id") or "").strip()
-    logger.info("[EVENT_ENDED] Received — returning all active leases (session_id=%s)", session_id)
+
+def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
+    """Return all active leases to CRM. Called by the debounce timer."""
+    logger.info("[EVENT_ENDED] Debounce timer fired — returning all active leases")
 
     active_partners: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -660,6 +652,33 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
         )
 
     logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
+
+
+def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Session ended. Debounce: only return all active leases after no new
+    event_ended is received for EVENT_ENDED_LEASE_RETURN_DELAY seconds (default 3h).
+    This handles the case where event_ended is sent after each speaker session,
+    not just at the end of the full event.
+    """
+    global _event_ended_timer
+
+    body = root.find("body")
+    if body is None:
+        raise ValueError("event_ended: <body> missing")
+    session_id = (body.findtext("session_id") or "").strip()
+    logger.info(
+        "[EVENT_ENDED] Received (session_id=%s) — (re)starting %dh lease-return timer",
+        session_id, _EVENT_ENDED_DELAY // 3600,
+    )
+
+    with _event_ended_timer_lock:
+        if _event_ended_timer is not None:
+            _event_ended_timer.cancel()
+        _event_ended_timer = threading.Timer(
+            _EVENT_ENDED_DELAY, _do_return_all_leases, args=(uid, models)
+        )
+        _event_ended_timer.daemon = True
+        _event_ended_timer.start()
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
