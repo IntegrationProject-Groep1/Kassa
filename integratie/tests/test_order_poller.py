@@ -508,7 +508,7 @@ def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
             'price_subtotal_incl': 15.0,
         }],
         [{'id': 55, 'x_is_topup': True, 'pos_categ_ids': []}],
-        True,
+        25.0,  # action_add_wallet_amount returns new balance
         True,
         True,
         True,
@@ -527,8 +527,8 @@ def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
     result = poller.process_order(order)
 
     assert result is True
-    assert poller.models.execute_kw.call_args_list[2][0][4] == 'write'
-    assert poller.models.execute_kw.call_args_list[2][0][5][1]['x_wallet_balance'] == 25.0
+    assert poller.models.execute_kw.call_args_list[2][0][4] == 'action_add_wallet_amount'
+    assert poller.models.execute_kw.call_args_list[2][0][5] == [77, 15.0]
     sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
     assert sent_types == ['consumption_order', 'payment_registered_consumption', 'wallet_balance_update']
 
