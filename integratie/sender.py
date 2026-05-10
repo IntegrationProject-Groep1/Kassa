@@ -566,7 +566,7 @@ def build_consumption_order_xml(
 def build_payment_registered_xml(
     payment_context, invoice_status, amount_paid,
     due_date, trx_id, payment_method,
-    invoice_id=None, identity_uuid=None, correlation_id=None, email=None
+    invoice_id=None, identity_uuid=None, correlation_id=None
 ) -> str:
     """
     Build a payment_registered message confirming a payment was processed.

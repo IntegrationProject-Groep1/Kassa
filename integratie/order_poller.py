@@ -855,7 +855,6 @@ class OrderPoller:
             payment_method=payment_method,
             identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             correlation_id=correlation_id,
-            email=customer_info.get('email') if customer_info else None
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
@@ -920,7 +919,6 @@ class OrderPoller:
             invoice_id=None,
             identity_uuid=identity_uuid,
             correlation_id=None,
-            email=customer_info.get('email'),
         )
         ok_payment = sender.send_typed_message(
             'payment_registered_registration', payment_xml, record_id=order_id
