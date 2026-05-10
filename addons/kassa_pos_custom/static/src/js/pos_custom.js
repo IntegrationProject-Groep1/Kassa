@@ -231,7 +231,7 @@ patch(PaymentScreen.prototype, {
             if (!order || !order.to_invoice) return;
 
             // Only auto-add when no payment line has been chosen yet.
-            const lines = order.paymentlines || order.payment_ids || [];
+            const lines = order.get_paymentlines ? order.get_paymentlines() : (order.payment_ids || []);
             if (lines.length > 0) return;
 
             const pm = (
