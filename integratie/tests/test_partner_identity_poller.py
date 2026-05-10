@@ -110,6 +110,29 @@ class TestPartnerIdentityPoller(unittest.TestCase):
         self.assertEqual(args[5][1]["x_identity_status"], "pending")
         self.assertNotIn("x_user_id", args[5][1])
 
+    @patch("identity_client.create_user")
+    @patch("partner_identity_poller.datetime")
+    def test_process_partner_invalid_email(self, mock_datetime, mock_create):
+        mock_datetime.utcnow.return_value.strftime.return_value = "2026-05-09 12:00:00"
+        # Provide a writable return for the partner update
+        self.poller.models.execute_kw.return_value = True
+
+        for bad_email in ["not-an-email", "", "missing@", "@nodomain", None]:
+            self.poller.models.execute_kw.reset_mock()
+            partner = {"id": 200, "name": "Bad Email User", "email": bad_email}
+            self.poller.process_partner(partner)
+
+            # Identity must never be called for an invalid email
+            mock_create.assert_not_called()
+
+            # Partner must be written with 'error' status
+            write_calls = [
+                call for call in self.poller.models.execute_kw.call_args_list
+                if call[0][4] == "write"
+            ]
+            self.assertEqual(len(write_calls), 1)
+            self.assertEqual(write_calls[0][0][5][1]["x_identity_status"], "error")
+
 
 if __name__ == "__main__":
     unittest.main()
