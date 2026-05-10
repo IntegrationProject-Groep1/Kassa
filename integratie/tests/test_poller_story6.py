@@ -121,7 +121,7 @@ def test_process_registration_payment_registered_fields(mock_sender, poller):
     assert kwargs['invoice_status'] == 'paid'
     assert kwargs['payment_method'] == 'on_site'
     assert kwargs['amount_paid'] == 25.0
-    assert kwargs['trx_id'] == 'POS/0042'
+    assert kwargs['trx_id'] == '42'
     assert kwargs['due_date'] == '2026-05-08'
     assert kwargs['invoice_id'] is None
     assert kwargs['identity_uuid'] == 'UUID-REG-002'

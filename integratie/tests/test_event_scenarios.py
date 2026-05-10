@@ -99,7 +99,8 @@ class TestComplexEventScenarios:
         # Patch both receiver and sender names
         with patch('receiver.send_typed_message', mock_send):
             # 1. Receiver processes scan
-            scan_xml = ET.fromstring(f"<message><body><badge_id>{_BADGE}</badge_id><location>entrance</location></body></message>")
+            xml_str = f"<message><body><badge_id>{_BADGE}</badge_id><location>entrance</location></body></message>"
+            scan_xml = ET.fromstring(xml_str)
             models.execute_kw.side_effect = [[_make_customer(balance=0.0)], True]
             receiver.process_badge_scan(scan_xml, uid, models)
             mock_send.assert_any_call("wallet_lease_request", ANY, record_id=100, model='res.partner')

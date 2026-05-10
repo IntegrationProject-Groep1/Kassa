@@ -350,7 +350,7 @@ class OrderPoller:
                 consumption_msg_id = None
             else:
                 config_name = self._get_pos_config_name(order.get('session_id'))
-                if config_name == 'Inschrijvingskassa' and customer_info and not is_anonymous:
+                if config_name == 'Inschrijvingskassa' and customer_info:
                     is_registration = True
                     all_sent, payment_msg_id = self._process_registration(order, customer_info)
                     consumption_msg_id = None
@@ -913,7 +913,7 @@ class OrderPoller:
             invoice_status='paid',
             amount_paid=float(order.get('amount_total', 0.0)),
             due_date=due_date,
-            trx_id=order.get('name', str(order_id)),
+            trx_id=str(order_id),
             payment_method='on_site',
             invoice_id=None,
             identity_uuid=identity_uuid,
