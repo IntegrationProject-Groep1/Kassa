@@ -366,14 +366,13 @@ class OrderPoller:
                 and not order.get('x_wallet_updated')
             ):
                 try:
-                    current_balance = float(customer_info.get('x_wallet_balance') or 0.0)
                     topup_amount = float(self._last_consumption_topup_amount or 0.0)
-                    new_balance = round(current_balance + topup_amount, 2)
-
-                    self.models.execute_kw(
+                    # BEST PRACTICE: Use action_add_wallet_amount for atomic balance updates
+                    # to prevent overwriting active lease balances from CRM.
+                    new_balance = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'write',
-                        [[customer_info['id']], {'x_wallet_balance': new_balance}]
+                        'pos.order', 'action_add_wallet_amount',
+                        [customer_info['id'], topup_amount]
                     )
                     self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -397,13 +396,15 @@ class OrderPoller:
                     all_sent = False
 
             # Story 7 & B2B Auto-Invoice: Invoice Request logic
-            should_invoice = order.get('amount_total', 0) >= 0 and not is_anonymous and not is_registration
+            should_invoice = (order.get('amount_total', 0) >= 0
+                              and not is_anonymous
+                              and not is_registration)
             is_company = customer_info and customer_info.get('customer_type') == 'company'
 
             # Check if invoice request should be sent:
             # 1. Manually flagged via to_invoice or account_move fields (Story 7)
             # 2. Automatically for all company orders (B2B Auto-Invoice)
-            if should_invoice and ((order.get('to_invoice') or order.get('account_move')) or is_company):
+            if should_invoice and (order.get('to_invoice') or order.get('account_move') or is_company):
                 # De-duplication: Check if invoice_request was already sent for this order
                 # (indicated by x_invoice_message_id field)
                 if order.get('x_invoice_message_id'):
@@ -475,7 +476,7 @@ class OrderPoller:
             # This avoids TypeError in tests when sender.XSDValidationError is mocked
             is_xsd_error = False
             xsd_exc = getattr(sender, 'XSDValidationError', None)
-            if xsd_exc and isinstance(e, xsd_exc):
+            if isinstance(xsd_exc, type) and isinstance(e, xsd_exc):
                 is_xsd_error = True
 
             if is_xsd_error:
@@ -613,19 +614,23 @@ class OrderPoller:
         ok_wallet = True
 
         if pay_info["is_badge_wallet"] and customer_info and not order.get('x_wallet_updated'):
-            current_balance = customer_info.get('x_wallet_balance') or 0.0
-            new_balance = round(float(current_balance) + pay_info["wallet_amount"], 2)
-
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'res.partner', 'write',
-                [[customer_info['id']], {'x_wallet_balance': new_balance}]
-            )
-            self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.order', 'write',
-                [[order_id], {'x_wallet_updated': True}]
-            )
+            try:
+                # BEST PRACTICE: Use action_add_wallet_amount for atomic balance updates
+                # This prevents overwriting active lease balances from CRM during refunds.
+                new_balance = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'action_add_wallet_amount',
+                    [customer_info['id'], pay_info["wallet_amount"]]
+                )
+                self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'write',
+                    [[order_id], {'x_wallet_updated': True}]
+                )
+            except Exception as e:
+                logger.error(f"❌ Refund wallet update failed for order {order_id}: {e}")
+                ok_wallet = False
+                new_balance = customer_info.get('x_wallet_balance') or 0.0
 
             lease_active = customer_info.get('x_lease_active')
             wallet_xml = sender.build_wallet_balance_update_xml(
@@ -864,13 +869,35 @@ class OrderPoller:
 
         Then updates the partner record via ``_update_partner_registration_paid``.
 
-        ``correlation_id`` is intentionally omitted because the POS order name
-        (e.g. "POS/001") is not a valid UUID and would fail XSD validation.
-
-        Returns ``(all_sent, payment_msg_id)``.  ``all_sent`` is True only when both
-        messages were accepted by the broker or written to the offline outbox.
+        If top-up products are found in the lines, it also enables the wallet
+        update flow handled in ``process_order``.
         """
-        self._last_consumption_has_topup = False  # no wallet top-ups on Inschrijvingskassa
+        self._last_consumption_has_topup = False
+        self._last_consumption_topup_amount = 0.0
+
+        # Check for top-ups even in registration orders (Story 11)
+        line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
+        if line_ids:
+            try:
+                line_details = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order.line', 'read',
+                    [line_ids, ['product_id', 'price_subtotal_incl']]
+                )
+                product_ids = list(set([line['product_id'][0] for line in line_details]))
+                if product_ids:
+                    products = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'product.product', 'read',
+                        [product_ids, ['id', 'x_is_topup', 'pos_categ_ids']]
+                    )
+                    product_info_map = {p['id']: p for p in products}
+                    for line in line_details:
+                        if self.is_topup_product(line['product_id'][0], product_info_map):
+                            self._last_consumption_has_topup = True
+                            self._last_consumption_topup_amount += float(line.get('price_subtotal_incl', 0.0))
+            except Exception as e:
+                logger.warning(f"[POLLER] Could not check for top-ups in registration order {order['id']}: {e}")
 
         order_id = order['id']
         identity_uuid = customer_info.get('x_user_id')
