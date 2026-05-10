@@ -13,13 +13,22 @@ Business Rules:
 """
 
 import logging
+import os
+import re
 import time
 import xmlrpc.client  # nosec
+import defusedxml.xmlrpc
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import identity_client
 from config_utils import require_env
+
+defusedxml.xmlrpc.monkey_patch()
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Minimum seconds between retries for partners in 'error' state
+_ERROR_RETRY_AFTER = int(os.environ.get("IDENTITY_ERROR_RETRY_AFTER", "3600"))
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -71,7 +80,7 @@ class PartnerIdentityPoller:
             return self.models.execute_kw(
                 self.odoo_db, self.uid, self.odoo_pass,
                 "res.partner", "read",
-                [partner_ids, ["id", "name", "email", "x_identity_status"]]
+                [partner_ids, ["id", "name", "email", "x_identity_status", "x_identity_last_sync"]]
             )
         except Exception as e:
             logger.error("❌ Error fetching unlinked partners: %s", e)
@@ -82,7 +91,8 @@ class PartnerIdentityPoller:
         try:
             domain = [
                 ["email", "=", email],
-                ["x_user_id", "!=", False]
+                ["x_user_id", "!=", False],
+                ["active", "=", True],
             ]
             existing = self.models.execute_kw(
                 self.odoo_db, self.uid, self.odoo_pass,
@@ -99,8 +109,26 @@ class PartnerIdentityPoller:
 
     def process_partner(self, partner: Dict[str, Any]):
         partner_id = partner["id"]
-        email = partner["email"].strip()
+        raw_email = partner.get("email") or ""
+        email = raw_email.strip() if isinstance(raw_email, str) else ""
         name = partner.get("name") or email
+
+        # Validate email format before contacting Identity Service
+        if not _EMAIL_RE.match(email):
+            logger.error("Invalid email for partner %s: %r — marking as error", partner_id, email)
+            self._update_partner(partner_id, None, "error", "Invalid email address")
+            return
+
+        # Skip error-state partners that were synced recently to avoid hammering Identity
+        if partner.get("x_identity_status") == "error":
+            last_sync = partner.get("x_identity_last_sync")
+            if last_sync and isinstance(last_sync, str):
+                try:
+                    sync_age = (datetime.utcnow() - datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                    if sync_age < _ERROR_RETRY_AFTER:
+                        return
+                except ValueError:
+                    pass
 
         logger.info("Processing unlinked partner: %s (%s)", name, email)
 
