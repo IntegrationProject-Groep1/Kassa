@@ -250,7 +250,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
     if not uid:
         return False
 
-    fields_to_check = [
+    fields_to_check: list[tuple[str, str, str, str, dict[str, Any]]] = [
         ("res.partner", "x_user_id", "External CRM User ID", "char", {"index": True}),
         ("res.partner", "x_badge_id", "IoT Badge ID", "char", {"index": True}),
         ("res.partner", "x_badge_sent", "Badge Assignment Sent to CRM", "boolean", {}),
@@ -268,9 +268,13 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("pos.order", "x_payment_message_id", "CRM Payment Correlation ID", "char", {}),
         ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
         ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
-        ("res.partner", "x_lease_active", "Wallet Lease Active", "boolean", {}),
-        ("res.partner", "x_lease_id", "Wallet Lease ID", "char", {}),
-        ("res.partner", "x_lease_transaction_count", "Lease Transaction Count", "integer", {}),
+        ("res.partner", "x_lease_active",            "Wallet Lease Active",        "boolean", {}),
+        ("res.partner", "x_lease_id",                "Wallet Lease ID",             "char",    {}),
+        ("res.partner", "x_lease_transaction_count", "Lease Transaction Count",     "integer", {}),
+        ("res.partner", "x_identity_status", "Identity Linking Status", "selection", {
+            "selection": [["pending", "Pending"], ["linked", "Linked"], ["error", "Error"]]
+        }),
+        ("res.partner", "x_identity_last_sync", "Last Identity Sync", "datetime", {}),
     ]
 
     fields_to_create = []

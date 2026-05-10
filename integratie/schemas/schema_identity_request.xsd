@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <!--
+    TYPE   : identity_request
+    FLOW   : Kassa → Identity Service (via routing key)
+    SOURCE : XML_XSD_Contract_v2.3_Centralized.md §15.1–15.3
+    NOTE   : No <message><header> wrapper — flat XML per §15.
+             All fields are optional to accommodate three request variants:
+               - create:       <email> + <source_system>
+               - lookup/email: <email>
+               - lookup/uuid:  <master_uuid>
+  -->
+  <xs:element name="identity_request">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="email"         type="xs:string" minOccurs="0"/>
+        <xs:element name="source_system" type="xs:string" minOccurs="0"/>
+        <xs:element name="master_uuid"   type="xs:string" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

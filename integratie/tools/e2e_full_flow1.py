@@ -47,14 +47,19 @@ SEP = "-" * 60
 
 def build_new_registration_xml(user_id: str) -> str:
     """Build a new_registration XML message using the provided canonical user_id."""
+    msg_id = str(uuid.uuid4())
+    corr_id = str(uuid.uuid4())
+    # Build header in the exact order required by the XSD and place payment_due
+    # inside <customer> as expected by the schema.
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <message>
     <header>
-        <message_id>{uuid.uuid4()}</message_id>
-        <type>new_registration</type>
-        <source>crm</source>
+        <message_id>{msg_id}</message_id>
         <timestamp>2026-03-31T10:00:00Z</timestamp>
+        <source>crm</source>
+        <type>new_registration</type>
         <version>2.0</version>
+        <correlation_id>{corr_id}</correlation_id>
     </header>
     <body>
         <customer>
@@ -68,12 +73,14 @@ def build_new_registration_xml(user_id: str) -> str:
             <type>company</type>
             <company_name>{TEST_COMPANY}</company_name>
             <vat_number>{TEST_VAT}</vat_number>
+            <company_id></company_id>
+            <badge_id></badge_id>
             <session_id>sess-001</session_id>
+            <payment_due>
+                <amount currency="eur">50.00</amount>
+                <status>unpaid</status>
+            </payment_due>
         </customer>
-        <payment_due>
-            <amount currency="eur">50.00</amount>
-            <status>unpaid</status>
-        </payment_due>
     </body>
 </message>'''
 

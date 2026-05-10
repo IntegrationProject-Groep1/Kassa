@@ -895,17 +895,44 @@ def start_listening():
         channel.queue_bind(exchange=EXCHANGE_NAME, queue=QUEUE_NAME, routing_key=f"{QUEUE_NAME}.#")
 
     except pika.exceptions.ChannelClosedByBroker as exc:
+        # If the broker reports PRECONDITION_FAILED (406), it usually means the
+        # queue/exchange already exists with different arguments. Do not crash
+        # the whole receiver — attempt to open a fresh channel and continue
+        # consuming from the existing queue without trying to redeclare it.
         if getattr(exc, "reply_code", None) == 406:
-            logger.critical(
+            msg_template = (
                 "RabbitMQ topology conflict (406 PRECONDITION_FAILED) while declaring "
-                "exchange=%s queue=%s dlq=%s retry_queue=%s: %s",
+                "exchange=%s "
+                "queue=%s "
+                "dlq=%s "
+                "retry_queue=%s: %s"
+            )
+            logger.critical(
+                msg_template,
                 EXCHANGE_NAME,
                 QUEUE_NAME,
                 DLQ_NAME,
                 RETRY_QUEUE,
                 getattr(exc, "reply_text", ""),
             )
-        raise
+            # Try to recover: open a fresh connection/channel and skip topology setup
+            try:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = connect_to_rabbitmq()
+                channel = conn.channel()
+                info_msg = (
+                    "[RECEIVER] Recovered with existing broker topology; "
+                    "will consume from existing queue %s"
+                )
+                logger.info(info_msg, QUEUE_NAME)
+            except Exception as e:
+                logger.critical("[RECEIVER] Could not recover from topology conflict: %s", e)
+                raise
+        else:
+            raise
     except Exception:
         logger.critical("Failed to setup RabbitMQ topology")
         raise
@@ -917,12 +944,17 @@ def start_listening():
         if flushed_ids:
             uid, models = get_odoo_connection()
             models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, 'pos.order', 'write',
-                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}]
+                ODOO_DB,
+                uid,
+                ODOO_PASS,
+                'pos.order',
+                'write',
+                [list(set(flushed_ids)), {'x_rabbitmq_sent': True}],
             )
     except Exception as e:
         logger.warning("Could not flush on startup: %s", e)
-        monitor.log("warning", "system_error", f"Startup flush failure: {str(e)[:500]}")
+        msg = f"Startup flush failure: {str(e)[:500]}"
+        monitor.log("warning", "system_error", msg)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

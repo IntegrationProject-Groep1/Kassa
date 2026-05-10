@@ -19,6 +19,7 @@ import receiver
 import sender
 import monitoring
 from order_poller import OrderPoller
+from partner_identity_poller import PartnerIdentityPoller
 from pos_profiles import ensure_pos_profiles
 from config_utils import get_env, require_env
 from odoo_setup import (
@@ -145,6 +146,22 @@ def main():
     poller_thread.daemon = True
     poller_thread.start()
     print("✅ Poller thread started", flush=True)
+
+    # Step 7b: Initialize and start Partner Identity Poller
+    print("👤 Starting Partner Identity Poller...", flush=True)
+    identity_poller = PartnerIdentityPoller()
+    if not identity_poller.connect_odoo():
+        print("❌ Failed to connect to Odoo for Partner Identity Poller. Exiting.", flush=True)
+        sys.exit(1)
+
+    identity_poller_thread = threading.Thread(
+        target=identity_poller.poll,
+        kwargs={'interval': int(os.environ.get("IDENTITY_POLL_INTERVAL", 10))},
+        name="identity_poller",
+        daemon=True,
+    )
+    identity_poller_thread.start()
+    print("✅ Partner Identity Poller thread started", flush=True)
 
     # Create marker file for healthcheck to indicate the service is fully ready
     try:
