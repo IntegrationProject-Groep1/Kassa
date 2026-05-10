@@ -224,8 +224,8 @@ patch(PaymentScreen.prototype, {
         return result;
     },
 
-    toggleIsToInvoice() {
-        super.toggleIsToInvoice(...arguments);
+    async toggleIsToInvoice() {
+        await super.toggleIsToInvoice(...arguments);
         try {
             const order = this.currentOrder;
             if (!order || !order.to_invoice) return;
