@@ -1231,7 +1231,6 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
               </xs:element>
               <xs:element name="address" type="xs:string"/>
               <xs:element name="company_id" type="xs:string" minOccurs="0"/>
-              <xs:element name="session_id" type="xs:string"/>
               <xs:element name="payment_due">
                 <xs:complexType><xs:sequence>
                   <xs:element name="amount">
@@ -1276,7 +1275,6 @@ Wanneer een nieuwe persoon zich inschrijft via de website.
         <last_name>Peeters</last_name>
       </contact>
       <address>Nijverheidskaai 170, 1070 Brussel</address>
-      <session_id>sess-keynote-001</session_id>
       <payment_due>
         <amount currency="eur">0.00</amount>
         <status>unpaid</status>
