@@ -214,7 +214,6 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     dob_str = (customer.findtext("date_of_birth") or "").strip()
     company_id = (customer.findtext("company_id") or "").strip()
     badge_id = (customer.findtext("badge_id") or "").strip()
-    session_id = (customer.findtext("session_id") or "").strip()
     session_title = (customer.findtext("session_title") or "").strip()
 
     payment_due_el = customer.find("payment_due")
@@ -254,7 +253,6 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         "email": email,
         "x_user_id": identity_uuid,
         "is_company": ctype == "company",
-        "x_session_id": session_id,
         "x_payment_status": status,
         "x_outstanding_amount": amount,
     }
