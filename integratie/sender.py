@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 # ET module has no schema validation support. Both are intentional; do not consolidate.
 import xml.etree.ElementTree as ET
 import logging
+from typing import Optional
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
@@ -84,8 +85,8 @@ ROUTING_KEYS = {
     "refund_processed": "kassa.payments.refund",
     "payment_status": "kassa.frontend.payment",
     "wallet_balance_update": "kassa.frontend.wallet",
-    "wallet_lease_request":  "kassa.to.crm.wallet_lease_request",
-    "wallet_lease_return":   "kassa.to.crm.wallet_lease_return",
+    "wallet_lease_request": "kassa.to.crm.wallet_lease_request",
+    "wallet_lease_return": "kassa.to.crm.wallet_lease_return",
     "system_error": "kassa.errors",
     "log": "logs",
 }
@@ -565,7 +566,7 @@ def build_consumption_order_xml(
 def build_payment_registered_xml(
     payment_context, invoice_status, amount_paid,
     due_date, trx_id, payment_method,
-    invoice_id=None, identity_uuid=None, correlation_id=None, email=None
+    invoice_id=None, identity_uuid=None, correlation_id=None
 ) -> str:
     """
     Build a payment_registered message confirming a payment was processed.
@@ -575,7 +576,7 @@ def build_payment_registered_xml(
                          flow this payment belongs to.
         invoice_status:  Current invoice state, e.g. 'paid' or 'partial'.
         amount_paid:     Amount actually paid (EUR).
-        due_date:        Invoice due date as an ISO-8601 date string.
+        due_date:        Invoice due date as an ISO-8601 date string, or None.
         trx_id:          Unique transaction ID from the payment terminal.
         payment_method:  How the customer paid, e.g. 'cash', 'card', 'wallet'.
         invoice_id:      Odoo invoice ID, included if available.
@@ -598,7 +599,8 @@ def build_payment_registered_xml(
     ap.text = str(amount_paid)
     ap.set("currency", "eur")
     ET.SubElement(inv, "status").text = invoice_status
-    ET.SubElement(inv, "due_date").text = due_date
+    if due_date:
+        ET.SubElement(inv, "due_date").text = due_date
 
     ET.SubElement(body, "payment_context").text = payment_context
 
@@ -635,7 +637,7 @@ def build_invoice_request_xml(
         raise ValueError("correlation_id is required for invoice_request")
 
     root = ET.Element("message")
-    _make_header(root, "invoice_request", correlation_id, source="crm")
+    _make_header(root, "invoice_request", correlation_id, source="kassa")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = identity_uuid
 
@@ -714,13 +716,14 @@ def build_wallet_balance_update_xml(
     return _to_xml(root)
 
 
-def build_wallet_lease_request_xml(identity_uuid: str, badge_id: str) -> str:
+def build_wallet_lease_request_xml(identity_uuid: str, badge_id: Optional[str] = None) -> str:
     """Build wallet_lease_request: Kassa claims authority over visitor's balance."""
     root = ET.Element("message")
     _make_header(root, "wallet_lease_request")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
-    ET.SubElement(body, "badge_id").text = str(badge_id)
+    if badge_id:
+        ET.SubElement(body, "badge_id").text = str(badge_id)
     return _to_xml(root)
 
 
@@ -827,11 +830,10 @@ def send_error_to_queue(
     _make_header(root, "system_error")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "error_code").text = error_code.lower()
+    ET.SubElement(body, "error_description").text = error_description[:500]
 
     if related_message_id:
         ET.SubElement(body, "related_message_id").text = related_message_id
-
-    ET.SubElement(body, "error_description").text = error_description[:500]
 
     error_xml = _to_xml(root)
 

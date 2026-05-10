@@ -131,6 +131,310 @@ def _odoo_mock(**kwargs):
     return 1, models
 
 
+def _badge_scanned_badge_xml(
+    badge_id: str,
+    location: str = "entrance",
+    message_id: str | None = None,
+) -> bytes:
+    mid = message_id or _make_id()
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<message>"
+        "<header>"
+        f"<message_id>{mid}</message_id>"
+        "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+        "<source>iot_gateway</source>"
+        "<type>badge_scanned</type>"
+        "<version>2.0</version>"
+        "</header>"
+        "<body>"
+        f"<badge_id>{badge_id}</badge_id>"
+        f"<location>{location}</location>"
+        "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+        "</body>"
+        "</message>"
+    ).encode("utf-8")
+
+
+def _badge_scanned_qr_xml(
+    identity_uuid: str,
+    location: str = "entrance",
+    message_id: str | None = None,
+) -> bytes:
+    mid = message_id or _make_id()
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<message>"
+        "<header>"
+        f"<message_id>{mid}</message_id>"
+        "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+        "<source>iot_gateway</source>"
+        "<type>badge_scanned</type>"
+        "<version>2.0</version>"
+        "</header>"
+        "<body>"
+        f"<identity_uuid>{identity_uuid}</identity_uuid>"
+        f"<location>{location}</location>"
+        "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+        "</body>"
+        "</message>"
+    ).encode("utf-8")
+
+
+def _partner(
+    identity_uuid: str = _UUID,
+    lease_active: bool = False,
+    odoo_id: int = 10,
+) -> dict:
+    return {
+        "id": odoo_id, "name": "Alice",
+        "x_user_id": identity_uuid,
+        "x_wallet_balance": 25.0, "x_date_of_birth": False,
+        "is_company": False, "x_lease_active": lease_active,
+        "x_lease_id": "LEASE-X" if lease_active else "",
+        "x_lease_transaction_count": 2 if lease_active else 0,
+    }
+
+
+# ── badge_scanned badge path pipeline ─────────────────────────────────────────
+
+class TestBadgeScanBadgePipeline:
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_entrance_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "entrance"))
+
+        mock_error.assert_not_called()
+        ch.basic_nack.assert_not_called()
+        ch.basic_ack.assert_called_once()
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_badge_lease_request_contains_badge_id(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "entrance"))
+
+        lease_xml = mock_send.call_args[0][1]
+        assert "<badge_id>BADGE-001</badge_id>" in lease_xml
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_badge_not_found_sends_system_error_and_acks(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.return_value = []
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("UNKNOWN", "entrance"))
+
+        mock_error.assert_called_once()
+        assert mock_error.call_args[1]["error_code"] == "badge_not_found"
+        mock_send.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_bar_scan_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "bar"))
+
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.return_value = [_partner()]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "session"))
+
+        mock_send.assert_not_called()
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_invalid_xsd_nacks_and_sends_error(self, mock_conn, mock_error, mock_send, ch, method):
+        mock_conn.return_value = (1, MagicMock())
+
+        # Neither badge_id nor identity_uuid → xs:choice unsatisfied → XSD rejects
+        bad_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{_make_id()}</message_id>"
+            "<timestamp>2026-05-08T12:00:00Z</timestamp>"
+            "<source>iot_gateway</source>"
+            "<type>badge_scanned</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            "<location>entrance</location>"
+            "<scanned_at>2026-05-08T12:00:00Z</scanned_at>"
+            "</body></message>"
+        ).encode("utf-8")
+
+        receiver.process_message(ch, method, None, bad_xml)
+
+        ch.basic_nack.assert_called_once()
+        mock_error.assert_called_once()
+        mock_conn.return_value[1].execute_kw.assert_not_called()
+
+
+# ── badge_scanned QR path pipeline ────────────────────────────────────────────
+
+class TestBadgeScanQRPipeline:
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_entrance_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        mock_error.assert_not_called()
+        ch.basic_nack.assert_not_called()
+        ch.basic_ack.assert_called_once()
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_qr_lease_request_omits_badge_id(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        lease_xml = mock_send.call_args[0][1]
+        assert "<badge_id>" not in lease_xml
+        assert f"<identity_uuid>{_UUID}</identity_uuid>" in lease_xml
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_qr_lease_request_passes_outgoing_xsd(self, mock_conn, mock_error, mock_send, ch, method):
+        """wallet_lease_request emitted on QR scan must validate against outgoing XSD."""
+        from pathlib import Path
+        from lxml import etree
+
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        captured: dict = {}
+        mock_send.side_effect = lambda t, x, **kw: captured.update({"type": t, "xml": x})
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        assert captured.get("type") == "wallet_lease_request"
+        schema_path = Path(receiver.__file__).parent / "schemas" / "schema_wallet_lease_request.xsd"
+        parser = etree.XMLParser(resolve_entities=False, dtd_validation=False, no_network=True)
+        schema = etree.XMLSchema(etree.parse(str(schema_path), parser))
+        doc = etree.fromstring(captured["xml"].encode("utf-8"), parser=parser)
+        assert schema.validate(doc), f"wallet_lease_request XSD failed: {schema.error_log}"
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_profile_not_found_sends_system_error_and_acks(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.return_value = []
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        mock_error.assert_called_once()
+        assert mock_error.call_args[1]["error_code"] == "profile_not_found"
+        mock_send.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_bar_scan_sends_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "bar"))
+
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == "wallet_lease_request"
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.return_value = [_partner()]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "session"))
+
+        mock_send.assert_not_called()
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_lease_already_active_skips_without_error(self, mock_conn, mock_error, mock_send, ch, method):
+        models = MagicMock()
+        models.execute_kw.return_value = [_partner(lease_active=True)]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        mock_send.assert_not_called()
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_odoo_looked_up_by_identity_uuid_not_badge_id(self, mock_conn, mock_error, mock_send, ch, method):
+        """QR path must query x_user_id, not x_badge_id."""
+        models = MagicMock()
+        models.execute_kw.side_effect = [[_partner()], True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "entrance"))
+
+        search_call = models.execute_kw.call_args_list[0]
+        domain = search_call[0][5][0]
+        assert domain[0][0] == "x_user_id"
+        assert domain[0][2] == _UUID
+
+
 # ── wallet_lease_grant pipeline ────────────────────────────────────────────────
 
 class TestWalletLeaseGrantPipeline:

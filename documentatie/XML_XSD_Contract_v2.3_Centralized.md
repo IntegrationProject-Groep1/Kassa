@@ -26,7 +26,8 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 | Richting | Berichttype | Van/Naar | Sectie |
 |----------|---|---|---|
 |  **ONTVANGT** | `new_registration`, `profile_update`, `cancel_registration` | ← CRM | [10. CRM → Kassa](#10-crm--kassa) |
-|  **ONTVANGT** | `badge_scanned` | ← IoT (Raspberry Pi) | [6.3](#63-badge_scanned) |
+|  **ONTVANGT** | `badge_scanned` | ← IoT (Raspberry Pi) of Kassa (QR) | [6.3](#63-badge_scanned) |
+|  **ONTVANGT** | `event_ended` | ← Frontend | [11.7](#117-event_ended-frontend--kassa) |
 |  **VERZENDT** | `payment_registered` | → CRM | [6.6 Kassa → CRM](#66-payment_registered-kassa--rabbitmq) |
 |  **VERZENDT** | `payment_status`, `wallet_balance_update` | → Frontend | [18](#18-frontend--kassa-direct-flows) |
 |  **BROADCAST** | `heartbeat` | → Monitoring | [3. Heartbeat](#3-heartbeat--alle-teams--monitoring) |
@@ -47,6 +48,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **ONTVANGT** | `user_registered` | ← Frontend |  v1.0 header + verkeerde queue | [5.5](#55-user_registered) |
 |  **ONTVANGT** | `user_created`, `user_updated`, `user_deleted` | ← Frontend |  dotted type | [5.2-5.4](#52-user_updated) |
 |  **ONTVANGT** | `cancel_registration` | ← Frontend | NIEUW | [5.6](#56-cancel_registration-frontend--crm) |
+|  **ONTVANGT** | `company_member_removed` | ← Frontend | NIEUW | [5.8](#58-company_member_removed) |
 |  **ONTVANGT** | `session_created`, `session_updated` | ← Planning |  `session_update` (fout) | [7.1-7.2](#71-session_created) |
 |  **ONTVANGT** | `payment_registered` | ← Kassa |  | [6.6](#66-payment_registered-kassa--rabbitmq) |
 |  **ONTVANGT** | `invoice_created_notification` | ← Facturatie |  | [8.1](#81-invoice_status) |
@@ -65,7 +67,8 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 3.  Regel line 45-63: `invoice_request` body → `<invoice_data>` i.p.v. `<items>`
 4.  Regel line 85: type `mailing_status` → `send_mailing`
 5.  Regel line 124: queue `crm.to.facturatie` → `facturatie.incoming`
-6.  NIEUW: Forward `cancel_registration` naar Planning (Option A)
+7.  NIEUW: Implementeer consumer voor `company_member_removed` (§5.8) om bedrijfslinks te verbreken.
+8.  NIEUW: Forward `cancel_registration` naar Planning (Option A)
 
 ---
 
@@ -80,7 +83,8 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 |  **VERZENDT** | `user_deleted` | → CRM |  v1.0 header + `user.unregistered` | [5.4](#54-user_deleted) |
 |  **VERZENDT** | `user_registered` | → CRM |  v1.0 header + dotted type + verkeerde queue | [5.5](#55-user_registered) |
 |  **VERZENDT** | `user_checkin` | → CRM |  v1.0 header + `user.checkin` | [19.1](#191-user_checkin) |
-|  **VERZENDT** | `event_ended` | → CRM, Facturatie |  | [5.7](#57-event_ended), [11.6](#116-event_ended-frontend--facturatie) |
+|  **VERZENDT** | `company_member_removed` | → CRM | NIEUW | [5.8](#58-company_member_removed) |
+|  **VERZENDT** | `event_ended` | → CRM, Facturatie, Kassa |  | [5.7](#57-event_ended), [11.6](#116-event_ended-frontend--facturatie), [11.7](#117-event_ended-frontend--kassa) |
 |  **VERZENDT** | `calendar_invite` | → Planning |  dotted type + mist `version` | [17.2](#172-calendar_invite-frontend--planning) |
 |  **VERZENDT** | `payment_registered` | → Facturatie |  **ONTBREEKT** — nog niet geïmplementeerd | [11.5](#115-payment_registered-frontend--facturatie) |
 |  **ONTVANGT** | `payment_registered` | ← CRM |  | [13.1](#131-payment_registered-crm--frontend) |
@@ -98,6 +102,7 @@ Klik op jouw team om direct naar de gedetailleerde specificaties te gaan. **Groe
 -  CalendarInviteSender.php: v1.0 header → v2.0, type `calendar.invite` → `calendar_invite`, voeg `version` toe
 -  **NIEUW — PaymentRegisteredSender.php (→ Facturatie)**: implementeer sender die `payment_registered` stuurt naar queue `facturatie.incoming` conform sectie 11.5
 -  **NIEUW — event_ended (→ Facturatie)**: implementeer sender die `event_ended` ook naar `facturatie.incoming` stuurt conform sectie 11.6 (Issue #34)
+-  **NIEUW — event_ended (→ Kassa)**: publiceer `event_ended` ook naar `kassa.incoming` conform sectie 11.7 (derde publish, naast `event.ended` en `facturatie.incoming`)
 
 ---
 
@@ -862,6 +867,8 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
 | `identity_service_unavailable` | Kan geen Master UUID ophalen bij de Identity Service |
 | `database_error` | Interne database fout bij verwerken bericht |
 
+### 2.6 `system_error`
+
 #### XSD
 
 ```xml
@@ -890,10 +897,14 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="error_code"          type="xs:string"/>
-              <xs:element name="error_description"   type="xs:string"/>
+              <xs:element name="error_code" type="xs:string"/>
+              <xs:choice>
+                <xs:element name="error_description" type="xs:string"/>
+                <xs:element name="message" type="xs:string"/>
+              </xs:choice>
+              <xs:element name="component" type="xs:string" minOccurs="0"/>
               <!-- related_message_id: message_id van het bericht dat de fout veroorzaakte -->
-              <xs:element name="related_message_id"  type="xs:string" minOccurs="0"/>
+              <xs:element name="related_message_id" type="xs:string" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -910,9 +921,9 @@ Elk team gebruikt dit formaat om fouten te rapporteren naar Monitoring of hun ei
 <message>
   <header>
     <message_id>63a4b5c6-d7e8-9012-abcd-012345600012</message_id>
-    <type>system_error</type>
-    <source>crm</source>
     <timestamp>2026-05-15T19:05:00Z</timestamp>
+    <source>crm</source>
+    <type>system_error</type>
     <version>2.0</version>
   </header>
   <body>
@@ -1816,6 +1827,92 @@ Wanneer een sessie of event is afgelopen.
 
 ---
 
+### 5.8 `company_member_removed` (Frontend → CRM)
+
+Wanneer een bedrijfsbeheerder een uitnodiging intrekt voordat de gebruiker zich heeft geregistreerd, of wanneer een lid van een bedrijf handmatig wordt ontkoppeld. Dit bericht instrueert CRM om de koppeling tussen de gebruiker (`identity_uuid`) en het bedrijf (`company_id`) te verwijderen.
+
+- **Queue:** `crm.incoming`
+- **Richting:** Frontend → CRM
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="company_member_removed"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="customer">
+            <xs:complexType><xs:sequence>
+              <xs:element name="identity_uuid" type="UUIDType"/>
+              <xs:element name="email"         type="xs:string"/>
+              <xs:element name="company_id"   type="xs:string"/>
+              <xs:element name="reason">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="invite_revoked"/>
+                  <xs:enumeration value="admin_removed"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-08T14:30:00Z</timestamp>
+    <source>frontend</source>
+    <type>company_member_removed</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <customer>
+      <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+      <email>uitgenodigde@example.com</email>
+      <company_id>uid-3</company_id>
+      <reason>invite_revoked</reason>
+    </customer>
+  </body>
+</message>
+```
+
+#### Verwacht Gedrag CRM
+1. Zoek de gebruiker op via `identity_uuid`.
+2. Verwijder de koppeling tussen de gebruiker en het bedrijf (`company_id`).
+3. **Zet het gebruikerstype terug naar `private`** als er geen andere bedrijfskoppeling meer overblijft voor deze gebruiker.
+4. Als de gebruiker nog geen account heeft aangemaakt (invite was pending), verwijdert CRM de pre-registratie.
+5. Log de actie met de meegeleverde `reason`.
+
+---
+
 ## 6. Kassa → CRM
 
 - **Queue:** `crm.incoming`
@@ -2053,9 +2150,11 @@ Een badge/QR-code wordt gekoppeld aan een klant bij de inkom.
 
 ### 6.3 `badge_scanned`
 
-Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).  
-**Flow:** IoT (Raspberry Pi) → Kassa  
+Een badge of QR-code wordt gescand aan de inkom of kassa.  
+**Flow:** IoT (Raspberry Pi) of Kassa → Kassa  
 **Routing Key:** `kassa.incoming`
+
+> De body gebruikt `xs:choice` om exact één identifier af te dwingen: `badge_id` bij badge-scan, `identity_uuid` bij QR-scan. XSD 1.0 ondersteunt geen conditionele validatie op basis van elementwaarden, maar `xs:choice` dwingt de constraint "precies één van beide" correct af. Backward compatible: bestaande badge-berichten (enkel `badge_id`) zijn geldig als keuze-arm 1.
 
 #### XSD
 
@@ -2085,7 +2184,10 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
       </xs:element>
       <xs:element name="body">
         <xs:complexType><xs:sequence>
-          <xs:element name="badge_id"   type="xs:string"/>
+          <xs:choice>
+            <xs:element name="badge_id"      type="xs:string"/>
+            <xs:element name="identity_uuid" type="UUIDType"/>
+          </xs:choice>
           <xs:element name="location">
             <xs:simpleType><xs:restriction base="xs:string">
               <xs:enumeration value="entrance"/>
@@ -2102,7 +2204,7 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
 </xs:schema>
 ```
 
-#### Voorbeeld XML
+#### Voorbeeld XML — badge-scan (bestaand scenario)
 
 ```xml
 <message>
@@ -2117,6 +2219,25 @@ Een badge wordt gescand aan de inkom (IoT / Raspberry Pi).
     <badge_id>BADGE-0042</badge_id>
     <location>entrance</location>
     <scanned_at>2026-05-15T18:06:30Z</scanned_at>
+  </body>
+</message>
+```
+
+#### Voorbeeld XML — QR-scan (nieuw scenario)
+
+```xml
+<message>
+  <header>
+    <message_id>29c0d1e2-f3a4-5678-cdef-678901200008</message_id>
+    <timestamp>2026-05-15T18:06:35Z</timestamp>
+    <source>kassa</source>
+    <type>badge_scanned</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+    <location>entrance</location>
+    <scanned_at>2026-05-15T18:06:35Z</scanned_at>
   </body>
 </message>
 ```
@@ -2336,7 +2457,8 @@ Kassa vraagt een factuur aan voor een bedrijf. De koppeling met de bijhorende `c
             <xs:sequence>
               <xs:element name="message_id"    type="UUIDType"/>
               <xs:element name="timestamp"     type="xs:dateTime"/>
-              <xs:element name="source"        type="SourceType"/>
+              <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+                <xs:enumeration value="kassa"/></xs:restriction></xs:simpleType></xs:element>
               <xs:element name="type"          type="xs:string" fixed="invoice_request"/>
               <xs:element name="version"       type="xs:string" fixed="2.0"/>
               <!-- correlation_id = message_id van het consumption_order bericht -->
@@ -2401,6 +2523,8 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
 - **consumption** → routing key `kassa.payments.consumption` (samen met `consumption_order`)
 - **registration** → routing key `kassa.payments.registration` (inschrijvingsgeld aan kassa)
 
+> **`identity_uuid` & `invoice.id`:** Deze zijn optioneel (`minOccurs="0"`) om "anonieme" kassabetalingen of betalingen waarvoor de CRM-sync nog niet is afgerond te ondersteunen. In dat geval koppelt Facturatie de betaling aan een generieke "Bar Klant" in FossBilling.
+>
 > **`correlation_id`:** bij consumption = `message_id` van de bijhorende `consumption_order`. Bij registration = `message_id` van de originele `new_registration`.
 >
 > **`payment_method`:** `company_link` (bedrijfsrekening), `on_site` (cash/kaart/badge wallet), `online`.
@@ -2437,12 +2561,9 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
             <xs:sequence>
               <xs:element name="message_id"     type="UUIDType"/>
               <xs:element name="timestamp"      type="xs:dateTime"/>
-              <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="kassa"/></xs:restriction></xs:simpleType></xs:element>
-              <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="payment_registered"/></xs:restriction></xs:simpleType></xs:element>
-              <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
-                <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+              <xs:element name="source"         type="xs:string"/>
+              <xs:element name="type"           type="xs:string"/>
+              <xs:element name="version"        type="xs:string"/>
               <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -2518,14 +2639,14 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
     <correlation_id>f47ac10b-58cc-4372-a567-0e02b2c3d479</correlation_id>
   </header>
   <body>
-    <payment_context>consumption</payment_context>
     <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
     <invoice>
       <id>INV-2026-001</id>
-      <status>paid</status>
       <amount_paid currency="eur">15.00</amount_paid>
+      <status>paid</status>
       <due_date>2026-05-15</due_date>
     </invoice>
+    <payment_context>consumption</payment_context>
     <transaction>
       <id>TRX-987654</id>
       <payment_method>company_link</payment_method>
@@ -2548,14 +2669,14 @@ Kassa stuurt dit na elke afgeronde kassatransactie.
     <correlation_id>9f47ac10-b58c-4372-a567-0e02b2c3d479</correlation_id>
   </header>
   <body>
-    <payment_context>registration</payment_context>
     <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
     <invoice>
       <!-- id weggelaten: factuur bestaat nog niet, CRM maakt die aan -->
-      <status>paid</status>
       <amount_paid currency="eur">50.00</amount_paid>
+      <status>paid</status>
       <due_date>2026-05-15</due_date>
     </invoice>
+    <payment_context>registration</payment_context>
     <transaction>
       <id>TRX-2026-04150001</id>
       <payment_method>on_site</payment_method>
@@ -2724,9 +2845,9 @@ Dit is het **centrale bericht** voor badge-saldo wijzigingen. Het wordt gebruikt
 <message>
   <header>
     <message_id>e54a8b72-1c2d-3e4f-5678-7a8b9c0d1e2f</message_id>
-    <type>wallet_balance_update</type>
-    <source>kassa</source>
     <timestamp>2026-05-15T20:30:00Z</timestamp>
+    <source>kassa</source>
+    <type>wallet_balance_update</type>
     <version>2.0</version>
   </header>
   <body>
@@ -3068,7 +3189,7 @@ Kassa stuurt dit bij elk foutscenario. Monitoring ontvangt dit voor het dashboar
 
 ## 8. Facturatie → CRM
 
-- **Queue:** `facturatie.to.crm`
+- **Queue:** `crm.incoming`
 
 ### 8.1 `invoice_status`
 
@@ -3183,9 +3304,9 @@ Facturatie stuurt dit naar CRM nadat een online betaling (via de facturatie-link
             <xs:sequence>
               <xs:element name="message_id"     type="UUIDType"/>
               <xs:element name="timestamp"      type="xs:dateTime"/>
-              <xs:element name="source"         type="xs:string" fixed="facturatie"/>
-              <xs:element name="type"           type="xs:string" fixed="payment_registered"/>
-              <xs:element name="version"        type="xs:string" fixed="2.0"/>
+              <xs:element name="source"         type="xs:string"/>
+              <xs:element name="type"           type="xs:string"/>
+              <xs:element name="version"        type="xs:string"/>
               <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -3193,11 +3314,11 @@ Facturatie stuurt dit naar CRM nadat een online betaling (via de facturatie-link
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="identity_uuid" type="UUIDType"/>
+              <xs:element name="identity_uuid" type="UUIDType" minOccurs="0"/>
               <xs:element name="invoice">
                 <xs:complexType>
                   <xs:sequence>
-                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="id" type="xs:string" minOccurs="0"/>
                     <xs:element name="amount_paid" type="CurrencyAmountType"/>
                     <xs:element name="status">
                       <xs:simpleType>
@@ -3318,14 +3439,14 @@ Mailing rapporteert het resultaat van een verzonden campagne.
           <xs:element name="sent"        type="xs:integer"/>
           <xs:element name="delivered"   type="xs:integer"/>
           <xs:element name="bounced"     type="xs:integer"/>
-          <xs:element name="opened"      type="xs:integer"/>
-          <!-- bounced_emails: optioneel maar sterk aanbevolen -->
+          <!-- bounced_emails: optioneel maar sterk aanbevolen — staat direct na bounced -->
           <!-- CRM gebruikt dit om ongeldige e-mailadressen te markeren in Salesforce -->
           <xs:element name="bounced_emails" minOccurs="0">
             <xs:complexType><xs:sequence>
               <xs:element name="email" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
             </xs:sequence></xs:complexType>
           </xs:element>
+          <xs:element name="opened"      type="xs:integer"/>
           <xs:element name="status">
             <xs:simpleType><xs:restriction base="xs:string">
               <xs:enumeration value="completed"/>
@@ -3659,6 +3780,112 @@ CRM stuurt een nieuw klantprofiel door zodat Kassa betalingen kan verwerken.
 
 ---
 
+### 10.4 `profile_update` (CRM → Facturatie)
+
+> **Gap Resolution (Mei 2026):** Gevonden in `Facturatie/src/services/xsd/profile_update.xsd` — routing was nog niet gedocumenteerd in het contract. Facturatie abonneert op `profile_update` van CRM om klantgegevens up-to-date te houden voor factuurverwerking (o.a. btw-nummer, bedrijfsnaam, betalingsstatus).
+
+- **Exchange:** `crm.exchange`
+- **Routing Key:** `crm.to.facturatie.profile_update`
+- **Queue (ontvanger):** `facturatie.incoming`
+- **Wanneer:** CRM publiceert een profiel-update en stuurt dit naar zowel Kassa (§10.2) als Facturatie.
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="crm"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="profile_update"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="identity_uuid"   type="UUIDType"/>
+          <xs:element name="email"         type="xs:string"/>
+          <xs:element name="date_of_birth" type="xs:date" minOccurs="0"/>
+          <xs:element name="contact">
+            <xs:complexType><xs:sequence>
+              <xs:element name="first_name" type="xs:string"/>
+              <xs:element name="last_name"  type="xs:string"/>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+          <xs:element name="type" minOccurs="0">
+            <xs:simpleType><xs:restriction base="xs:string">
+              <xs:enumeration value="private"/>
+              <xs:enumeration value="company"/>
+            </xs:restriction></xs:simpleType>
+          </xs:element>
+          <xs:element name="company_name" type="xs:string" minOccurs="0"/>
+          <xs:element name="vat_number"   type="xs:string" minOccurs="0"/>
+          <xs:element name="company_id"   type="xs:string" minOccurs="0"/>
+          <xs:element name="payment_due" minOccurs="0">
+            <xs:complexType><xs:sequence>
+              <xs:element name="amount">
+                <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
+                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                </xs:extension></xs:simpleContent></xs:complexType>
+              </xs:element>
+              <xs:element name="status">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="unpaid"/>
+                  <xs:enumeration value="paid"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+            </xs:sequence></xs:complexType>
+          </xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>f4a1b2c3-d4e5-6789-abcd-789012300019</message_id>
+    <timestamp>2026-04-24T11:01:00Z</timestamp>
+    <source>crm</source>
+    <type>profile_update</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+    <email>jan.peeters@ehb.be</email>
+    <contact>
+      <first_name>Jan</first_name>
+      <last_name>Peeters</last_name>
+    </contact>
+    <type>company</type>
+    <company_name>Erasmushogeschool Brussel</company_name>
+    <vat_number>BE0123456789</vat_number>
+  </body>
+</message>
+```
+
+> **Opmerking:** Identiek schema als §10.2 (CRM → Kassa). Facturatie gebruikt dit bericht voor synchronisatie van btw-nummer en bedrijfsgegevens t.b.v. correcte facturatie.
+
+---
+
 ## 11. CRM → Facturatie
 
 - **Queue:** `facturatie.incoming`
@@ -3929,9 +4156,9 @@ Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kas
     <xs:sequence>
       <xs:element name="message_id" type="UUIDType"/>
       <xs:element name="timestamp" type="xs:dateTime"/>
-      <xs:element name="source" type="SourceType" fixed="frontend"/>
-      <xs:element name="type" type="xs:string" fixed="payment_registered"/>
-      <xs:element name="version" type="xs:string" fixed="2.0"/>
+      <xs:element name="source" type="xs:string"/>
+      <xs:element name="type" type="xs:string"/>
+      <xs:element name="version" type="xs:string"/>
       <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
@@ -4096,6 +4323,72 @@ Wanneer Kassa een `payment_registered` stuurt naar `crm.incoming` (routing: `kas
 > **Actiepunt Frontend:** Zorg dat de `event_ended` sender ook publiceert naar queue `facturatie.incoming`.
 >
 > **Actiepunt Facturatie:** Voeg een consumer toe op `facturatie.incoming` die berichten met `source=frontend` en `type=event_ended` verwerkt → trigger mailing van openstaande facturen.
+
+---
+
+### 11.7 `event_ended` (Frontend → Kassa)
+
+> **Consistentie:** Structureel identiek aan §5.7 en §11.6. Frontend publiceert hetzelfde bericht een derde keer, nu naar `kassa.incoming`.
+
+- **Queue:** `kassa.incoming`
+- **Source:** `frontend`
+- **Wanneer:** onmiddellijk na het beëindigen van een event/sessie in de frontend.
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"         type="xs:string" fixed="frontend"/>
+          <xs:element name="type"           type="xs:string" fixed="event_ended"/>
+          <xs:element name="version"        type="xs:string" fixed="2.0"/>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="session_id" type="xs:string"/>
+          <xs:element name="ended_at"   type="xs:dateTime"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>b3a8c7d6-e5f4-3210-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-15T22:00:00Z</timestamp>
+    <source>frontend</source>
+    <type>event_ended</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <session_id>sess-keynote-001</session_id>
+    <ended_at>2026-05-15T22:00:00Z</ended_at>
+  </body>
+</message>
+```
+
+> **Actiepunt Frontend:** Publiceer `event_ended` ook naar queue `kassa.incoming` (derde publish, naast `event.ended` en `facturatie.incoming`).
+>
+> **Actiepunt Kassa:** Voeg een consumer toe op `kassa.incoming` die berichten met `source=frontend` en `type=event_ended` verwerkt → trigger `wallet_lease_return` (§26.3) voor alle actieve leases van de betreffende sessie.
 
 ---
 
@@ -4409,6 +4702,23 @@ CRM informeert de Drupal Frontend over een bevestigde betaling. Frontend gebruik
                     <xs:enumeration value="consumption"/>
                   </xs:restriction>
                 </xs:simpleType>
+              </xs:element>
+              <!-- transaction: optioneel — aanwezig wanneer betaaldetails beschikbaar zijn -->
+              <xs:element name="transaction" minOccurs="0">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="id" type="xs:string"/>
+                    <xs:element name="payment_method">
+                      <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                          <xs:enumeration value="company_link"/>
+                          <xs:enumeration value="on_site"/>
+                          <xs:enumeration value="online"/>
+                        </xs:restriction>
+                      </xs:simpleType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
               </xs:element>
             </xs:sequence>
           </xs:complexType>
@@ -4726,24 +5036,28 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 | Kassa | CRM | `crm.incoming` | exchange: `kassa.exchange`, routing: `kassa.payments.consumption` / `registration` / `refund` / `invoice` / `badge` |
 | IoT (Raspberry Pi) | Kassa | `kassa.incoming` | exchange: `kassa.exchange`, routing: `kassa.incoming` |
 | Planning | CRM | `planning.session.events` | exchange: `planning.exchange`, routing: `planning.session.*` |
-| Facturatie | CRM | `facturatie.to.crm` | — |
+| Facturatie | CRM | `crm.incoming` | — |
 | Mailing | CRM | `crm.incoming` | — |
 | CRM | Kassa | `kassa.incoming` | exchange: `kassa.exchange` (topic) |
 | CRM | Facturatie | `facturatie.incoming` | — |
 | CRM | Mailing | `crm.to.mailing` | — |
 | CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
 | Facturatie | Mailing | `facturatie.to.mailing` | — |
+| Facturatie | Frontend | `facturatie.to.frontend` | — (invoice_available) |
 | Monitoring | Mailing | `to_mailing` | default exchange (`""`), platte `<alert>` root (intern formaat, sectie 4) |
 | Alle teams | Monitoring | `heartbeat` | default exchange (`""`), routing_key: `heartbeat` (direct naar queue) |
+| Alle teams | Monitoring | `logs` | default exchange (`""`), routing_key: `logs` |
 | Frontend/CRM | Planning | `planning.calendar.invite` | exchange: `calendar.exchange`, routing: `frontend.to.planning.calendar.invite` |
 | Planning | Frontend | reply_to queue (RPC) | exchange: `calendar.exchange`, routing: `planning.to.frontend.calendar.invite.confirmed` |
 | Frontend/CRM | Planning | `planning.session.events` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` (RPC) |
 | Planning | Frontend | reply_to queue (RPC) | exchange: `planning.exchange`, routing: `planning.to.frontend.session.view.response` |
 | Frontend | Planning | `planning.session.events` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.create` / `update` / `delete` |
 | Planning | Frontend | — | exchange: `planning.exchange`, routing: `planning.to.frontend.session.created` / `updated` / `deleted` |
-| Alle teams | Identity | `identity.user.create.request` | RPC |
-| Alle teams | Identity | `identity.user.lookup.email.request` | RPC |
-| Identity | Alle teams | fanout via `user.events` exchange | — |
+| **Alle teams** | **Identity** | `identity.user.create.request` | RPC (Sectie 15) |
+| **Alle teams** | **Identity** | `identity.user.lookup.email.request` | RPC |
+| **Alle teams** | **Identity** | `identity.user.lookup.uuid.request` | RPC |
+| **Identity** | **Alle teams** | — | exchange: `user.events` (**fanout**) |
+| **CRM** | **Alle teams** | — | exchange: `frontend.user.unregistered` (**fanout**) |
 | **CRM** | **Planning** | `planning.registration` | exchange: `planning.exchange`, routing: `crm.to.planning.registration_confirmed` |
 | **Planning** | **Alle teams** | — | exchange: `planning.exchange`, routing: `planning.session.occupancy` (Broadcast) |
 | **Kassa** | **CRM** | `crm.incoming` | exchange: `kassa.exchange`, routing: `kassa.to.crm.wallet_lease_request` |
@@ -4752,6 +5066,16 @@ Zodra Identity succesvol een nieuwe gebruiker aanmaakt, broadcast het dit naar *
 | **Authority** | **Alle teams** | — | exchange: `wallet.updates`, routing: `wallet.balance_update` (Broadcast) |
 | **Frontend** | **CRM** | `crm.incoming` | exchange: `frontend.exchange`, routing: `frontend.to.crm.wallet_topup_request` |
 | **CRM** | **Kassa** | `kassa.incoming` | exchange: `crm.exchange`, routing: `crm.to.kassa.wallet_remote_topup` |
+
+### 16.1 Dead Letter Queues (DLQ)
+Elke service is verantwoordelijk voor zijn eigen DLQ-afhandeling bij validatiefouten of crashes.
+
+| Service | DLQ Name |
+|---------|----------|
+| CRM | `crm.dead-letter` |
+| Facturatie | `facturatie.dlq` |
+| Kassa | `kassa.dlx` |
+| Planning | `planning.dlx` |
 
 
 ---
@@ -4892,8 +5216,8 @@ Planning heeft alle resterende afwijkingen weggewerkt en de XSD-validatie volled
 | ← CRM | `consumption_order` (passthrough) | `facturatie.incoming` |
 | ← CRM | `payment_registered` (passthrough) | `facturatie.incoming` |
 | ← Frontend | `payment_registered` (direct) | `facturatie.incoming` (sectie 11.5) |
-| → CRM | `invoice_status` | `facturatie.to.crm` |
-| → CRM | `payment_registered` | `facturatie.to.crm` |
+| → CRM | `invoice_status` | `crm.incoming` |
+| → CRM | `payment_registered` | `crm.incoming` |
 | → Mailing | `send_mailing` | `facturatie.to.mailing` |
 
 **Status v2.3 audit:  KRITIEKE XSD'S MOETEN VERVANGEN WORDEN**
@@ -5311,7 +5635,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
     <source>frontend</source>
     <type>session_view_request</type>
     <version>2.0</version>
-    <correlation_id>frontend-req-001</correlation_id>
+    <correlation_id>c1d2e3f4-a5b6-7890-cdef-012345678901</correlation_id>
   </header>
   <body>
     <session_id>sess-keynote-001</session_id>
@@ -5330,7 +5654,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
     <source>planning</source>
     <type>session_view_response</type>
     <version>2.0</version>
-    <correlation_id>frontend-req-001</correlation_id>
+    <correlation_id>c1d2e3f4-a5b6-7890-cdef-012345678901</correlation_id>
   </header>
   <body>
     <request_message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</request_message_id>
@@ -5745,6 +6069,8 @@ Wanneer een administrator in Drupal een sessie verwijdert.
 
 ### 20.1 `vat_validation_error`
 
+#### XSD
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -5786,9 +6112,10 @@ Wanneer een administrator in Drupal een sessie verwijdert.
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="identity_uuid"  type="UUIDType"/>
-              <xs:element name="vat_number"    type="xs:string"/>
+              <xs:element name="identity_uuid" type="UUIDType" minOccurs="0"/>
+              <xs:element name="vat_number" type="xs:string"/>
               <xs:element name="error_message" type="xs:string" minOccurs="0"/>
+              <xs:element name="timestamp" type="xs:dateTime" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>
@@ -6211,7 +6538,9 @@ Kassa vraagt de macht over het saldo zodra een bezoeker het terrein betreedt.
 
 - **Exchange:** `kassa.exchange`
 - **Routing Key:** `kassa.to.crm.wallet_lease_request`
-- **Wanneer:** Eerste badge-scan bij inkom of kassa.
+- **Wanneer:** Eerste badge-scan of QR-scan bij inkom of kassa.
+
+> **`badge_id`:** optioneel — afwezig bij QR-scan (identity_uuid volstaat). Aanwezig bij badge-scan.
 
 #### XSD
 ```xml
@@ -6237,7 +6566,7 @@ Kassa vraagt de macht over het saldo zodra een bezoeker het terrein betreedt.
       <xs:element name="body">
         <xs:complexType><xs:sequence>
           <xs:element name="identity_uuid" type="UUIDType"/>
-          <xs:element name="badge_id"      type="xs:string"/>
+          <xs:element name="badge_id"      type="xs:string" minOccurs="0"/>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>
@@ -6245,7 +6574,7 @@ Kassa vraagt de macht over het saldo zodra een bezoeker het terrein betreedt.
 </xs:schema>
 ```
 
-#### Voorbeeld XML
+#### Voorbeeld XML — via badge
 ```xml
 <message>
   <header>
@@ -6258,6 +6587,22 @@ Kassa vraagt de macht over het saldo zodra een bezoeker het terrein betreedt.
   <body>
     <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
     <badge_id>BADGE-0042</badge_id>
+  </body>
+</message>
+```
+
+#### Voorbeeld XML — via QR-scan
+```xml
+<message>
+  <header>
+    <message_id>b2c3d4e5-f6a7-8901-bcde-f01234567891</message_id>
+    <timestamp>2026-05-15T09:00:05Z</timestamp>
+    <source>kassa</source>
+    <type>wallet_lease_request</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
   </body>
 </message>
 ```
@@ -6542,7 +6887,121 @@ CRM stuurt dit bericht enkel als de autoriteit momenteel bij de Kassa ligt.
 
 ---
 
-## 27. Final Rule
+## 27. Legacy / Deprecated Schemas — Gevonden in Repos
+
+> **Gap Resolution (Mei 2026):** Onderstaande XSD-bestanden zijn aangetroffen in de Facturatie-repo maar stonden nog niet in het contract. Ze worden hier gedocumenteerd als **deprecated** — ze mogen niet meer voor nieuwe berichten gebruikt worden. Teams die ze nog consumeren moeten migreren naar de v2.0 varianten.
+
+---
+
+### 27.1 `payment_registered_outgoing` (Facturatie — DEPRECATED)
+
+> **Status: DEPRECATED** — vervangen door de standaard `payment_registered` (§8.2). Gebruikt `customer_id` i.p.v. `identity_uuid` en heeft geen standaard v2.0 header-velden. Niet gebruiken voor nieuwe integraties.
+
+- **Bestandslocatie:** `Facturatie/src/services/xsd/payment_registered_outgoing.xsd`
+- **Vervanger:** §8.2 `payment_registered` (Facturatie → CRM)
+
+#### XSD (archief — niet gebruiken)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id" type="xs:string"/>
+          <xs:element name="timestamp"  type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="facturatie"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="payment_registered"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="invoice_id"  type="xs:string"/>
+          <xs:element name="customer_id" type="xs:string"/>
+          <xs:element name="amount_paid">
+            <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
+              <xs:attribute name="currency" use="required">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="eur"/></xs:restriction></xs:simpleType>
+              </xs:attribute>
+            </xs:extension></xs:simpleContent></xs:complexType>
+          </xs:element>
+          <xs:element name="payment_method">
+            <xs:simpleType><xs:restriction base="xs:string">
+              <xs:enumeration value="cash"/>
+              <xs:enumeration value="card"/>
+              <xs:enumeration value="bank_transfer"/>
+            </xs:restriction></xs:simpleType>
+          </xs:element>
+          <xs:element name="paid_at" type="xs:dateTime"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+**Migratie-instructie:** Vervang `customer_id` door `identity_uuid` (UUID-formaat) en gebruik de v2.0 `payment_registered` XSD uit §8.2.
+
+---
+
+### 27.2 `invoice_link` (Facturatie — DEPRECATED)
+
+> **Status: DEPRECATED** — vervangen door `invoice_available` (§13.5.1). Bevat een verboden `<master_uuid>` in de header en gebruikt een `xs:integer` voor `invoice_id` wat niet compatibel is met de v2.0 standaard. Niet gebruiken voor nieuwe integraties.
+
+- **Bestandslocatie:** `Facturatie/src/services/xsd/invoice_link.xsd`
+- **Vervanger:** §13.5.1 `invoice_available` (Facturatie → Frontend)
+
+#### XSD (archief — niet gebruiken)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="message_id" type="xs:string"/>
+              <xs:element name="version" type="xs:decimal" fixed="2.0"/>
+              <xs:element name="type" type="xs:string"/>
+              <xs:element name="timestamp" type="xs:dateTime"/>
+              <xs:element name="source" type="xs:string"/>
+              <xs:element name="master_uuid">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="invoice_id" type="xs:integer"/>
+              <xs:element name="pdf_url" type="xs:anyURI"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+**Migratie-instructie:** Gebruik `invoice_available` (§13.5.1) met `identity_uuid` in body, `invoice_id` als `xs:string`, en standaard v2.0 header zonder `<master_uuid>`.
+
+---
+
+## 28. Final Rule
 
 > **Als twee teams hetzelfde bericht anders interpreteren, is het contract fout.**
 
@@ -6554,7 +7013,9 @@ Maar: dit document IS nu de canonieke bron. Zolang er geen issue + update gewees
 ---
 
 *Document v2.3 — Gegenereerd op basis van volledige repo-audit + bestaande v2.0 contract — April 2026*
+*Sectie 10.4, 27 en 28 toegevoegd Mei 2026 — gap resolution na repo-scan*
 *Volgende geplande revisie: na demo 3 — toevoegen of aanpassen via Pull Request*
+
 
 
 

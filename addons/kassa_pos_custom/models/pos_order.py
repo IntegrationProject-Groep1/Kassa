@@ -38,14 +38,23 @@ class PosOrder(models.Model):
         if not partner.exists():
             raise ValueError(f"Partner {partner_id} does not exist.")
 
-        current_balance = partner.x_wallet_balance or 0.0
-        new_balance = round(float(current_balance) - float(amount_deducted), 2)
+        # Atomic deduction via direct SQL UPDATE
+        self.env.cr.execute(
+            "UPDATE res_partner "
+            "SET x_wallet_balance = ROUND((COALESCE(x_wallet_balance, 0) - %s)::numeric, 2) "
+            "WHERE id = %s RETURNING x_wallet_balance",
+            (float(amount_deducted), partner_id),
+        )
+        row = self.env.cr.fetchone()
+        if row is None:
+            raise ValueError(f"Partner {partner_id} was deleted during balance update.")
+        new_balance = row[0]
 
-        # Write both updates inside this single transaction
-        partner.write({'x_wallet_balance': new_balance})
+        # Flag the order as updated and invalidate the partner cache
         order.write({'x_wallet_updated': True})
+        partner.invalidate_recordset(['x_wallet_balance'])
 
-        return new_balance
+        return float(new_balance)
 
     @api.model
     def action_add_wallet_amount(self, partner_id, delta):
