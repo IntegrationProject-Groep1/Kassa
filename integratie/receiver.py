@@ -606,13 +606,15 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
                 identity_uuid, add_amount, new_balance, reason)
 
 
-_EVENT_ENDED_DELAY = int(os.environ.get("EVENT_ENDED_LEASE_RETURN_DELAY", str(3 * 60 * 60)))
+_EVENT_ENDED_DELAY_RAW = os.environ.get("EVENT_ENDED_LEASE_RETURN_DELAY")
+_EVENT_ENDED_DELAY = int(_EVENT_ENDED_DELAY_RAW) if _EVENT_ENDED_DELAY_RAW else (3 * 60 * 60)
 _event_ended_timer: threading.Timer | None = None
 _event_ended_timer_lock = threading.Lock()
+_pika_conn: pika.BlockingConnection | None = None
 
 
 def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
-    """Return all active leases to CRM. Called by the debounce timer."""
+    """Return all active leases to CRM. Runs in the main pika IO thread via add_callback_threadsafe."""
     logger.info("[EVENT_ENDED] Debounce timer fired — returning all active leases")
 
     active_partners: List[OdooRecord] = models.execute_kw(
@@ -674,9 +676,15 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
     with _event_ended_timer_lock:
         if _event_ended_timer is not None:
             _event_ended_timer.cancel()
-        _event_ended_timer = threading.Timer(
-            _EVENT_ENDED_DELAY, _do_return_all_leases, args=(uid, models)
-        )
+        # Schedule via add_callback_threadsafe so the actual Odoo/RabbitMQ work
+        # runs in the main pika IO thread — BlockingConnection is not thread-safe.
+
+        def _fire():
+            if _pika_conn and not _pika_conn.is_closed:
+                _pika_conn.add_callback_threadsafe(lambda: _do_return_all_leases(uid, models))
+            else:
+                logger.error("[EVENT_ENDED] Cannot schedule lease return: pika connection unavailable")
+        _event_ended_timer = threading.Timer(_EVENT_ENDED_DELAY, _fire)
         _event_ended_timer.daemon = True
         _event_ended_timer.start()
 
@@ -863,7 +871,9 @@ def connect_to_rabbitmq():
 
 def start_listening():
     """Connect to RabbitMQ and start consuming."""
+    global _pika_conn
     conn = connect_to_rabbitmq()
+    _pika_conn = conn
     channel = conn.channel()
 
     try:
@@ -941,6 +951,7 @@ def start_listening():
                 except Exception:
                     pass
                 conn = connect_to_rabbitmq()
+                _pika_conn = conn
                 channel = conn.channel()
                 info_msg = (
                     "[RECEIVER] Recovered with existing broker topology; "
