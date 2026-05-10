@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 _IDENTITY_RESPONSE_SCHEMA_PATH = os.path.join(_SCHEMA_DIR, "schema_identity_response.xsd")
+_IDENTITY_REQUEST_SCHEMA_PATH = os.path.join(_SCHEMA_DIR, "schema_identity_request.xsd")
 _identity_response_schema: "etree.XMLSchema | None" = None
+_identity_request_schema: "etree.XMLSchema | None" = None
 
 
 def _get_identity_response_schema() -> "etree.XMLSchema | None":
@@ -40,6 +42,28 @@ def _get_identity_response_schema() -> "etree.XMLSchema | None":
         except Exception as exc:
             logger.warning("[IDENTITY] Could not load identity_response XSD: %s", exc)
     return _identity_response_schema
+
+
+def _get_identity_request_schema() -> "etree.XMLSchema | None":
+    global _identity_request_schema
+    if _identity_request_schema is None:
+        try:
+            _identity_request_schema = etree.XMLSchema(etree.parse(_IDENTITY_REQUEST_SCHEMA_PATH))
+        except Exception as exc:
+            logger.warning("[IDENTITY] Could not load identity_request XSD: %s", exc)
+    return _identity_request_schema
+
+
+def _validate_request_xml(xml_text: str) -> None:
+    schema = _get_identity_request_schema()
+    if schema is None:
+        return
+    try:
+        doc = etree.fromstring(xml_text.encode("utf-8") if isinstance(xml_text, str) else xml_text)
+        if not schema.validate(doc):
+            raise IdentityError("Identity request did not pass XSD validation: %s" % schema.error_log)
+    except etree.XMLSyntaxError as exc:
+        raise IdentityError("Identity request is not valid XML: %s" % exc)
 
 
 # Configuration — caller may override via environment
@@ -237,6 +261,7 @@ def create_user(email: str, source_system: str = "frontend") -> str:
     Raises IdentityError for other identity errors.
     """
     xml = _build_create_request_xml(email, source_system)
+    _validate_request_xml(xml)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_CREATE, xml)
     status, payload = _parse_identity_response(resp_xml)
     if status == "ok":
@@ -253,6 +278,7 @@ def create_user(email: str, source_system: str = "frontend") -> str:
 
 def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
     xml = _build_lookup_email_xml(email)
+    _validate_request_xml(xml)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_EMAIL, xml)
     status, payload = _parse_identity_response(resp_xml)
     if status == "ok":
@@ -262,6 +288,7 @@ def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
 
 def lookup_by_uuid(master_uuid: str) -> Optional[Dict[str, Optional[str]]]:
     xml = _build_lookup_uuid_xml(master_uuid)
+    _validate_request_xml(xml)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_UUID, xml)
     status, payload = _parse_identity_response(resp_xml)
     if status == "ok":
