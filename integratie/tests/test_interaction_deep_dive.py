@@ -17,25 +17,36 @@ os.environ['RABBIT_EXCHANGE'] = 'test.exchange'
 
 class OdooMock:
     def __init__(self):
-        self.customer = {'id': 200, 'name': 'B2B', 'x_user_id': 'u-b2b', 'customer_type': 'company'}
+        self.customer = {
+            'id': 200, 'name': 'B2B', 'x_user_id': 'u-b2b',
+            'is_company': True, 'parent_id': False, 'country_id': False,
+            'email': 'b2b@test.com', 'x_badge_id': '', 'x_wallet_balance': 0.0,
+            'x_lease_active': False, 'x_lease_id': '', 'x_lease_transaction_count': 0,
+            'vat': 'BE0123456789', 'street': 'Test St 1', 'city': 'Brussels', 'zip': '1000',
+        }
         self.config_name = "Bar Kassa"
         self.original_msg_id = "ORIG-123"
         self.call_log = []
 
     def execute_kw(self, db, uid, pw, model, method, *args, **kwargs):
         self.call_log.append((model, method))
-        if method == 'search_read' and model == 'res.partner':
+        if model == 'res.partner' and method in ('search_read', 'read'):
             return [self.customer] if self.customer else []
         if method == 'read' and model == 'pos.session':
             return [{'config_id': [1, 'C1']}]
         if method == 'read' and model == 'pos.config':
             return [{'name': self.config_name}]
         if method == 'read' and model == 'pos.order.line':
+            fields = args[0][1] if args and len(args[0]) > 1 else []
+            if isinstance(fields, list) and 'refunded_orderline_id' in fields:
+                return [{'refunded_orderline_id': [1101, 'L1']}]
+            if isinstance(fields, list) and fields == ['order_id']:
+                return [{'order_id': [99, 'ORIG']}]
             return [{'id': 1, 'product_id': [1, 'P1'], 'qty': 1, 'price_unit': 10, 'price_subtotal_incl': 10}]
         if method == 'read' and model == 'product.product':
             return [{'id': 1, 'x_is_topup': False, 'pos_categ_ids': []}]
         if method == 'read' and model == 'pos.payment':
-            return [{'id': 2001, 'payment_method_id': [2, 'Wallet'], 'amount': 10.0}]
+            return [{'id': 2001, 'payment_method_id': [2, 'Cash'], 'amount': 10.0}]
         if method == 'read' and model == 'pos.order':
             return [{'x_payment_message_id': self.original_msg_id, 'order_id': [99, 'ORIG']}]
         if method == 'search_read' and model == 'pos.order.line':
