@@ -3,7 +3,7 @@
 # No live services required; all Odoo XML-RPC and RabbitMQ calls are mocked.
 
 import xml.etree.ElementTree as ET
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
