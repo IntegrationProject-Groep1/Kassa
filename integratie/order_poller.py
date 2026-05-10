@@ -893,8 +893,20 @@ class OrderPoller:
                         [product_ids, ['id', 'x_is_topup', 'pos_categ_ids']]
                     )
                     product_info_map = {p['id']: p for p in products}
+                    all_cat_ids = set()
+                    for p in products:
+                        all_cat_ids.update(p.get('pos_categ_ids', []))
+                    cat_map = {}
+                    if all_cat_ids:
+                        categories = self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.category', 'read',
+                            [list(all_cat_ids), ['id', 'name']],
+                            {'context': {}}
+                        )
+                        cat_map = {c['id']: c['name'] for c in categories}
                     for line in line_details:
-                        if self.is_topup_product(line['product_id'][0], product_info_map):
+                        if self.is_topup_product(line['product_id'][0], product_info_map, cat_map=cat_map):
                             self._last_consumption_has_topup = True
                             self._last_consumption_topup_amount += float(line.get('price_subtotal_incl', 0.0))
             except Exception as e:
@@ -906,7 +918,7 @@ class OrderPoller:
         due_date = (
             order.get('create_date', '').split(' ')[0]
             if order.get('create_date')
-            else '1970-01-01'
+            else None
         )
 
         payment_xml = sender.build_payment_registered_xml(
