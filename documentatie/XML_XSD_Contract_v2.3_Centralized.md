@@ -16,6 +16,8 @@
 
 | Datum | Versie | Wijziging |
 |-------|--------|-----------|
+| 2026-05-11 | v2.3 | **Secties 19.2 & 19.5 bijgewerkt** — `session_view_response` uitgebreid met optioneel `<price currency="eur">` per sessie (Rule 3 ✅). `session_update_request` uitgebreid met optioneel `<current_attendees>` en `<price currency="eur">`. Voorbeeld XML's bijgewerkt. |
+| 2026-05-11 | v2.3 | **Sectie 19.7 bijgewerkt** — `user_sessions_response` XSD uitgebreid met optioneel `<price currency="eur">` element per sessie (Rule 3 ✅). Voorbeeld XML en regelcontrole bijgewerkt. |
 | 2026-05-11 | v2.3 | **Sectie 19.7 toegevoegd** — `user_sessions_request` / `user_sessions_response` RPC (Kassa & Frontend → Planning). Quick reference tabellen voor Kassa, Frontend en Planning bijgewerkt. Queue/exchange overzicht uitgebreid met routing keys voor dit RPC-paar. Globale regelcontrole: alle 6 regels geslaagd. Request-XSD uitgebreid met `source="frontend"` zodat zowel Kassa als Frontend dit RPC-bericht kunnen versturen. |
 | 2026-05-11 | v2.3 | **Sectie 26.2 bijgewerkt** — `wallet_lease_grant` XSD uitgebreid met optioneel `<payment_due>` element (openstaande inschrijvingskosten bezoeker). Bevat `<amount currency="eur">` (Rule 3 ✅) en optionele `<status>` (unpaid/paid). Voorbeeld XML bijgewerkt. |
 
@@ -5458,6 +5460,16 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
                           <xs:element name="status"          type="xs:string"/>
                           <xs:element name="max_attendees"   type="xs:integer"/>
                           <xs:element name="current_attendees" type="xs:integer"/>
+                          <!-- Price per session (optional; absent = free or unknown) -->
+                          <xs:element name="price" minOccurs="0">
+                            <xs:complexType>
+                              <xs:simpleContent>
+                                <xs:extension base="xs:decimal">
+                                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                                </xs:extension>
+                              </xs:simpleContent>
+                            </xs:complexType>
+                          </xs:element>
                           <xs:element name="speaker" minOccurs="0">
                             <xs:complexType>
                               <xs:sequence>
@@ -5538,6 +5550,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
         <status>published</status>
         <max_attendees>120</max_attendees>
         <current_attendees>0</current_attendees>
+        <price currency="eur">0.00</price>
         <speaker>
           <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
           <contact>
@@ -5831,10 +5844,21 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
           <xs:element name="title"          type="xs:string"/>
           <xs:element name="start_datetime" type="xs:dateTime"/>
           <xs:element name="end_datetime"   type="xs:dateTime"/>
-          <xs:element name="location"       type="xs:string" minOccurs="0"/>
-          <xs:element name="session_type"   type="xs:string" minOccurs="0"/>
-          <xs:element name="status"         type="xs:string" minOccurs="0"/>
-          <xs:element name="max_attendees"  type="xs:integer" minOccurs="0"/>
+          <xs:element name="location"           type="xs:string" minOccurs="0"/>
+          <xs:element name="session_type"       type="xs:string" minOccurs="0"/>
+          <xs:element name="status"             type="xs:string" minOccurs="0"/>
+          <xs:element name="max_attendees"      type="xs:integer" minOccurs="0"/>
+          <xs:element name="current_attendees"  type="xs:nonNegativeInteger" minOccurs="0"/>
+          <!-- Price per session (optional; absent = free or unknown) -->
+          <xs:element name="price" minOccurs="0">
+            <xs:complexType>
+              <xs:simpleContent>
+                <xs:extension base="xs:decimal">
+                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                </xs:extension>
+              </xs:simpleContent>
+            </xs:complexType>
+          </xs:element>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>
@@ -5860,6 +5884,8 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
     <end_datetime>2026-05-15T15:00:00Z</end_datetime>
     <location>Zaal A</location>
     <max_attendees>150</max_attendees>
+    <current_attendees>42</current_attendees>
+    <price currency="eur">25.00</price>
   </body>
 </message>
 ```
@@ -5942,7 +5968,7 @@ Kassa en Frontend vragen de sessielijst op van een bezoeker bij Planning op basi
 |-------|--------|-----------|
 | Regel 1 — geen `xmlns` op `<message>`, geen `<receiver>` | ✅ | Beide XSD's correct |
 | Regel 2 — `<contact>` nesting voor namen | ✅ | Response: speaker heeft `<contact><first_name>/<last_name>` |
-| Regel 3 — valuta op geldbedragen | ✅ | Geen geldbedragen in dit bericht |
+| Regel 3 — valuta op geldbedragen | ✅ | Response: `<price currency="eur">` per sessie (optioneel; afwezig = gratis of onbekend) |
 | Regel 4 — `date_of_birth` i.p.v. `age` | ✅ | Geen leeftijdsveld |
 | Regel 5 — Master UUID (`identity_uuid`) | ✅ | Gebruikt `UUIDType` patroon |
 | Regel 6 — adres splitsing | ✅ | Geen adresvelden |
@@ -6120,6 +6146,16 @@ Kassa en Frontend vragen de sessielijst op van een bezoeker bij Planning op basi
                           </xs:element>
                           <xs:element name="max_attendees"     type="xs:positiveInteger"/>
                           <xs:element name="current_attendees" type="xs:nonNegativeInteger"/>
+                          <!-- Price the attendee owes for this session (optional; absent = free or unknown) -->
+                          <xs:element name="price" minOccurs="0">
+                            <xs:complexType>
+                              <xs:simpleContent>
+                                <xs:extension base="xs:decimal">
+                                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                                </xs:extension>
+                              </xs:simpleContent>
+                            </xs:complexType>
+                          </xs:element>
                           <xs:element name="speaker" minOccurs="0">
                             <xs:complexType>
                               <xs:sequence>
@@ -6201,6 +6237,7 @@ Kassa en Frontend vragen de sessielijst op van een bezoeker bij Planning op basi
         <status>published</status>
         <max_attendees>120</max_attendees>
         <current_attendees>45</current_attendees>
+        <price currency="eur">0.00</price>
         <speaker>
           <identity_uuid>f9a38d2e-5c4b-6e7f-0a1b-234567890bcd</identity_uuid>
           <contact>
@@ -6221,6 +6258,7 @@ Kassa en Frontend vragen de sessielijst op van een bezoeker bij Planning op basi
         <status>published</status>
         <max_attendees>30</max_attendees>
         <current_attendees>12</current_attendees>
+        <price currency="eur">75.00</price>
       </session>
     </sessions>
   </body>
