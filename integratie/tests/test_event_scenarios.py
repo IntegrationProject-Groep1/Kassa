@@ -145,10 +145,14 @@ class TestStory6LeaseIntegration:
     @patch('sender.send_typed_message', return_value=True)
     def test_registration_with_topup_no_active_lease(self, mock_send, poller):
         """
-        Scenario: visitor pays registration + topup but no lease is active yet.
+        Scenario: visitor pays registration + top-up but no lease is active yet
+        (visitor has NOT scanned their QR code before paying).
 
-        wallet_balance_update must NOT carry authority/status fields (lease is
-        granted later by CRM after the wallet_lease_request response).
+        NEW BEHAVIOUR (lease-aware top-up):
+        - payment_registered_registration + payment_status are sent (Story 6).
+        - Top-up amount is PARKED in x_pending_topup_balance — NOT applied yet.
+        - wallet_balance_update is NOT sent (we don't own the balance yet).
+        - The balance update will happen when wallet_lease_grant arrives from CRM.
         """
         customer = _make_customer(balance=0.0, lease=False)
         order = _make_order(order_id=201, total=30.0)
@@ -159,26 +163,35 @@ class TestStory6LeaseIntegration:
             [{'name': 'Inschrijvingskassa'}],
             [{'id': 1201, 'product_id': [5, 'Topup 10'], 'price_subtotal_incl': 10.0}],
             [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],
-            True,
-            True,
-            10.0,   # new balance
-            True,
-            True,
-            True,
+            True,   # res.partner write x_outstanding_amount
+            True,   # pos.order send_partner_bus_event
+            True,   # res.partner write x_pending_topup_balance  ← parked, not applied
+            True,   # pos.order write x_wallet_updated
+            True,   # pos.order write x_payment_message_id
+            True,   # pos.order write x_rabbitmq_sent
         ]
 
         poller.process_order(order)
 
         sent_types = [c[0][0] for c in mock_send.call_args_list]
         assert 'payment_registered_registration' in sent_types
-        assert 'wallet_balance_update' in sent_types
+        # wallet_balance_update must NOT be sent — balance unknown until lease grant
+        assert 'wallet_balance_update' not in sent_types
 
-        balance_call = next(c for c in mock_send.call_args_list if c[0][0] == 'wallet_balance_update')
-        xml_str = balance_call[0][1]
-        tree = ET.fromstring(xml_str)
-        body = tree.find('body')
-        assert body.find('authority') is None
-        assert body.find('status') is None
+        # action_add_wallet_amount must NOT be called — we don't own the balance
+        odoo_methods = [
+            c[0][4] for c in poller.models.execute_kw.call_args_list if len(c[0]) > 4
+        ]
+        assert 'action_add_wallet_amount' not in odoo_methods
+
+        # x_pending_topup_balance must have been written
+        pending_writes = [
+            c for c in poller.models.execute_kw.call_args_list
+            if len(c[0]) > 4 and c[0][4] == 'write'
+            and c[0][3] == 'res.partner'
+            and 'x_pending_topup_balance' in (c[0][5][1] if len(c[0][5]) > 1 else {})
+        ]
+        assert len(pending_writes) == 1
 
     @patch('sender.send_typed_message', return_value=True)
     def test_registration_without_topup_does_not_send_wallet_update(self, mock_send, poller):
@@ -317,18 +330,22 @@ class TestComplexEventScenarios:
             sent_types = [c[0][0] for c in mock_send.call_args_list]
             assert 'payment_registered_registration' in sent_types
             assert 'payment_status' in sent_types
-            assert 'wallet_balance_update' in sent_types
+            # wallet_balance_update NOT sent: lease was requested but not yet granted
+            # (visitor scanned → wallet_lease_request sent, but grant hasn't arrived)
+            assert 'wallet_balance_update' not in sent_types
 
     @patch('sender.send_typed_message', return_value=True)
     def test_scenario_race_condition_topup_and_lease_grant(self, mock_send, poller, odoo):
         """
-        Scenario: Atomic Integrity
+        Scenario: Top-up after lease is fully granted (happy path).
+        Lease is active + x_lease_id is set → action_add_wallet_amount called immediately.
         """
         uid, models = odoo
         poller.models = models
 
         topup_order = _make_order(order_id=43, total=10.0)
-        customer = _make_customer(balance=50.0)
+        # lease=True → x_lease_active=True AND x_lease_id='L-001' → fully granted
+        customer = _make_customer(balance=50.0, lease=True)
 
         models.execute_kw.side_effect = [
             [customer],
@@ -337,15 +354,17 @@ class TestComplexEventScenarios:
             [{'id': 1043, 'product_id': [8, 'Top-up'], 'qty': 1, 'price_unit': 10.0, 'price_subtotal_incl': 10.0}],
             [{'id': 8, 'x_is_topup': True, 'pos_categ_ids': []}],
             [], [],
-            [{"payment_method_id": [1, "Cash"], "amount": 10.0}],
-            60.0,
-            True,
-            True,
+            [{'payment_method_id': [1, 'Cash'], 'amount': 10.0}],
+            60.0,   # action_add_wallet_amount → new balance
+            True,   # pos.order write x_wallet_updated
+            True,   # _increment_lease_tx_count
+            True,   # pos.order write x_payment_message_id
+            True,   # pos.order write x_rabbitmq_sent
         ]
 
         poller.process_order(topup_order)
         calls = [c[0][4] for c in models.execute_kw.call_args_list if len(c[0]) > 4]
-        assert "action_add_wallet_amount" in calls
+        assert 'action_add_wallet_amount' in calls
 
     @patch('sender.send_typed_message', return_value=True)
     def test_scenario_active_lease_consumption_and_refund(self, mock_send, poller, odoo):

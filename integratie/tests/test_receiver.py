@@ -236,6 +236,161 @@ class TestProcessNewRegistration:
         assert vals["vat"] == "BE0123"
 
 
+# ── process_wallet_lease_grant ────────────────────────────────────────────────
+
+class TestProcessWalletLeaseGrant:
+    def _make_grant_xml(self, payment_due=None):
+        payment_due_el = (
+            f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>'
+            if payment_due is not None else ""
+        )
+        return ET.fromstring(
+            "<message><header/><body>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440000</identity_uuid>"
+            '<current_balance currency="eur">50.00</current_balance>'
+            "<lease_id>LEASE-001</lease_id>"
+            f"{payment_due_el}"
+            "</body></message>"
+        )
+
+    def test_grant_with_amount_due_sets_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],  # search_read
+            True,   # write
+            True,   # bus event
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        written_vals = write_call[0][5][1]
+        assert written_vals["x_outstanding_amount"] == 25.0
+        assert written_vals["x_wallet_balance"] == 50.0
+        assert written_vals["x_lease_active"] is True
+
+    def test_grant_without_amount_due_does_not_set_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],  # search_read
+            True,   # write
+            True,   # bus event
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        written_vals = write_call[0][5][1]
+        assert "x_outstanding_amount" not in written_vals
+
+    def test_grant_publishes_bus_event(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],
+            True,
+            True,
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+
+    def test_grant_unknown_partner_logs_warning(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[]]  # search_read → not found
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+        assert models.execute_kw.call_count == 1  # only the search, no write
+
+
+# ── _ensure_session_product ────────────────────────────────────────────────────
+
+class TestEnsureSessionProduct:
+    def test_creates_product_when_not_found(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],          # search_read product.template → not found
+            [{"id": 10}],  # search_read pos.category "Sessions"
+            42,          # create product.template → new id
+        ]
+        receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
+
+        create_call = models.execute_kw.call_args_list[2]
+        assert create_call[0][3] == "product.template"
+        assert create_call[0][4] == "create"
+        vals = create_call[0][5][0]
+        assert vals["name"] == "Workshop: IoT met Python"
+        assert vals["available_in_pos"] is True
+        assert vals["type"] == "consu"
+        assert vals["list_price"] == 0.0
+
+    def test_skips_when_product_already_exists(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7}],  # search_read product.template → found
+        ]
+        receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
+
+        # Only one XML-RPC call (the search); no create
+        assert models.execute_kw.call_count == 1
+
+    def test_new_registration_with_session_title_calls_ensure_product(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],              # search_read res.partner → not found
+            99,              # create partner
+            [],              # search_read product.template → not found
+            [{"id": 10}],   # search_read pos.category
+            55,              # create product
+            True,            # pos.order.send_partner_bus_event
+        ]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>t@t.com</email>"
+            "<contact><first_name>Jan</first_name><last_name>Jansen</last_name></contact>"
+            "<type>private</type>"
+            "<session_title>Workshop: IoT met Python</session_title>"
+            "<payment_due><amount currency=\"eur\">25.00</amount><status>unpaid</status></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        # Verify product creation was called with the correct session title
+        product_create = next(
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template" and c[0][4] == "create"
+        )
+        assert product_create[0][5][0]["name"] == "Workshop: IoT met Python"
+
+    def test_new_registration_without_session_title_skips_product(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],   # search_read res.partner → not found
+            99,   # create partner
+            True,  # bus event
+        ]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>t@t.com</email>"
+            "<contact><first_name>Jan</first_name><last_name>Jansen</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><amount currency=\"eur\">25.00</amount><status>unpaid</status></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        # No product.template calls
+        product_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template"
+        ]
+        assert product_calls == []
+
+
 # ── process_profile_update ─────────────────────────────────────────────────────
 
 class TestProcessProfileUpdate:

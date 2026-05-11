@@ -36,6 +36,7 @@ import uuid
 import sender  # Import the sender module
 from monitoring import monitor
 from config_utils import require_env
+import identity_client  # Used for last-resort x_user_id resolution via email
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -215,7 +216,8 @@ class OrderPoller:
 
             base_fields = [
                 'id', 'name', 'email', 'is_company', 'parent_id', 'x_badge_id',
-                'x_wallet_balance', 'vat', 'street', 'city', 'zip', 'country_id',
+                'x_wallet_balance', 'x_pending_topup_balance',
+                'vat', 'street', 'city', 'zip', 'country_id',
                 'x_lease_active', 'x_lease_id', 'x_lease_transaction_count',
             ]
             try:
@@ -264,6 +266,51 @@ class OrderPoller:
                     # Use parent's country if child has none
                     if not info.get('country_code') and parent_data.get('country_code'):
                         info['country_code'] = parent_data['country_code']
+
+            # ── Last-resort x_user_id resolution (Optie C) ────────────────────
+            # If the partner has no master_uuid (x_user_id) but does have an email,
+            # ask the Identity Service for the UUID. This handles edge cases where
+            # a QR-code scan or manual Odoo partner creation bypassed the CRM
+            # new_registration flow. Should never happen in normal operation.
+            if not info.get('x_user_id') and info.get('email'):
+                email = info['email'].strip()
+                logger.warning(
+                    "⚠️ [IDENTITY FALLBACK] Partner %s has no x_user_id — "
+                    "looking up master_uuid via email '%s' (last resort)",
+                    partner_id, email
+                )
+                try:
+                    identity_result = identity_client.lookup_by_email(email)
+                    if identity_result and identity_result.get('master_uuid'):
+                        master_uuid = identity_result['master_uuid']
+                        # Write master_uuid back to Odoo so future lookups are fast
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[partner_id], {'x_user_id': master_uuid}]
+                        )
+                        info['x_user_id'] = master_uuid
+                        logger.info(
+                            "✅ [IDENTITY FALLBACK] Resolved x_user_id=%s for partner %s via email",
+                            master_uuid, partner_id
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ [IDENTITY FALLBACK] Identity Service returned no UUID for email '%s'",
+                            email
+                        )
+                except identity_client.IdentityUnavailableError as e:
+                    logger.warning(
+                        "⚠️ [IDENTITY FALLBACK] Identity Service unreachable for partner %s: %s"
+                        " — continuing without x_user_id",
+                        partner_id, e
+                    )
+                except Exception as e:
+                    logger.error(
+                        "❌ [IDENTITY FALLBACK] Unexpected error resolving UUID for partner %s: %s",
+                        partner_id, e
+                    )
+            # ──────────────────────────────────────────────────────────────────
 
             # Populate cache
             if hasattr(self, '_customer_cache'):
@@ -362,35 +409,86 @@ class OrderPoller:
             if (
                 self._last_consumption_has_topup
                 and customer_info
-                and customer_info.get('x_badge_id')
+                and customer_info.get('x_user_id')  # QR-code flow: every visitor has master_uuid
                 and not order.get('x_wallet_updated')
             ):
                 try:
                     topup_amount = float(self._last_consumption_topup_amount or 0.0)
-                    # BEST PRACTICE: Use action_add_wallet_amount for atomic balance updates
-                    # to prevent overwriting active lease balances from CRM.
-                    new_balance = self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'pos.order', 'action_add_wallet_amount',
-                        [customer_info['id'], topup_amount]
-                    )
-                    self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'pos.order', 'write',
-                        [[order_id], {'x_wallet_updated': True}]
-                    )
-
                     lease_active = customer_info.get('x_lease_active')
-                    wallet_xml = sender.build_wallet_balance_update_xml(
-                        identity_uuid=customer_info.get('x_user_id'),
-                        new_balance=new_balance,
-                        authority="kassa" if lease_active else None,
-                        status="active" if lease_active else None,
-                    )
-                    wallet_sent = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
-                    all_sent = all_sent and wallet_sent
-                    if lease_active:
+                    lease_id = customer_info.get('x_lease_id') or ''
+                    lease_fully_granted = lease_active and bool(lease_id)
+
+                    if lease_fully_granted:
+                        # ── Happy path: Kassa is the authoritative balance owner ──────────
+                        # Lease was fully granted by CRM (x_lease_id is set).
+                        # Safe to add to x_wallet_balance and immediately inform frontend.
+                        new_balance = self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.order', 'action_add_wallet_amount',
+                            [customer_info['id'], topup_amount]
+                        )
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.order', 'write',
+                            [[order_id], {'x_wallet_updated': True}]
+                        )
+                        wallet_xml = sender.build_wallet_balance_update_xml(
+                            identity_uuid=customer_info.get('x_user_id'),
+                            new_balance=new_balance,
+                            authority='kassa',
+                            status='active',
+                        )
+                        wallet_sent = sender.send_typed_message(
+                            'wallet_balance_update', wallet_xml, record_id=order_id
+                        )
+                        all_sent = all_sent and wallet_sent
                         self._increment_lease_tx_count(customer_info)
+                        logger.info(
+                            "✅ Top-up €%.2f applied for partner %s (lease granted). New balance: €%.2f",
+                            topup_amount, customer_info['id'], new_balance
+                        )
+                    else:
+                        # ── Race condition / pre-lease path ───────────────────────────────
+                        # Visitor scanned QR (x_lease_active=True) but wallet_lease_grant
+                        # from CRM has not yet arrived (x_lease_id still empty), OR the
+                        # visitor has not scanned yet (x_lease_active=False).
+                        #
+                        # We do NOT update x_wallet_balance yet — that value will be SET
+                        # (not added) when wallet_lease_grant arrives with the CRM's
+                        # authoritative balance, which would wipe our addition.
+                        #
+                        # Instead, we park the top-up amount in x_pending_topup_balance.
+                        # The wallet_lease_grant handler (receiver.py) reads this field,
+                        # merges it with the CRM balance, clears it, and then sends the
+                        # correct wallet_balance_update to the frontend.
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[customer_info['id']], {
+                                'x_pending_topup_balance': (
+                                    float(customer_info.get('x_pending_topup_balance') or 0.0)
+                                    + topup_amount
+                                )
+                            }]
+                        )
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'pos.order', 'write',
+                            [[order_id], {'x_wallet_updated': True}]
+                        )
+                        if lease_active:
+                            logger.info(
+                                "⏳ Top-up €%.2f parked as pending for partner %s "
+                                "(lease requested, awaiting wallet_lease_grant from CRM).",
+                                topup_amount, customer_info['id']
+                            )
+                        else:
+                            logger.warning(
+                                "⚠️ Top-up €%.2f parked as pending for partner %s "
+                                "(no active lease — visitor has not scanned yet). "
+                                "Balance will be reconciled when lease is granted.",
+                                topup_amount, customer_info['id']
+                            )
                 except Exception as e:
                     logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
                     all_sent = False

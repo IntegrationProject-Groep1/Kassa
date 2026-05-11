@@ -365,8 +365,10 @@ _OUTGOING_SCHEMA_MAP = {
     "badge_assigned": _SCHEMA_DIR / "schema_badge_assigned.xsd",
     "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
     "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
-    "wallet_lease_request":  _SCHEMA_DIR / "schema_wallet_lease_request.xsd",
-    "wallet_lease_return":   _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
+    "wallet_lease_request":    _SCHEMA_DIR / "schema_wallet_lease_request.xsd",
+    "wallet_lease_return":     _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
+    "user_sessions_request":   _SCHEMA_DIR / "schema_user_sessions_request.xsd",
+    "user_sessions_response":  _SCHEMA_DIR / "schema_user_sessions_response.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
     "log": _SCHEMA_DIR / "schema_log.xsd",
 }
@@ -724,6 +726,15 @@ def build_wallet_lease_request_xml(identity_uuid: str, badge_id: Optional[str] =
     ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
     if badge_id:
         ET.SubElement(body, "badge_id").text = str(badge_id)
+    return _to_xml(root)
+
+
+def build_user_sessions_request_xml(identity_uuid: str, correlation_id: str) -> str:
+    """Build user_sessions_request: Kassa asks Planning for sessions of a visitor (RPC)."""
+    root = ET.Element("message")
+    _make_header(root, "user_sessions_request", correlation_id=correlation_id)
+    body = ET.SubElement(root, "body")
+    ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
     return _to_xml(root)
 
 

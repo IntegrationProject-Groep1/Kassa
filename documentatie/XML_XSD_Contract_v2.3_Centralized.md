@@ -12,6 +12,17 @@
 
 ---
 
+## Changelog
+
+| Datum | Versie | Wijziging |
+|-------|--------|-----------|
+| 2026-05-11 | v2.3 | **Secties 19.2 & 19.5 bijgewerkt** — `session_view_response` uitgebreid met optioneel `<price currency="eur">` per sessie (Rule 3 ✅). `session_update_request` uitgebreid met optioneel `<current_attendees>` en `<price currency="eur">`. Voorbeeld XML's bijgewerkt. |
+| 2026-05-11 | v2.3 | **Sectie 19.7 bijgewerkt** — `user_sessions_response` XSD uitgebreid met optioneel `<price currency="eur">` element per sessie (Rule 3 ✅). Voorbeeld XML en regelcontrole bijgewerkt. |
+| 2026-05-11 | v2.3 | **Sectie 19.7 toegevoegd** — `user_sessions_request` / `user_sessions_response` RPC (Kassa & Frontend → Planning). Quick reference tabellen voor Kassa, Frontend en Planning bijgewerkt. Queue/exchange overzicht uitgebreid met routing keys voor dit RPC-paar. Globale regelcontrole: alle 6 regels geslaagd. Request-XSD uitgebreid met `source="frontend"` zodat zowel Kassa als Frontend dit RPC-bericht kunnen versturen. |
+| 2026-05-11 | v2.3 | **Sectie 26.2 bijgewerkt** — `wallet_lease_grant` XSD uitgebreid met optioneel `<payment_due>` element (openstaande inschrijvingskosten bezoeker). Bevat `<amount currency="eur">` (Rule 3 ✅) en optionele `<status>` (unpaid/paid). Voorbeeld XML bijgewerkt. |
+
+---
+
 ##  QUICK REFERENCE — Per Team: Wat ontvang jij? Wat verstuur je?
 
 > ### 🛑 PROJECT-WIDE RULE: THE SIDECAR PRINCIPLE
@@ -32,6 +43,7 @@
 | **VERZENDT** | `invoice_request` | → CRM | [6.5](#65-invoice_request-kassa--crm) |
 | **VERZENDT** | `payment_registered` | → CRM | [6.6](#66-payment_registered-kassa--rabbitmq) |
 | **VERZENDT** | `payment_status`, `wallet_balance_update` | → Frontend | [18](#18-frontend--kassa-direct-flows) |
+| **RPC** | `user_sessions_request` / `user_sessions_response` | ↔ Planning | [19.7](#197-user_sessions_request--user_sessions_response-rpc) |
 | **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring | [3. Heartbeat](#3-heartbeat--alle-teams--monitoring) |
 
 **XSD's referentie:** `Kassa/integratie/schemas/` — wordt als referentie-implementatie gebruikt door andere teams.
@@ -93,6 +105,7 @@
 | **ONTVANGT** | `invoice_available` | ← Facturatie | [13.5](#135-facturatie--frontend) |
 | **ONTVANGT** | `vat_validation_error` | ← CRM / Facturatie | [20.1](#201-vat_validation_error) |
 | **RPC** | `session_view_request` / `session_view_response` | ↔ Planning | [19.2](#192-session_view_request--session_view_response-rpc) |
+| **RPC** | `user_sessions_request` / `user_sessions_response` | ↔ Planning | [19.7](#197-user_sessions_request--user_sessions_response-rpc) |
 | **RPC** | `identity_request` | → Identity | [15.1-15.3](#151-rpc-request--gebruiker-aanmaken) |
 | **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring | [3](#3-heartbeat--alle-teams--monitoring) |
 
@@ -111,6 +124,7 @@
 | **ONTVANGT** | `session_update_request` | ← Frontend | [19.5](#195-session_update_request-frontend--planning) |
 | **ONTVANGT** | `session_delete_request` | ← Frontend | [19.6](#196-session_delete_request-frontend--planning) |
 | **RPC** | `session_view_request` / `session_view_response` | ↔ Frontend | [19.2](#192-session_view_request--session_view_response-rpc) |
+| **RPC** | `user_sessions_request` / `user_sessions_response` | ↔ Kassa, Frontend | [19.7](#197-user_sessions_request--user_sessions_response-rpc) |
 | **REST** | `Token Registration` | ← Frontend | [19.0](#190-oauth-token-registration-rest-api) |
 | **BROADCAST** | `heartbeat` (via sidecar) | → Monitoring | [3](#3-heartbeat--alle-teams--monitoring) |
 
@@ -230,7 +244,7 @@
 16. [RabbitMQ Queue & Exchange Overzicht](#16-rabbitmq-queue--exchange-overzicht)
 17. [Per-Team Samenvatting](#17-per-team-samenvatting)
 18. [Frontend ← Kassa (Direct flows)](#18-frontend--kassa-direct-flows)
-19. [Frontend ↔ Planning (Directe flows)](#19-frontend--planning-directe-flows) *(19.1 user_checkin, 19.2 session_view RPC, 19.3 calendar_invite, 19.4 session_create_request, 19.5 session_update_request, 19.6 session_delete_request)*
+19. [Frontend ↔ Planning (Directe flows)](#19-frontend--planning-directe-flows) *(19.1 user_checkin, 19.2 session_view RPC, 19.3 calendar_invite, 19.4 session_create_request, 19.5 session_update_request, 19.6 session_delete_request, 19.7 user_sessions RPC)*
 20. [CRM / Facturatie → Frontend: BTW Validatiefout](#20-crm--facturatie--frontend-btw-validatiefout) *(20.1 vat_validation_error)*
 21. [Migratie Roadmap (NIEUW v2.3)](#21-migratie-roadmap)
 22. [Validatie Checklist](#22-validatie-checklist-per-bericht)
@@ -5041,6 +5055,7 @@ Elke service is verantwoordelijk voor zijn eigen DLQ-afhandeling bij validatiefo
 | → Planning | `session_update_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.update` |
 | → Planning | `session_delete_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.delete` |
 | → Planning | `session_view_request` (RPC) | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` |
+| → Planning | `user_sessions_request` (RPC) | exchange: `planning.exchange`, routing: `frontend.to.planning.user_sessions_request` |
 | → Identity | `identity_request` (RPC) | queue: `identity.user.create.request` |
 | ← CRM | `payment_registered` | queue: `frontend.incoming` |
 | ← CRM / Facturatie | `vat_validation_error` | queue: `frontend.incoming` |
@@ -5048,6 +5063,7 @@ Elke service is verantwoordelijk voor zijn eigen DLQ-afhandeling bij validatiefo
 | ← Kassa | `wallet_balance_update` | queue: `frontend.payments`, routing: `kassa.frontend.wallet` |
 | ← Planning | `calendar_invite_confirmed` | reply_to queue, routing: `planning.to.frontend.calendar.invite.confirmed` |
 | ← Planning | `session_view_response` (RPC) | reply_to queue, routing: `planning.to.frontend.session.view.response` |
+| ← Planning | `user_sessions_response` (RPC) | reply_to queue, routing: `planning.to.frontend.user_sessions_response` |
 | ← Planning | `session_created` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.created` |
 | ← Planning | `session_updated` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.updated` |
 | ← Planning | `session_deleted` | exchange: `planning.exchange`, routing: `planning.to.frontend.session.deleted` |
@@ -5075,6 +5091,8 @@ Elke service is verantwoordelijk voor zijn eigen DLQ-afhandeling bij validatiefo
 | ← IoT / Kassa | `badge_scanned` | queue: `kassa.incoming` |
 | ← CRM | `new_registration`, `profile_update`, `cancel_registration` | queue: `kassa.incoming` |
 | ← Frontend | `event_ended` | queue: `kassa.incoming` |
+| → Planning | `user_sessions_request` (RPC) | exchange: `planning.exchange`, routing: `kassa.to.planning.user_sessions_request` |
+| ← Planning | `user_sessions_response` (RPC) | reply_to queue, routing: `planning.to.kassa.user_sessions_response` |
 
 ---
 
@@ -5095,6 +5113,9 @@ Elke service is verantwoordelijk voor zijn eigen DLQ-afhandeling bij validatiefo
 | ← Frontend | `session_update_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.update` |
 | ← Frontend | `session_delete_request` | exchange: `planning.exchange`, routing: `frontend.to.planning.session.delete` |
 | ← Frontend | `session_view_request` (RPC) | exchange: `planning.exchange`, routing: `frontend.to.planning.session.view` |
+| ← Kassa | `user_sessions_request` (RPC) | exchange: `planning.exchange`, routing: `kassa.to.planning.user_sessions_request` |
+| ← Frontend | `user_sessions_request` (RPC) | exchange: `planning.exchange`, routing: `frontend.to.planning.user_sessions_request` |
+| → Kassa/Frontend | `user_sessions_response` (RPC) | reply_to queue, routing: `planning.to.kassa.user_sessions_response` / `planning.to.frontend.user_sessions_response` |
 | ← CRM | `cancel_registration` | exchange: `calendar.exchange`, routing: `crm.to.planning.cancel_registration` |
 
 **Belangrijk:** Gebruikt Master UUID via `correlation_id` voor alle sessie-gerelateerde berichten. `correlation_id` = de `session_uuid` uit de Planning database.
@@ -5439,6 +5460,16 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
                           <xs:element name="status"          type="xs:string"/>
                           <xs:element name="max_attendees"   type="xs:integer"/>
                           <xs:element name="current_attendees" type="xs:integer"/>
+                          <!-- Price per session (optional; absent = free or unknown) -->
+                          <xs:element name="price" minOccurs="0">
+                            <xs:complexType>
+                              <xs:simpleContent>
+                                <xs:extension base="xs:decimal">
+                                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                                </xs:extension>
+                              </xs:simpleContent>
+                            </xs:complexType>
+                          </xs:element>
                           <xs:element name="speaker" minOccurs="0">
                             <xs:complexType>
                               <xs:sequence>
@@ -5519,6 +5550,7 @@ Frontend vraagt sessiedetails op bij Planning. Planning antwoordt synchroon via 
         <status>published</status>
         <max_attendees>120</max_attendees>
         <current_attendees>0</current_attendees>
+        <price currency="eur">0.00</price>
         <speaker>
           <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
           <contact>
@@ -5812,10 +5844,21 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
           <xs:element name="title"          type="xs:string"/>
           <xs:element name="start_datetime" type="xs:dateTime"/>
           <xs:element name="end_datetime"   type="xs:dateTime"/>
-          <xs:element name="location"       type="xs:string" minOccurs="0"/>
-          <xs:element name="session_type"   type="xs:string" minOccurs="0"/>
-          <xs:element name="status"         type="xs:string" minOccurs="0"/>
-          <xs:element name="max_attendees"  type="xs:integer" minOccurs="0"/>
+          <xs:element name="location"           type="xs:string" minOccurs="0"/>
+          <xs:element name="session_type"       type="xs:string" minOccurs="0"/>
+          <xs:element name="status"             type="xs:string" minOccurs="0"/>
+          <xs:element name="max_attendees"      type="xs:integer" minOccurs="0"/>
+          <xs:element name="current_attendees"  type="xs:nonNegativeInteger" minOccurs="0"/>
+          <!-- Price per session (optional; absent = free or unknown) -->
+          <xs:element name="price" minOccurs="0">
+            <xs:complexType>
+              <xs:simpleContent>
+                <xs:extension base="xs:decimal">
+                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                </xs:extension>
+              </xs:simpleContent>
+            </xs:complexType>
+          </xs:element>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>
@@ -5841,6 +5884,8 @@ Wanneer een administrator in Drupal een bestaande sessie wijzigt.
     <end_datetime>2026-05-15T15:00:00Z</end_datetime>
     <location>Zaal A</location>
     <max_attendees>150</max_attendees>
+    <current_attendees>42</current_attendees>
+    <price currency="eur">25.00</price>
   </body>
 </message>
 ```
@@ -5898,6 +5943,324 @@ Wanneer een administrator in Drupal een sessie verwijdert.
   <body>
     <session_id>sess-uuid-001</session_id>
     <reason>cancelled</reason>
+  </body>
+</message>
+```
+
+---
+
+### 19.7 `user_sessions_request` / `user_sessions_response` (RPC)
+
+Kassa en Frontend vragen de sessielijst op van een bezoeker bij Planning op basis van zijn/haar `identity_uuid`. Dit wordt getriggerd wanneer een QR-code wordt gescand (Kassa) of wanneer de Frontend een overzicht wil van de ingeschreven sessies van een gebruiker. Planning antwoordt synchroon via het RPC-patroon op de `reply_to` queue.
+
+- **Request exchange (Kassa):** `planning.exchange`
+- **Request routing key (Kassa):** `kassa.to.planning.user_sessions_request`
+- **Request exchange (Frontend):** `planning.exchange`
+- **Request routing key (Frontend):** `frontend.to.planning.user_sessions_request`
+- **Response routing key:** beantwoord op `reply_to` queue — `correlation_id` matcht de request
+
+> **XSD-bestand (Kassa):** `Kassa/integratie/schemas/schema_user_sessions_request.xsd`  
+> **XSD-bestand (Planning):** `Kassa/integratie/schemas/schema_user_sessions_response.xsd`
+
+#### Globale regelcontrole
+
+| Regel | Status | Opmerking |
+|-------|--------|-----------|
+| Regel 1 — geen `xmlns` op `<message>`, geen `<receiver>` | ✅ | Beide XSD's correct |
+| Regel 2 — `<contact>` nesting voor namen | ✅ | Response: speaker heeft `<contact><first_name>/<last_name>` |
+| Regel 3 — valuta op geldbedragen | ✅ | Response: `<price currency="eur">` per sessie (optioneel; afwezig = gratis of onbekend) |
+| Regel 4 — `date_of_birth` i.p.v. `age` | ✅ | Geen leeftijdsveld |
+| Regel 5 — Master UUID (`identity_uuid`) | ✅ | Gebruikt `UUIDType` patroon |
+| Regel 6 — adres splitsing | ✅ | Geen adresvelden |
+
+#### XSD — Request
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!--
+    user_sessions_request — Kassa / Frontend → Planning (RPC request)
+    Sent by Kassa when a visitor's QR code is scanned, or by Frontend to fetch a user's sessions.
+    Planning responds with user_sessions_response on the reply_to queue.
+    Routing key (Kassa):    kassa.to.planning.user_sessions_request
+    Routing key (Frontend): frontend.to.planning.user_sessions_request
+  -->
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+
+        <xs:element name="header">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="message_id"     type="UUIDType"/>
+              <xs:element name="timestamp"      type="xs:dateTime"/>
+              <xs:element name="source">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="kassa"/>
+                    <xs:enumeration value="frontend"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="type">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="user_sessions_request"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="version">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="2.0"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <!-- correlation_id is required for RPC reply matching -->
+              <xs:element name="correlation_id" type="UUIDType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <!-- Master UUID of the visitor whose sessions are requested -->
+              <xs:element name="identity_uuid" type="UUIDType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>
+```
+
+#### XSD — Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!--
+    user_sessions_response — Planning → Kassa (RPC response)
+    Published by Planning in reply to a user_sessions_request.
+    The correlation_id matches the request's correlation_id.
+    Routing key: planning.to.kassa.user_sessions_response
+  -->
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+
+        <xs:element name="header">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="message_id"     type="UUIDType"/>
+              <xs:element name="timestamp"      type="xs:dateTime"/>
+              <xs:element name="source">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="planning"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="type">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="user_sessions_response"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="version">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="2.0"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <!-- Must match the correlation_id from the request -->
+              <xs:element name="correlation_id" type="UUIDType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="body">
+          <xs:complexType>
+            <xs:sequence>
+              <!-- Echoes back the identity_uuid from the request -->
+              <xs:element name="identity_uuid" type="UUIDType"/>
+              <!-- ok | not_found -->
+              <xs:element name="status">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="ok"/>
+                    <xs:enumeration value="not_found"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="session_count" type="xs:nonNegativeInteger"/>
+              <xs:element name="sessions">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="session" minOccurs="0" maxOccurs="unbounded">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="session_id"        type="xs:string"/>
+                          <xs:element name="title"             type="xs:string"/>
+                          <xs:element name="start_datetime"    type="xs:dateTime"/>
+                          <xs:element name="end_datetime"      type="xs:dateTime"/>
+                          <xs:element name="location"          type="xs:string"/>
+                          <xs:element name="session_type">
+                            <xs:simpleType>
+                              <xs:restriction base="xs:string">
+                                <xs:enumeration value="keynote"/>
+                                <xs:enumeration value="workshop"/>
+                                <xs:enumeration value="reception"/>
+                                <xs:enumeration value="other"/>
+                              </xs:restriction>
+                            </xs:simpleType>
+                          </xs:element>
+                          <xs:element name="status">
+                            <xs:simpleType>
+                              <xs:restriction base="xs:string">
+                                <xs:enumeration value="draft"/>
+                                <xs:enumeration value="published"/>
+                                <xs:enumeration value="cancelled"/>
+                              </xs:restriction>
+                            </xs:simpleType>
+                          </xs:element>
+                          <xs:element name="max_attendees"     type="xs:positiveInteger"/>
+                          <xs:element name="current_attendees" type="xs:nonNegativeInteger"/>
+                          <!-- Price the attendee owes for this session (optional; absent = free or unknown) -->
+                          <xs:element name="price" minOccurs="0">
+                            <xs:complexType>
+                              <xs:simpleContent>
+                                <xs:extension base="xs:decimal">
+                                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                                </xs:extension>
+                              </xs:simpleContent>
+                            </xs:complexType>
+                          </xs:element>
+                          <xs:element name="speaker" minOccurs="0">
+                            <xs:complexType>
+                              <xs:sequence>
+                                <xs:element name="identity_uuid" type="UUIDType" minOccurs="0"/>
+                                <xs:element name="contact">
+                                  <xs:complexType>
+                                    <xs:sequence>
+                                      <xs:element name="first_name" type="xs:string"/>
+                                      <xs:element name="last_name"  type="xs:string"/>
+                                    </xs:sequence>
+                                  </xs:complexType>
+                                </xs:element>
+                                <xs:element name="organisation" type="xs:string" minOccurs="0"/>
+                                <xs:element name="email"        type="xs:string" minOccurs="0"/>
+                              </xs:sequence>
+                            </xs:complexType>
+                          </xs:element>
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>
+```
+
+#### Voorbeeld XML — Request (Kassa)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</message_id>
+    <timestamp>2026-05-11T10:30:00Z</timestamp>
+    <source>kassa</source>
+    <type>user_sessions_request</type>
+    <version>2.0</version>
+    <correlation_id>c1d2e3f4-a5b6-7890-cdef-012345678901</correlation_id>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+  </body>
+</message>
+```
+
+#### Voorbeeld XML — Response (Planning)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<message>
+  <header>
+    <message_id>b2c3d4e5-f6a7-8901-bcde-f12345678901</message_id>
+    <timestamp>2026-05-11T10:30:01Z</timestamp>
+    <source>planning</source>
+    <type>user_sessions_response</type>
+    <version>2.0</version>
+    <correlation_id>c1d2e3f4-a5b6-7890-cdef-012345678901</correlation_id>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+    <status>ok</status>
+    <session_count>2</session_count>
+    <sessions>
+      <session>
+        <session_id>sess-keynote-001</session_id>
+        <title>Keynote: AI in Healthcare</title>
+        <start_datetime>2026-05-15T14:00:00Z</start_datetime>
+        <end_datetime>2026-05-15T15:00:00Z</end_datetime>
+        <location>Aula A - Campus Jette</location>
+        <session_type>keynote</session_type>
+        <status>published</status>
+        <max_attendees>120</max_attendees>
+        <current_attendees>45</current_attendees>
+        <price currency="eur">0.00</price>
+        <speaker>
+          <identity_uuid>f9a38d2e-5c4b-6e7f-0a1b-234567890bcd</identity_uuid>
+          <contact>
+            <first_name>Sarah</first_name>
+            <last_name>Leclercq</last_name>
+          </contact>
+          <organisation>UZ Brussel</organisation>
+          <email>s.leclercq@uzbrussel.be</email>
+        </speaker>
+      </session>
+      <session>
+        <session_id>sess-workshop-042</session_id>
+        <title>Workshop: Data Governance</title>
+        <start_datetime>2026-05-15T16:00:00Z</start_datetime>
+        <end_datetime>2026-05-15T17:30:00Z</end_datetime>
+        <location>Lokaal B3 - Campus Jette</location>
+        <session_type>workshop</session_type>
+        <status>published</status>
+        <max_attendees>30</max_attendees>
+        <current_attendees>12</current_attendees>
+        <price currency="eur">75.00</price>
+      </session>
+    </sessions>
   </body>
 </message>
 ```
@@ -6495,6 +6858,22 @@ CRM bevriest de online portemonnee en geeft het saldo door aan de Kassa.
             </xs:extension></xs:simpleContent></xs:complexType>
           </xs:element>
           <xs:element name="lease_id" type="xs:string"/>
+          <!-- payment_due: total registration fees still owed by this visitor (optional) -->
+          <xs:element name="payment_due" minOccurs="0">
+            <xs:complexType><xs:sequence>
+              <xs:element name="amount">
+                <xs:complexType><xs:simpleContent><xs:extension base="xs:decimal">
+                  <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                </xs:extension></xs:simpleContent></xs:complexType>
+              </xs:element>
+              <xs:element name="status" minOccurs="0">
+                <xs:simpleType><xs:restriction base="xs:string">
+                  <xs:enumeration value="unpaid"/>
+                  <xs:enumeration value="paid"/>
+                </xs:restriction></xs:simpleType>
+              </xs:element>
+            </xs:sequence></xs:complexType>
+          </xs:element>
         </xs:sequence></xs:complexType>
       </xs:element>
     </xs:sequence></xs:complexType>
@@ -6517,6 +6896,11 @@ CRM bevriest de online portemonnee en geeft het saldo door aan de Kassa.
     <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
     <current_balance currency="eur">50.00</current_balance>
     <lease_id>LEASE-2026-XYZ</lease_id>
+    <!-- payment_due is optional — omit if no outstanding fees -->
+    <payment_due>
+      <amount currency="eur">25.00</amount>
+      <status>unpaid</status>
+    </payment_due>
   </body>
 </message>
 ```

@@ -255,6 +255,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("res.partner", "x_badge_id", "IoT Badge ID", "char", {"index": True}),
         ("res.partner", "x_badge_sent", "Badge Assignment Sent to CRM", "boolean", {}),
         ("res.partner", "x_wallet_balance", "Visitor Wallet Balance", "float", {}),
+        ("res.partner", "x_pending_topup_balance", "Pending Top-up (pre-lease)", "float", {}),
         ("res.partner", "x_date_of_birth", "Date of Birth", "date", {}),
         ("res.partner", "x_session_id", "Session ID", "char", {}),
         ("res.partner", "x_session_title", "Session Title", "char", {}),
@@ -456,7 +457,6 @@ def ensure_demo_products(
     odoo_pass: str,
     topup_cat_id: int,
     drinks_cat_id: int,
-    reg_cat_id: int,
     tax_map: dict[float, int],
 ) -> None:
     common, models = _common_and_models(odoo_url)
@@ -471,7 +471,6 @@ def ensure_demo_products(
         ("Water", "DRINK-002", 1.80, drinks_cat_id, 6.0, {}),
         ("Coffee", "DRINK-003", 2.20, drinks_cat_id, 6.0, {}),
         ("Beer", "DRINK-004", 3.00, drinks_cat_id, 21.0, {"x_age_restricted": True}),
-        ("Inschrijving", "REG-001", 0.0, reg_cat_id, 0.0, {}),
     ]
 
     for name, ref, price, pos_cat_id, tax_rate, extra_vals in products:
