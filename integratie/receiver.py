@@ -187,6 +187,40 @@ def _publish_partner_bus_event(
 
 # ── Business logic per message type ───────────────────────────────────────────
 
+def _ensure_session_product(uid: int, models: OdooModelsProxy, session_title: str) -> None:
+    """Find or create a POS-available product for the given session title (idempotent)."""
+    existing = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "product.template", "search_read",
+        [[["name", "=", session_title], ["available_in_pos", "=", True]]],
+        {"fields": ["id"], "limit": 1},
+    )
+    if existing:
+        logger.debug("[SESSION_PRODUCT] Already exists: '%s'", session_title)
+        return
+
+    # Look up the Sessions POS category created by odoo_setup.
+    categ = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "pos.category", "search_read",
+        [[["name", "=", "Sessions"]]],
+        {"fields": ["id"], "limit": 1},
+    )
+    categ_id = categ[0]["id"] if categ else False
+
+    vals: Dict[str, Any] = {
+        "name": session_title,
+        "type": "consu",
+        "list_price": 0.0,
+        "available_in_pos": True,
+    }
+    if categ_id:
+        vals["pos_categ_ids"] = [(6, 0, [categ_id])]
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "create", [vals])
+    logger.info("[SESSION_PRODUCT] ✓ Created POS product: '%s'", session_title)
+
+
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a new_registration message (Flow 1)."""
     body = root.find("body")
@@ -284,6 +318,10 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
+
+    if session_title:
+        _ensure_session_product(uid, models, session_title)
+
     _publish_partner_bus_event(
         uid, models, partner_id,
         amount, status, partner_vals["name"],
