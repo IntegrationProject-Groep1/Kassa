@@ -271,6 +271,26 @@ patch(PosStore.prototype, {
  *      but pay directly).
  */
 patch(PaymentScreen.prototype, {
+    setup() {
+        super.setup(...arguments);
+        try {
+            const order = this.currentOrder;
+            if (!order?.to_invoice) return;
+            const lines = order.get_paymentlines?.() || order.payment_ids || [];
+            if (lines.length > 0) return;
+            const pm = (
+                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
+                this.pos.payment_methods || []
+            ).find((m) => m.name === "Customer Account");
+            if (pm) {
+                this.addNewPaymentLine(pm);
+                console.log("[Kassa] Auto-added Customer Account for pre-set invoice (company member).");
+            }
+        } catch (err) {
+            console.warn("[Kassa] Could not auto-add Customer Account on PaymentScreen entry:", err);
+        }
+    },
+
     addNewPaymentLine(paymentMethod) {
         const result = super.addNewPaymentLine(...arguments);
         try {

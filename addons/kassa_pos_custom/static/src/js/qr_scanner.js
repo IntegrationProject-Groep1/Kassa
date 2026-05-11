@@ -185,6 +185,18 @@ export class QrScanButton extends Component {
                 } else {
                     order.partner_id = posPartner || partner;
                 }
+
+                if (partner.parent_id) {
+                    try {
+                        if (order.set_to_invoice) {
+                            order.set_to_invoice(true);
+                        } else {
+                            order.to_invoice = true;
+                        }
+                    } catch (err) {
+                        console.warn("[Kassa] Could not auto-enable invoice for company member:", err);
+                    }
+                }
             }
 
             this.state.open = false;
