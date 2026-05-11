@@ -223,3 +223,112 @@ class TestXSDCompliance:
         )
         valid, errors = validate_xml(xml, "schema_wallet_balance_update.xsd")
         assert valid, f"XSD Error in wallet_balance_update (no authority/status): {errors}"
+
+    def test_user_sessions_request_compliance(self):
+        correlation_id = str(uuid.uuid4())
+        xml = sender.build_user_sessions_request_xml(
+            identity_uuid=str(uuid.uuid4()),
+            correlation_id=correlation_id,
+        )
+        valid, errors = validate_xml(xml, "schema_user_sessions_request.xsd")
+        assert valid, f"XSD Error in user_sessions_request: {errors}"
+
+    def test_user_sessions_response_ok_compliance(self):
+        """Planning response with one session must pass XSD."""
+        corr = uuid.uuid4()
+        identity = uuid.uuid4()
+        speaker_uuid = uuid.uuid4()
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-15T09:00:01Z</timestamp>"
+            "<source>planning</source>"
+            "<type>user_sessions_response</type>"
+            "<version>2.0</version>"
+            f"<correlation_id>{corr}</correlation_id>"
+            "</header><body>"
+            f"<identity_uuid>{identity}</identity_uuid>"
+            "<status>ok</status>"
+            "<session_count>1</session_count>"
+            "<sessions>"
+            "<session>"
+            "<session_id>sess-001</session_id>"
+            "<title>Workshop: IoT met Python</title>"
+            "<start_datetime>2026-05-15T14:00:00Z</start_datetime>"
+            "<end_datetime>2026-05-15T16:00:00Z</end_datetime>"
+            "<location>Lokaal B3</location>"
+            "<session_type>workshop</session_type>"
+            "<status>published</status>"
+            "<max_attendees>30</max_attendees>"
+            "<current_attendees>12</current_attendees>"
+            "<speaker>"
+            f"<identity_uuid>{speaker_uuid}</identity_uuid>"
+            "<contact><first_name>Jan</first_name><last_name>Peeters</last_name></contact>"
+            "<organisation>Desideriushogeschool</organisation>"
+            "<email>jan.peeters@desiho.be</email>"
+            "</speaker>"
+            "</session>"
+            "</sessions>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_user_sessions_response.xsd")
+        assert valid, f"XSD Error in user_sessions_response (ok): {errors}"
+
+    def test_user_sessions_response_not_found_compliance(self):
+        """Planning response with status=not_found and empty sessions must pass XSD."""
+        corr = uuid.uuid4()
+        identity = uuid.uuid4()
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-15T09:00:01Z</timestamp>"
+            "<source>planning</source>"
+            "<type>user_sessions_response</type>"
+            "<version>2.0</version>"
+            f"<correlation_id>{corr}</correlation_id>"
+            "</header><body>"
+            f"<identity_uuid>{identity}</identity_uuid>"
+            "<status>not_found</status>"
+            "<session_count>0</session_count>"
+            "<sessions/>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_user_sessions_response.xsd")
+        assert valid, f"XSD Error in user_sessions_response (not_found): {errors}"
+
+    def test_user_sessions_response_no_speaker_compliance(self):
+        """Session without speaker element must pass XSD (speaker is optional)."""
+        corr = uuid.uuid4()
+        identity = uuid.uuid4()
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-15T09:00:01Z</timestamp>"
+            "<source>planning</source>"
+            "<type>user_sessions_response</type>"
+            "<version>2.0</version>"
+            f"<correlation_id>{corr}</correlation_id>"
+            "</header><body>"
+            f"<identity_uuid>{identity}</identity_uuid>"
+            "<status>ok</status>"
+            "<session_count>1</session_count>"
+            "<sessions>"
+            "<session>"
+            "<session_id>sess-002</session_id>"
+            "<title>Keynote: AI in Healthcare</title>"
+            "<start_datetime>2026-05-15T10:00:00Z</start_datetime>"
+            "<end_datetime>2026-05-15T11:00:00Z</end_datetime>"
+            "<location>Aula A</location>"
+            "<session_type>keynote</session_type>"
+            "<status>published</status>"
+            "<max_attendees>120</max_attendees>"
+            "<current_attendees>85</current_attendees>"
+            "</session>"
+            "</sessions>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_user_sessions_response.xsd")
+        assert valid, f"XSD Error in user_sessions_response (no speaker): {errors}"
