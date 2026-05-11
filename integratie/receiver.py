@@ -27,6 +27,7 @@ Duplicate detection uses an in-memory bounded cache (max 10,000 entries)
 with FIFO eviction.
 """
 
+import json
 import os
 import logging
 import threading
@@ -36,7 +37,7 @@ import defusedxml.xmlrpc
 import defusedxml.ElementTree as ET
 from xml.etree.ElementTree import Element
 from collections import OrderedDict
-from typing import Any, List, Dict, Tuple, cast
+from typing import Any, List, Dict, Optional, Tuple, cast
 from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
@@ -187,6 +188,40 @@ def _publish_partner_bus_event(
 
 # ── Business logic per message type ───────────────────────────────────────────
 
+def _ensure_session_product(uid: int, models: OdooModelsProxy, session_title: str) -> None:
+    """Find or create a POS-available product for the given session title (idempotent)."""
+    existing = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "product.template", "search_read",
+        [[["name", "=", session_title], ["available_in_pos", "=", True]]],
+        {"fields": ["id"], "limit": 1},
+    )
+    if existing:
+        logger.debug("[SESSION_PRODUCT] Already exists: '%s'", session_title)
+        return
+
+    # Look up the Sessions POS category created by odoo_setup.
+    categ = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "pos.category", "search_read",
+        [[["name", "=", "Sessions"]]],
+        {"fields": ["id"], "limit": 1},
+    )
+    categ_id = categ[0]["id"] if categ else False
+
+    vals: Dict[str, Any] = {
+        "name": session_title,
+        "type": "consu",
+        "list_price": 0.0,
+        "available_in_pos": True,
+    }
+    if categ_id:
+        vals["pos_categ_ids"] = [(6, 0, [categ_id])]
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "create", [vals])
+    logger.info("[SESSION_PRODUCT] ✓ Created POS product: '%s'", session_title)
+
+
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle a new_registration message (Flow 1)."""
     body = root.find("body")
@@ -240,7 +275,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_user_id"], "limit": 1},
+        {"fields": ["id", "name", "x_user_id", "x_session_title"], "limit": 1},
     )
 
     # Mapping note: `x_user_id` stores the canonical user identifier.
@@ -257,7 +292,16 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         "x_outstanding_amount": amount,
     }
     if session_title:
-        partner_vals["x_session_title"] = session_title
+        existing_raw = existing[0].get("x_session_title") or "" if existing else ""
+        try:
+            existing_titles = json.loads(existing_raw) if existing_raw else []
+            if not isinstance(existing_titles, list):
+                existing_titles = [existing_titles]
+        except (json.JSONDecodeError, ValueError):
+            existing_titles = [existing_raw] if existing_raw else []
+        if session_title not in existing_titles:
+            existing_titles.append(session_title)
+        partner_vals["x_session_title"] = json.dumps(existing_titles)
     if badge_id:
         partner_vals["x_badge_id"] = badge_id
     if company_id:
@@ -284,6 +328,10 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
+
+    if session_title:
+        _ensure_session_product(uid, models, session_title)
+
     _publish_partner_bus_event(
         uid, models, partner_id,
         amount, status, partner_vals["name"],
@@ -525,27 +573,48 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
     except ValueError:
         raise ValueError(f"wallet_lease_grant: invalid current_balance '{current_balance_text}'")
 
+    amount_due: Optional[float] = None
+    payment_due_el = body.find("payment_due")
+    if payment_due_el is not None:
+        amount_due = parse_xml_float(payment_due_el.find("amount"))
+
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id"], "limit": 1},
+        {"fields": ["id", "name", "x_payment_status"], "limit": 1},
     )
     if not existing:
         logger.warning("[LEASE_GRANT] No partner found for identity_uuid=%s", identity_uuid)
         return
 
+    partner = existing[0]
+    write_vals: dict = {
+        "x_wallet_balance": current_balance,
+        "x_lease_id": lease_id,
+        "x_lease_active": True,
+    }
+    if amount_due is not None:
+        write_vals["x_outstanding_amount"] = amount_due
+
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "write",
-        [[existing[0]["id"]], {
-            "x_wallet_balance": current_balance,
-            "x_lease_id": lease_id,
-            "x_lease_active": True,
-        }],
+        [[partner["id"]], write_vals],
     )
-    logger.info("[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | lease_id=%s",
-                identity_uuid, current_balance, lease_id)
+    logger.info(
+        "[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | payment_due=%s | lease_id=%s",
+        identity_uuid, current_balance,
+        f"€{amount_due:.2f}" if amount_due is not None else "not provided",
+        lease_id,
+    )
+
+    _publish_partner_bus_event(
+        uid, models, partner["id"],
+        amount_due if amount_due is not None else 0.0,
+        partner.get("x_payment_status") or "unpaid",
+        partner.get("name") or "Unknown",
+    )
 
 
 def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:

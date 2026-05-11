@@ -456,7 +456,6 @@ def ensure_demo_products(
     odoo_pass: str,
     topup_cat_id: int,
     drinks_cat_id: int,
-    reg_cat_id: int,
     tax_map: dict[float, int],
 ) -> None:
     common, models = _common_and_models(odoo_url)
@@ -471,7 +470,6 @@ def ensure_demo_products(
         ("Water", "DRINK-002", 1.80, drinks_cat_id, 6.0, {}),
         ("Coffee", "DRINK-003", 2.20, drinks_cat_id, 6.0, {}),
         ("Beer", "DRINK-004", 3.00, drinks_cat_id, 21.0, {"x_age_restricted": True}),
-        ("Inschrijving", "REG-001", 0.0, reg_cat_id, 0.0, {}),
     ]
 
     for name, ref, price, pos_cat_id, tax_rate, extra_vals in products:
