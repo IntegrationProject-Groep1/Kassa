@@ -116,16 +116,30 @@ export class QrScannerModal extends Component {
 
     // ── QR detected ──────────────────────────────────────────────────────────
 
-    async _onQrDetected(uuid) {
+    async _onQrDetected(rawValue) {
         this._stopCamera();
         this.state.phase   = "processing";
         this.state.message = "QR-code herkend, klant opzoeken...";
+
+        // Parse QR payload: new format is JSON {"identity_uuid": "...", "email": "..."},
+        // legacy format is a plain UUID string.
+        let identityUuid = rawValue;
+        let qrEmail = null;
+        try {
+            const parsed = JSON.parse(rawValue);
+            if (parsed.identity_uuid) {
+                identityUuid = parsed.identity_uuid;
+                qrEmail = parsed.email || null;
+            }
+        } catch {
+            // Plain UUID — use as-is (backward compatible)
+        }
 
         try {
             // 1. Trigger lease check + placeholder creation on the backend.
             //    The controller returns the Odoo partner_id regardless of
             //    whether the profile was already known.
-            const result = await this._callQrScanEndpoint(uuid);
+            const result = await this._callQrScanEndpoint(identityUuid, qrEmail);
 
             if (!result || result.status === "error") {
                 this._setError(result?.message || "Onbekende fout bij het opzoeken van de klant.");
@@ -183,8 +197,9 @@ export class QrScannerModal extends Component {
                 ? ` — ${sessionTitles.join(", ")}`
                 : "";
 
+            const emailNote = qrEmail ? ` (${qrEmail})` : "";
             this.notification.add(
-                `Klant geïdentificeerd: ${partner.name}${sessionNote}${leaseNote}`,
+                `Klant geïdentificeerd: ${partner.name}${emailNote}${sessionNote}${leaseNote}`,
                 { type: "success", sticky: false }
             );
         } catch (err) {
@@ -192,9 +207,11 @@ export class QrScannerModal extends Component {
         }
     }
 
-    async _callQrScanEndpoint(uuid) {
+    async _callQrScanEndpoint(identityUuid, email) {
         try {
-            return await this.rpc("/kassa/qr_scan", { identity_uuid: uuid });
+            const payload = { identity_uuid: identityUuid };
+            if (email) payload.email = email;
+            return await this.rpc("/kassa/qr_scan", payload);
         } catch (err) {
             console.error("[Kassa QR] /kassa/qr_scan call failed:", err);
             return null;

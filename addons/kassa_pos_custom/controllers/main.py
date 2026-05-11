@@ -204,7 +204,7 @@ class KassaQrController(http.Controller):
 
     @http.route("/kassa/qr_scan", type="json", auth="user", methods=["POST"], csrf=False,
                 groups="point_of_sale.group_pos_user")
-    def qr_scan(self, identity_uuid=None, **kwargs):
+    def qr_scan(self, identity_uuid=None, email=None, **kwargs):
         if not identity_uuid:
             return {"status": "error", "message": "identity_uuid is vereist."}
 
@@ -214,16 +214,18 @@ class KassaQrController(http.Controller):
         partner = env["res.partner"].search([("x_user_id", "=", identity_uuid)], limit=1)
         created = False
         if not partner:
-            partner = env["res.partner"].create({
-                "name": f"QR Bezoeker ({identity_uuid[:8]})",
-                "x_user_id": identity_uuid,
-                "customer_rank": 1,
-            })
+            name = f"QR Bezoeker ({email})" if email else f"QR Bezoeker ({identity_uuid[:8]})"
+            vals = {"name": name, "x_user_id": identity_uuid, "customer_rank": 1}
+            if email:
+                vals["email"] = email
+            partner = env["res.partner"].create(vals)
             created = True
             _logger.info(
                 "[Kassa QR] Created placeholder partner %s for uuid %s",
                 partner.id, identity_uuid,
             )
+        elif email and not partner.email:
+            partner.write({"email": email})
 
         # 2. Ask Planning for all sessions this visitor is registered for.
         sessions = _fetch_sessions_from_planning(identity_uuid)
