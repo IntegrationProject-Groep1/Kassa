@@ -233,8 +233,17 @@ class KassaQrController(http.Controller):
         # 1. Find or create partner.
         partner = env["res.partner"].search([("x_user_id", "=", identity_uuid)], limit=1)
         created = False
+        if not partner and email:
+            # Reverse lookup: UUID unknown but email matches an existing partner.
+            partner = env["res.partner"].search([("email", "=", email)], limit=1)
+            if partner:
+                partner.write({"x_user_id": identity_uuid})
+                _logger.info(
+                    "[Kassa QR] Linked uuid %s to existing partner %s via email",
+                    identity_uuid, partner.id,
+                )
         if not partner:
-            name = f"QR Bezoeker ({email})" if email else f"QR Bezoeker ({identity_uuid[:8]})"
+            name = email if email else f"QR Bezoeker ({identity_uuid[:8]})"
             vals = {"name": name, "x_user_id": identity_uuid, "customer_rank": 1}
             if email:
                 vals["email"] = email
