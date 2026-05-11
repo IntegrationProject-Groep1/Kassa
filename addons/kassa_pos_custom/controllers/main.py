@@ -111,8 +111,15 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
                     for session in body_el.findall(".//session"):
                         title = (session.findtext("title") or "").strip()
                         sid = (session.findtext("session_id") or "").strip()
+                        price_el = session.find("price")
+                        price: float | None = None
+                        if price_el is not None and price_el.text:
+                            try:
+                                price = float(price_el.text.strip())
+                            except ValueError:
+                                pass
                         if title:
-                            result.append({"session_id": sid, "title": title})
+                            result.append({"session_id": sid, "title": title, "price": price})
             except Exception as exc:
                 _logger.warning("[Kassa QR] Could not parse user_sessions_response: %s", exc)
 
@@ -245,8 +252,36 @@ class KassaQrController(http.Controller):
 
         if sessions:
             titles_json = json.dumps([s["title"] for s in sessions])
+
+            # Compute total outstanding from session prices when Planning provides them.
+            # Uses cent-based math to avoid floating-point drift across multiple sessions.
+            prices = [s["price"] for s in sessions if s.get("price") is not None]
+            total_from_planning = (
+                round(sum(round(p * 100) for p in prices) / 100, 2)
+                if prices else None
+            )
+
+            write_vals: Dict = {}
             if partner.x_session_title != titles_json:
-                partner.write({"x_session_title": titles_json})
+                write_vals["x_session_title"] = titles_json
+            if total_from_planning is not None:
+                write_vals["x_outstanding_amount"] = total_from_planning
+                write_vals["x_payment_status"] = "unpaid"
+
+            if write_vals:
+                partner.write(write_vals)
+                # Notify any POS terminal that has this partner selected.
+                try:
+                    env["pos.order"].send_partner_bus_event(
+                        partner.id,
+                        float(partner.x_outstanding_amount or 0.0),
+                        partner.x_payment_status or "unpaid",
+                        partner.name or "",
+                    )
+                    _logger.info("[Kassa QR] Bus event published for partner %s after Planning update", partner.id)
+                except Exception as exc:
+                    _logger.warning("[Kassa QR] Could not publish bus event: %s", exc)
+
             _ensure_session_products(env, [s["title"] for s in sessions])
         else:
             # Fall back to whatever was stored from prior new_registration messages.
