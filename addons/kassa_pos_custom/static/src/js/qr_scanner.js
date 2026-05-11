@@ -43,6 +43,7 @@ export class QrScannerModal extends Component {
     setup() {
         this.pos          = useService("pos");
         this.orm          = useService("orm");
+        this.rpc          = useService("rpc");
         this.notification = useService("notification");
         this.videoRef     = useRef("video");
 
@@ -143,11 +144,15 @@ export class QrScannerModal extends Component {
 
             // 3. Upsert into the POS in-memory partner cache so it is immediately
             //    available without a full session reload.
-            const idx = this.pos.partners.findIndex((p) => p.id === partnerId);
-            if (idx !== -1) {
-                Object.assign(this.pos.partners[idx], partner);
+            if (this.pos.models?.["res.partner"]?.insert) {
+                this.pos.models["res.partner"].insert(partner);
             } else {
-                this.pos.partners.push(partner);
+                const idx = this.pos.partners.findIndex((p) => p.id === partnerId);
+                if (idx !== -1) {
+                    Object.assign(this.pos.partners[idx], partner);
+                } else {
+                    this.pos.partners.push(partner);
+                }
             }
 
             // 4. Set as the current order's customer.
@@ -189,19 +194,7 @@ export class QrScannerModal extends Component {
 
     async _callQrScanEndpoint(uuid) {
         try {
-            const resp = await fetch("/kassa/qr_scan", {
-                method:      "POST",
-                headers:     { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                    jsonrpc: "2.0",
-                    id:      1,
-                    method:  "call",
-                    params:  { identity_uuid: uuid },
-                }),
-            });
-            const data = await resp.json();
-            return data.result || null;
+            return await this.rpc("/kassa/qr_scan", { identity_uuid: uuid });
         } catch (err) {
             console.error("[Kassa QR] /kassa/qr_scan call failed:", err);
             return null;

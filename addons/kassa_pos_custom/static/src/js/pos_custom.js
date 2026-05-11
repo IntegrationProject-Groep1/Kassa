@@ -235,11 +235,15 @@ patch(PosStore.prototype, {
             if (!partners || !partners.length) return;
 
             const updated = partners[0];
-            const idx = this.partners.findIndex((p) => p.id === partnerId);
-            if (idx !== -1) {
-                Object.assign(this.partners[idx], updated);
+            if (this.models?.["res.partner"]?.insert) {
+                this.models["res.partner"].insert(updated);
             } else {
-                this.partners.push(updated);
+                const idx = this.partners.findIndex((p) => p.id === partnerId);
+                if (idx !== -1) {
+                    Object.assign(this.partners[idx], updated);
+                } else {
+                    this.partners.push(updated);
+                }
             }
             console.log("[Kassa] Partner updated from bus event:", partnerId);
         } catch (err) {

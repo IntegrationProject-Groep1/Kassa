@@ -4,7 +4,8 @@ import os
 import uuid
 import time
 import logging
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET          # building only
+import defusedxml.ElementTree as defused_ET  # safe parsing of external XML
 from datetime import datetime, timezone
 from typing import List, Dict
 
@@ -104,7 +105,7 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
             if props.correlation_id != corr_id:
                 return
             try:
-                root = ET.fromstring(body)
+                root = defused_ET.fromstring(body)
                 body_el = root.find("body")
                 if body_el is not None and body_el.findtext("status") == "ok":
                     for session in body_el.findall(".//session"):
@@ -201,7 +202,8 @@ def _ensure_session_product(env, session_title: str) -> None:
 
 class KassaQrController(http.Controller):
 
-    @http.route("/kassa/qr_scan", type="json", auth="user", methods=["POST"], csrf=False)
+    @http.route("/kassa/qr_scan", type="json", auth="user", methods=["POST"], csrf=False,
+                groups="point_of_sale.group_pos_user")
     def qr_scan(self, identity_uuid=None, **kwargs):
         if not identity_uuid:
             return {"status": "error", "message": "identity_uuid is vereist."}
