@@ -468,12 +468,15 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
 
 @patch('order_poller.sender')
 def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
-    """Top-up orders increase wallet balance and emit wallet_balance_update."""
+    """Top-up orders with a fully-granted lease: balance updated + wallet_balance_update sent."""
     customer_info = {
         'id': 77,
         'x_wallet_balance': 10.0,
         'x_user_id': 'USR-77',
         'x_badge_id': 'BADGE-77',
+        'x_lease_active': True,      # lease is active
+        'x_lease_id': 'LEASE-77',   # fully granted (non-empty)
+        'x_pending_topup_balance': 0.0,
         'is_company': False,
         'parent_id': False,
         'email': '',
@@ -499,19 +502,14 @@ def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
 
     poller.get_customer_info = MagicMock(return_value=customer_info)
     poller.models.execute_kw.side_effect = [
-        [{
-            'id': 301,
-            'product_id': (55, 'Top-up EUR 10'),
-            'qty': 1,
-            'price_unit': 15.0,
-            'tax_ids': [],
-            'price_subtotal_incl': 15.0,
-        }],
+        [{'id': 301, 'product_id': (55, 'Top-up EUR 15'),
+          'qty': 1, 'price_unit': 15.0, 'tax_ids': [], 'price_subtotal_incl': 15.0}],
         [{'id': 55, 'x_is_topup': True, 'pos_categ_ids': []}],
-        25.0,  # action_add_wallet_amount returns new balance
-        True,
-        True,
-        True,
+        25.0,   # action_add_wallet_amount: 10.0 + 15.0 = 25.0
+        True,   # pos.order write x_wallet_updated
+        True,   # x_lease_transaction_count increment
+        True,   # x_payment_message_id write
+        True,   # x_rabbitmq_sent write
     ]
     mock_sender.build_consumption_order_xml.return_value = (
         '<message><header><message_id>cons-1</message_id></header></message>'
@@ -527,10 +525,245 @@ def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
     result = poller.process_order(order)
 
     assert result is True
-    assert poller.models.execute_kw.call_args_list[2][0][4] == 'action_add_wallet_amount'
-    assert poller.models.execute_kw.call_args_list[2][0][5] == [77, 15.0]
+
+    # action_add_wallet_amount called with correct partner and amount
+    wallet_call = next(
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'action_add_wallet_amount'
+    )
+    assert wallet_call[0][5] == [77, 15.0]
+
+    # wallet_balance_update sent immediately (lease is fully granted)
     sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
     assert sent_types == ['consumption_order', 'payment_registered_consumption', 'wallet_balance_update']
+
+    # wallet_balance_update built with authority='kassa'
+    mock_sender.build_wallet_balance_update_xml.assert_called_once_with(
+        identity_uuid='USR-77', new_balance=25.0, authority='kassa', status='active'
+    )
+
+
+@patch('order_poller.sender')
+def test_process_order_topup_works_with_qr_only_no_physical_badge(mock_sender, poller):
+    """Top-up via QR-code with lease granted: x_user_id present, no x_badge_id — must NOT be skipped.
+
+    Regression test for the bug where x_badge_id was the guard condition instead of x_user_id.
+    """
+    customer_info = {
+        'id': 88,
+        'x_wallet_balance': 5.0,
+        'x_user_id': 'UUID-88',
+        'x_badge_id': None,           # NO physical badge
+        'x_lease_active': True,        # lease active and fully granted
+        'x_lease_id': 'LEASE-88',
+        'x_pending_topup_balance': 0.0,
+        'is_company': False,
+        'parent_id': False,
+        'email': 'visitor@example.com',
+        'customer_type': 'private',
+        'name': 'QR Visitor',
+        'street': 'Kiekenmarkt 1',
+        'zip': '1000',
+        'city': 'Brussels',
+        'country_code': 'be',
+    }
+    order = {
+        'id': 27, 'partner_id': 88, 'lines': [(302,)], 'amount_total': 17.25,
+        'payment_ids': [], 'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-11 21:00:00', 'to_invoice': False, 'account_move': None,
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'id': 302, 'product_id': (66, 'Top-up EUR 17.25'),
+          'qty': 1, 'price_unit': 17.25, 'tax_ids': [], 'price_subtotal_incl': 17.25}],
+        [{'id': 66, 'x_is_topup': True, 'pos_categ_ids': []}],
+        22.25,  # action_add_wallet_amount: 5.00 + 17.25
+        True,   # x_wallet_updated
+        True,   # lease tx count
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-qr</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-qr</message_id></header></message>'
+    )
+    mock_sender.build_wallet_balance_update_xml.return_value = (
+        '<message><header><message_id>wallet-qr</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True, True]
+
+    result = poller.process_order(order)
+
+    assert result is True, "Top-up with QR-only customer (lease granted) must succeed"
+
+    wallet_call = next(
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'action_add_wallet_amount'
+    )
+    assert wallet_call[0][5] == [88, 17.25]
+
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'wallet_balance_update' in sent_types
+    assert sent_types == ['consumption_order', 'payment_registered_consumption', 'wallet_balance_update']
+
+
+@patch('order_poller.sender')
+def test_process_order_topup_parked_when_lease_requested_not_granted(mock_sender, poller):
+    """Race condition: top-up processed while waiting for wallet_lease_grant from CRM.
+
+    When x_lease_active=True but x_lease_id='' (lease requested, grant not yet arrived),
+    the top-up amount must be parked in x_pending_topup_balance.
+    wallet_balance_update must NOT be sent (we don't know the authoritative balance yet).
+    The grant handler in receiver.py will merge pending + CRM balance and send the update.
+    """
+    customer_info = {
+        'id': 91,
+        'x_wallet_balance': 0.0,       # not yet set — waiting for lease grant
+        'x_user_id': 'UUID-91',
+        'x_badge_id': None,
+        'x_lease_active': True,        # lease requested…
+        'x_lease_id': '',              # …but NOT yet granted (empty)
+        'x_pending_topup_balance': 0.0,
+        'is_company': False,
+        'parent_id': False,
+        'email': 'race@example.com',
+        'customer_type': 'private',
+        'name': 'Race Visitor',
+        'street': 'Teststraat 1',
+        'zip': '2000',
+        'city': 'Antwerp',
+        'country_code': 'be',
+    }
+    order = {
+        'id': 28, 'partner_id': 91, 'lines': [(303,)], 'amount_total': 20.0,
+        'payment_ids': [], 'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-11 22:00:00', 'to_invoice': False, 'account_move': None,
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'id': 303, 'product_id': (70, 'Top-up EUR 20'),
+          'qty': 1, 'price_unit': 20.0, 'tax_ids': [], 'price_subtotal_incl': 20.0}],
+        [{'id': 70, 'x_is_topup': True, 'pos_categ_ids': []}],
+        True,   # res.partner write x_pending_topup_balance
+        True,   # pos.order write x_wallet_updated
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-race</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-race</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True]
+
+    result = poller.process_order(order)
+
+    assert result is True
+
+    # action_add_wallet_amount must NOT be called (balance not yet known)
+    wallet_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'action_add_wallet_amount'
+    ]
+    assert len(wallet_calls) == 0, "action_add_wallet_amount must NOT be called before lease is granted"
+
+    # x_pending_topup_balance must be written with the top-up amount
+    pending_writes = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'write'
+        and c[0][3] == 'res.partner'
+        and 'x_pending_topup_balance' in (c[0][5][1] if len(c[0][5]) > 1 else {})
+    ]
+    assert len(pending_writes) == 1
+    assert pending_writes[0][0][5][1]['x_pending_topup_balance'] == 20.0
+
+    # wallet_balance_update must NOT be sent (deferred to lease grant handler)
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'wallet_balance_update' not in sent_types, (
+        "wallet_balance_update must be deferred until wallet_lease_grant arrives"
+    )
+    assert 'consumption_order' in sent_types  # CRM still notified for financial tracking
+
+
+@patch('order_poller.sender')
+def test_process_order_topup_parked_when_no_lease_at_all(mock_sender, poller):
+    """Edge case: top-up without any active lease (visitor never scanned QR).
+
+    Top-up is parked in x_pending_topup_balance.
+    wallet_balance_update NOT sent.
+    consumption_order still goes to CRM for financial tracking.
+    """
+    customer_info = {
+        'id': 92,
+        'x_wallet_balance': 0.0,
+        'x_user_id': 'UUID-92',
+        'x_badge_id': None,
+        'x_lease_active': False,   # no lease at all
+        'x_lease_id': '',
+        'x_pending_topup_balance': 0.0,
+        'is_company': False,
+        'parent_id': False,
+        'email': 'nolean@example.com',
+        'customer_type': 'private',
+        'name': 'No Lease Visitor',
+        'street': 'Straat 5',
+        'zip': '3000',
+        'city': 'Leuven',
+        'country_code': 'be',
+    }
+    order = {
+        'id': 29, 'partner_id': 92, 'lines': [(304,)], 'amount_total': 10.0,
+        'payment_ids': [], 'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-11 22:05:00', 'to_invoice': False, 'account_move': None,
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'id': 304, 'product_id': (71, 'Top-up EUR 10'),
+          'qty': 1, 'price_unit': 10.0, 'tax_ids': [], 'price_subtotal_incl': 10.0}],
+        [{'id': 71, 'x_is_topup': True, 'pos_categ_ids': []}],
+        True,   # res.partner write x_pending_topup_balance
+        True,   # pos.order write x_wallet_updated
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-nolease</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-nolease</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True]
+
+    result = poller.process_order(order)
+
+    assert result is True
+
+    # No action_add_wallet_amount (not owner yet)
+    wallet_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'action_add_wallet_amount'
+    ]
+    assert len(wallet_calls) == 0
+
+    # Pending topup written
+    pending_writes = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'write'
+        and c[0][3] == 'res.partner'
+        and 'x_pending_topup_balance' in (c[0][5][1] if len(c[0][5]) > 1 else {})
+    ]
+    assert len(pending_writes) == 1
+    assert pending_writes[0][0][5][1]['x_pending_topup_balance'] == 10.0
+
+    # wallet_balance_update not sent
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'wallet_balance_update' not in sent_types
 
 
 @patch('order_poller.sender')
@@ -645,6 +878,85 @@ def test_process_consumption_passes_address_data(mock_sender, poller):
     assert addr['postal_code'] == '1000'
     assert addr['city'] == 'Brussel'
     assert addr['country'] == 'be'
+
+
+# ---------------------------------------------------------------------------
+# get_customer_info — Optie C: identity fallback via email
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.identity_client')
+def test_get_customer_info_resolves_missing_x_user_id_via_email(mock_identity, poller):
+    """Optie C: partner found but x_user_id is empty → lookup_by_email() → write back to Odoo.
+
+    This is the last-resort fallback for edge cases where a partner was created
+    without going through the CRM new_registration flow (e.g. manual Odoo entry
+    or QR-code with only email).
+    """
+    poller.models.execute_kw.side_effect = [
+        # res.partner read — x_user_id is empty
+        [{'id': 42, 'name': 'Edge Case Visitor', 'email': 'edge@example.com',
+          'is_company': False, 'parent_id': False, 'x_badge_id': None,
+          'x_user_id': None,  # ← missing!
+          'x_wallet_balance': 0.0, 'vat': False,
+          'street': False, 'city': False, 'zip': False, 'country_id': False,
+          'x_lease_active': False, 'x_lease_id': False, 'x_lease_transaction_count': 0}],
+        True,  # res.partner write (x_user_id patch)
+    ]
+    mock_identity.lookup_by_email.return_value = {
+        'master_uuid': 'RESOLVED-UUID-42',
+        'email': 'edge@example.com',
+    }
+
+    result = poller.get_customer_info(42)
+
+    # Identity service was called with the partner's email
+    mock_identity.lookup_by_email.assert_called_once_with('edge@example.com')
+
+    # master_uuid was written back to Odoo
+    write_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'write'
+    ]
+    assert len(write_calls) == 1
+    assert write_calls[0][0][5] == [[42], {'x_user_id': 'RESOLVED-UUID-42'}]
+
+    # Returned info contains the resolved x_user_id
+    assert result['x_user_id'] == 'RESOLVED-UUID-42'
+
+
+@patch('order_poller.identity_client')
+def test_get_customer_info_identity_fallback_non_blocking_on_unavailable(mock_identity, poller):
+    """Optie C: if Identity Service is down, get_customer_info still returns the partner.
+
+    The fallback is best-effort — a transient outage must never block order processing.
+    The partner is returned without x_user_id; wallet_balance_update will be skipped
+    (correct behaviour, since we have no UUID to address the update to).
+    """
+    from identity_client import IdentityUnavailableError
+    poller.models.execute_kw.side_effect = [
+        [{'id': 43, 'name': 'Offline Edge Case', 'email': 'offline@example.com',
+          'is_company': False, 'parent_id': False, 'x_badge_id': None,
+          'x_user_id': None,
+          'x_wallet_balance': 0.0, 'vat': False,
+          'street': False, 'city': False, 'zip': False, 'country_id': False,
+          'x_lease_active': False, 'x_lease_id': False, 'x_lease_transaction_count': 0}],
+    ]
+    mock_identity.lookup_by_email.side_effect = IdentityUnavailableError("timeout")
+    mock_identity.IdentityUnavailableError = IdentityUnavailableError
+
+    result = poller.get_customer_info(43)
+
+    # Must return a result despite the Identity Service being unavailable
+    assert result is not None
+    assert result['id'] == 43
+    # x_user_id remains None — no write-back attempted
+    assert result.get('x_user_id') is None
+    # Odoo write was NOT called (nothing to write back)
+    write_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'write'
+    ]
+    assert len(write_calls) == 0
 
 
 def test_get_customer_info_recursion_guard(poller):

@@ -445,7 +445,13 @@ class TestWalletLeaseGrantPipeline:
     def test_valid_grant_passes_xsd_and_updates_odoo(self, mock_conn, mock_error, mock_send, ch, method):
         uid = 1
         models = MagicMock()
-        models.execute_kw.side_effect = [[{"id": 10}], True]
+        # search_read now returns x_pending_topup_balance too
+        models.execute_kw.side_effect = [
+            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid",
+              "x_outstanding_amount": 0.0, "x_pending_topup_balance": 0.0}],
+            True,   # write
+            True,   # _publish_partner_bus_event
+        ]
         mock_conn.return_value = (uid, models)
 
         body = _wallet_lease_grant_xml(_UUID, 30.0, _LEASE)
@@ -460,6 +466,54 @@ class TestWalletLeaseGrantPipeline:
         assert vals["x_wallet_balance"] == 30.0
         assert vals["x_lease_id"] == _LEASE
         assert vals["x_lease_active"] is True
+        assert vals["x_pending_topup_balance"] == 0.0  # cleared
+
+        # wallet_balance_update sent to external frontend
+        assert mock_send.call_count >= 1
+        types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_balance_update" in types
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_grant_merges_pending_topup_with_crm_balance(
+            self, mock_conn, mock_error, mock_send, ch, method):
+        """Pending top-up parked before lease grant is merged into final balance.
+
+        Scenario: visitor scanned → lease requested → cashier did €20 top-up
+        (parked in x_pending_topup_balance) → CRM grants lease with balance €50.
+        Final balance must be €70 (not €50).
+        """
+        uid = 1
+        models = MagicMock()
+        models.execute_kw.side_effect = [
+            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid",
+              "x_outstanding_amount": 0.0, "x_pending_topup_balance": 20.0}],  # pending!
+            True,   # write
+            True,   # _publish_partner_bus_event
+        ]
+        mock_conn.return_value = (uid, models)
+
+        body = _wallet_lease_grant_xml(_UUID, 50.0, _LEASE)
+        receiver.process_message(ch, method, None, body)
+
+        mock_error.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        # final balance = CRM (50) + pending (20) = 70
+        assert vals["x_wallet_balance"] == 70.0, (
+            "Pending top-up must be merged with CRM balance on lease grant"
+        )
+        assert vals["x_pending_topup_balance"] == 0.0, "Pending field must be cleared after merge"
+
+        # wallet_balance_update sent with the correct merged balance
+        update_calls = [c for c in mock_send.call_args_list
+                        if c[0][0] == "wallet_balance_update"]
+        assert len(update_calls) == 1
+        wallet_xml = update_calls[0][0][1]
+        assert "70" in wallet_xml, "wallet_balance_update XML must reflect merged balance of 70"
 
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
