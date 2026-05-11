@@ -8,11 +8,13 @@
  *    local partners list — no full reload, no transaction interruption.
  *
  * 2. Registers a reactive OWL effect that fires whenever the current order's
- *    partner changes.  If x_outstanding_amount > 0 the generic "Inschrijving"
- *    product is automatically added to the order at the outstanding price.
+ *    partner changes.  If x_outstanding_amount > 0 and x_session_title is set,
+ *    the session-specific product is automatically added to the order at the
+ *    outstanding price.  Without a session title no product is auto-added
+ *    (cashier handles manually; outstanding-amount badge is still visible).
  *
  * 3. Patches PartnerLine to expose getters used by the XML template to render
- *    the outstanding-amount badge.
+ *    the outstanding-amount badge and the session title.
  */
 
 import { patch } from "@web/core/utils/patch";
@@ -24,16 +26,13 @@ import { effect } from "@odoo/owl";
 /** Bus channel published by pos.order.send_partner_bus_event. */
 const KASSA_BUS_CHANNEL = "kassa_partner_update";
 
-/** Name of the generic registration fee product that must exist in Odoo. */
-const INSCHRIJVING_PRODUCT_NAME = "Inschrijving";
-
 /** Fields fetched for a single partner on a granular bus-event update. */
 const KASSA_PARTNER_FIELDS = [
     "id", "name", "street", "city", "state_id", "country_id",
     "email", "phone", "mobile", "barcode", "vat",
     "is_company", "parent_id", "customer_rank", "active_lang_count",
     "x_wallet_balance", "x_user_id", "x_badge_id",
-    "x_outstanding_amount", "x_payment_status",
+    "x_outstanding_amount", "x_payment_status", "x_session_title",
 ];
 
 // ── PosStore patch ────────────────────────────────────────────────────────────
@@ -94,7 +93,9 @@ patch(PosStore.prototype, {
                     (order.get_partner ? order.get_partner() : null);
 
                 if (partner && (partner.x_outstanding_amount || 0) > 0) {
-                    this._kassaAddInschrijvingProduct(order, partner);
+                    this._kassaAddSessionProduct(order, partner).catch(
+                        (err) => console.error("[Kassa] Session product auto-add error:", err)
+                    );
                 }
             });
         } catch (err) {
@@ -103,59 +104,100 @@ patch(PosStore.prototype, {
     },
 
     /**
-     * Adds a single "Inschrijving" orderline to the given order with the
-     * partner's outstanding amount as the unit price.
+     * Adds the session-specific product to the order at the partner's
+     * outstanding amount as the unit price.
+     *
+     * If the product is not in the POS in-memory catalog (e.g. created by
+     * receiver.py after the POS session was already opened), it is fetched
+     * from Odoo via a targeted RPC and inserted into the local cache so
+     * subsequent scans of the same session don't need another round-trip.
      *
      * Guards:
-     *   - Product not found → warn and bail (cashier must create it in Odoo).
+     *   - No x_session_title on partner → warn and skip (cashier handles manually).
+     *   - Product not found locally nor in Odoo → warn and skip.
      *   - Line already present → skip (idempotent; safe for effect re-runs).
      */
-    _kassaAddInschrijvingProduct(order, partner) {
-        try {
-            // Search the POS product catalog.  Odoo 17 exposes products via
-            // this.models['product.product'] (new service) or this.products (legacy).
-            const allProducts =
-                this.models?.["product.product"]?.getAll?.() ||
-                this.products ||
-                [];
-
-            const product = allProducts.find(
-                (p) =>
-                    p.name === INSCHRIJVING_PRODUCT_NAME ||
-                    p.display_name === INSCHRIJVING_PRODUCT_NAME
-            );
-
-            if (!product) {
-                console.warn(
-                    "[Kassa] Product '%s' not found in POS catalog. " +
-                        "Create it in Odoo (service type, available_in_pos=True).",
-                    INSCHRIJVING_PRODUCT_NAME
-                );
-                return;
-            }
-
-            // Do not add a duplicate line if the product is already in the order.
-            const lines =
-                order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
-            const alreadyPresent = lines.some((l) => {
-                const p = l.get_product ? l.get_product() : l.product;
-                return p && p.id === product.id;
-            });
-            if (alreadyPresent) return;
-
-            // add_product with a custom price so the cashier does not need to
-            // type anything — the outstanding amount is pre-filled.
-            order.add_product(product, { price: partner.x_outstanding_amount });
-
-            console.log(
-                "[Kassa] Auto-added '%s' line: €%s for partner_id=%s",
-                INSCHRIJVING_PRODUCT_NAME,
-                partner.x_outstanding_amount,
+    async _kassaAddSessionProduct(order, partner) {
+        const sessionTitle = partner.x_session_title;
+        if (!sessionTitle) {
+            console.warn(
+                "[Kassa] Geen sessietitel op partner %s — geen product auto-toegevoegd.",
                 partner.id
             );
-        } catch (err) {
-            console.error("[Kassa] Error adding Inschrijving product:", err);
+            return;
         }
+
+        // 1. Search the POS in-memory product catalog first (fast path).
+        const allProducts =
+            this.models?.["product.product"]?.getAll?.() ||
+            this.products ||
+            [];
+
+        let product = allProducts.find(
+            (p) => p.name === sessionTitle || p.display_name === sessionTitle
+        );
+
+        // 2. Fallback: product was created while this POS session was already open.
+        //    Fetch it from Odoo and insert into the local cache.
+        if (!product) {
+            try {
+                const results = await this.env.services.orm.searchRead(
+                    "product.product",
+                    [
+                        ["name", "=", sessionTitle],
+                        ["available_in_pos", "=", true],
+                        ["active", "=", true],
+                    ],
+                    [
+                        "id", "name", "display_name", "list_price", "standard_price",
+                        "type", "taxes_id", "barcode", "default_code",
+                        "pos_categ_ids", "categ_id", "available_in_pos", "description_sale",
+                    ],
+                    { limit: 1 }
+                );
+                if (results && results.length > 0) {
+                    const data = results[0];
+                    // Insert into the Odoo 17 POS model store (makes it available
+                    // for future lookups within this session without re-fetching).
+                    if (this.models?.["product.product"]?.insert) {
+                        product = this.models["product.product"].insert(data);
+                    } else {
+                        product = data;
+                        if (this.products) this.products.push(product);
+                    }
+                    console.log("[Kassa] Sessieproduct '%s' live geladen vanuit Odoo.", sessionTitle);
+                }
+            } catch (err) {
+                console.warn("[Kassa] RPC-fallback voor sessieproduct mislukt:", err);
+            }
+        }
+
+        if (!product) {
+            console.warn(
+                "[Kassa] Sessieproduct '%s' niet gevonden — kassier handelt manueel af.",
+                sessionTitle
+            );
+            return;
+        }
+
+        // 3. Do not add a duplicate line if the product is already in the order.
+        const lines =
+            order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
+        const alreadyPresent = lines.some((l) => {
+            const p = l.get_product ? l.get_product() : l.product;
+            return p && p.id === product.id;
+        });
+        if (alreadyPresent) return;
+
+        // 4. Add with the outstanding amount as unit price.
+        order.add_product(product, { price: partner.x_outstanding_amount });
+
+        console.log(
+            "[Kassa] Auto-added '%s' line: €%s for partner_id=%s",
+            sessionTitle,
+            partner.x_outstanding_amount,
+            partner.id
+        );
     },
 
     /**
@@ -266,6 +308,11 @@ patch(PartnerLine.prototype, {
     /** Raw payment_status value ("unpaid" | "paid" | ""). */
     get kassaPaymentStatus() {
         return this.props.partner.x_payment_status || "";
+    },
+
+    /** Session title for display in the partner list, e.g. "Workshop: IoT met Python". */
+    get kassaSessionTitle() {
+        return this.props.partner.x_session_title || "";
     },
 });
 

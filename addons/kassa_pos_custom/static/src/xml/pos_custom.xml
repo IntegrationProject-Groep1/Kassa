@@ -12,17 +12,24 @@
     -->
     <t t-inherit="point_of_sale.PartnerLine" t-inherit-mode="extension">
         <xpath expr="//td[1]/b" position="after">
-            <t t-if="kassaHasOutstanding">
-                <div class="kassa-outstanding-info d-flex gap-1 mt-1">
-                    <span class="badge bg-warning text-dark">
-                        Openstaand: €<t t-esc="kassaOutstandingAmount"/>
-                    </span>
-                    <span
-                        t-if="kassaPaymentStatus === 'unpaid'"
-                        class="badge bg-danger"
-                    >
-                        Onbetaald
-                    </span>
+            <t t-if="kassaSessionTitle or kassaHasOutstanding">
+                <div class="kassa-outstanding-info d-flex gap-1 mt-1 flex-wrap">
+                    <t t-if="kassaSessionTitle">
+                        <span class="badge bg-info text-dark">
+                            <t t-esc="kassaSessionTitle"/>
+                        </span>
+                    </t>
+                    <t t-if="kassaHasOutstanding">
+                        <span class="badge bg-warning text-dark">
+                            Openstaand: €<t t-esc="kassaOutstandingAmount"/>
+                        </span>
+                        <span
+                            t-if="kassaPaymentStatus === 'unpaid'"
+                            class="badge bg-danger"
+                        >
+                            Onbetaald
+                        </span>
+                    </t>
                 </div>
             </t>
         </xpath>
