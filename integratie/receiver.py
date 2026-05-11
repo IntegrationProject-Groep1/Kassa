@@ -37,7 +37,7 @@ import defusedxml.xmlrpc
 import defusedxml.ElementTree as ET
 from xml.etree.ElementTree import Element
 from collections import OrderedDict
-from typing import Any, List, Dict, Tuple, cast
+from typing import Any, List, Dict, Optional, Tuple, cast
 from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
@@ -573,27 +573,48 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
     except ValueError:
         raise ValueError(f"wallet_lease_grant: invalid current_balance '{current_balance_text}'")
 
+    amount_due: Optional[float] = None
+    payment_due_el = body.find("payment_due")
+    if payment_due_el is not None:
+        amount_due = parse_xml_float(payment_due_el.find("amount"))
+
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id"], "limit": 1},
+        {"fields": ["id", "name", "x_payment_status"], "limit": 1},
     )
     if not existing:
         logger.warning("[LEASE_GRANT] No partner found for identity_uuid=%s", identity_uuid)
         return
 
+    partner = existing[0]
+    write_vals: dict = {
+        "x_wallet_balance": current_balance,
+        "x_lease_id": lease_id,
+        "x_lease_active": True,
+    }
+    if amount_due is not None:
+        write_vals["x_outstanding_amount"] = amount_due
+
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "write",
-        [[existing[0]["id"]], {
-            "x_wallet_balance": current_balance,
-            "x_lease_id": lease_id,
-            "x_lease_active": True,
-        }],
+        [[partner["id"]], write_vals],
     )
-    logger.info("[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | lease_id=%s",
-                identity_uuid, current_balance, lease_id)
+    logger.info(
+        "[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | payment_due=%s | lease_id=%s",
+        identity_uuid, current_balance,
+        f"€{amount_due:.2f}" if amount_due is not None else "not provided",
+        lease_id,
+    )
+
+    _publish_partner_bus_event(
+        uid, models, partner["id"],
+        amount_due if amount_due is not None else 0.0,
+        partner.get("x_payment_status") or "unpaid",
+        partner.get("name") or "Unknown",
+    )
 
 
 def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:
