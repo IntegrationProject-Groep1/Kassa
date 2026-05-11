@@ -255,6 +255,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("res.partner", "x_badge_id", "IoT Badge ID", "char", {"index": True}),
         ("res.partner", "x_badge_sent", "Badge Assignment Sent to CRM", "boolean", {}),
         ("res.partner", "x_wallet_balance", "Visitor Wallet Balance", "float", {}),
+        ("res.partner", "x_pending_topup_balance", "Pending Top-up (pre-lease)", "float", {}),
         ("res.partner", "x_date_of_birth", "Date of Birth", "date", {}),
         ("res.partner", "x_session_id", "Session ID", "char", {}),
         ("res.partner", "x_session_title", "Session Title", "char", {}),
