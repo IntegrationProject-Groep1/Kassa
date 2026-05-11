@@ -365,8 +365,10 @@ _OUTGOING_SCHEMA_MAP = {
     "badge_assigned": _SCHEMA_DIR / "schema_badge_assigned.xsd",
     "payment_status": _SCHEMA_DIR / "schema_payment_status.xsd",
     "wallet_balance_update": _SCHEMA_DIR / "schema_wallet_balance_update.xsd",
-    "wallet_lease_request":  _SCHEMA_DIR / "schema_wallet_lease_request.xsd",
-    "wallet_lease_return":   _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
+    "wallet_lease_request":    _SCHEMA_DIR / "schema_wallet_lease_request.xsd",
+    "wallet_lease_return":     _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
+    "user_sessions_request":   _SCHEMA_DIR / "schema_user_sessions_request.xsd",
+    "user_sessions_response":  _SCHEMA_DIR / "schema_user_sessions_response.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
     "log": _SCHEMA_DIR / "schema_log.xsd",
 }
