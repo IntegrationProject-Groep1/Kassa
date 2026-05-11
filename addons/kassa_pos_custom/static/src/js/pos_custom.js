@@ -95,6 +95,7 @@ patch(PosStore.prototype, {
      * so the effect re-executes on every partner-selection change.
      */
     _watchKassaPartnerSelection() {
+        if (this.config?.name !== "Inschrijvingskassa") return;
         try {
             effect(() => {
                 const order = this.selectedOrder;
