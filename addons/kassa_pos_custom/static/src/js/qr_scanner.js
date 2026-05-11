@@ -173,7 +173,10 @@ export class QrScannerModal extends Component {
                     ? " — actief saldo beschikbaar"
                     : "";
 
-            const sessionNote = partner.x_session_title ? ` — ${partner.x_session_title}` : "";
+            const sessionTitles = (result.sessions || []).map((s) => s.title).filter(Boolean);
+            const sessionNote = sessionTitles.length > 0
+                ? ` — ${sessionTitles.join(", ")}`
+                : "";
 
             this.notification.add(
                 `Klant geïdentificeerd: ${partner.name}${sessionNote}${leaseNote}`,

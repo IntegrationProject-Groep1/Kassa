@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import uuid
 import time
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from odoo import http
 from odoo.http import request
@@ -222,21 +223,32 @@ class KassaQrController(http.Controller):
                 partner.id, identity_uuid,
             )
 
-        # 2. Ask Planning for this visitor's sessions (RPC, max PLANNING_RPC_TIMEOUT s).
+        # 2. Ask Planning for all sessions this visitor is registered for.
         sessions = _fetch_sessions_from_planning(identity_uuid)
-        session_title: Optional[str] = sessions[0]["title"] if sessions else None
 
-        if session_title:
-            if partner.x_session_title != session_title:
-                partner.write({"x_session_title": session_title})
-            _ensure_session_product(env, session_title)
+        if sessions:
+            titles_json = json.dumps([s["title"] for s in sessions])
+            if partner.x_session_title != titles_json:
+                partner.write({"x_session_title": titles_json})
+            for s in sessions:
+                _ensure_session_product(env, s["title"])
         else:
-            # Fall back to whatever was stored from a prior new_registration message.
-            session_title = partner.x_session_title or None
-            if not session_title:
+            # Fall back to whatever was stored from prior new_registration messages.
+            raw = partner.x_session_title or ""
+            if raw:
+                try:
+                    stored = json.loads(raw)
+                    sessions = (
+                        [{"session_id": "", "title": t} for t in stored]
+                        if isinstance(stored, list)
+                        else [{"session_id": "", "title": raw}]
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    sessions = [{"session_id": "", "title": raw}]
+            if not sessions:
                 _logger.info(
-                    "[Kassa QR] No session found from Planning for %s; "
-                    "partner has no stored session title either.",
+                    "[Kassa QR] No sessions found from Planning for %s; "
+                    "no stored session titles either.",
                     identity_uuid,
                 )
 
@@ -246,7 +258,7 @@ class KassaQrController(http.Controller):
                 "status": "already_active",
                 "partner_id": partner.id,
                 "partner_name": partner.name,
-                "session_title": session_title,
+                "sessions": sessions,
             }
 
         _publish_lease_request(identity_uuid)
@@ -256,5 +268,5 @@ class KassaQrController(http.Controller):
             "status": status,
             "partner_id": partner.id,
             "partner_name": partner.name,
-            "session_title": session_title,
+            "sessions": sessions,
         }

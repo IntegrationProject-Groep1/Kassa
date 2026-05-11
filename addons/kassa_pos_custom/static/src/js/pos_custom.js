@@ -26,6 +26,20 @@ import { effect } from "@odoo/owl";
 /** Bus channel published by pos.order.send_partner_bus_event. */
 const KASSA_BUS_CHANNEL = "kassa_partner_update";
 
+/**
+ * Parse x_session_title into a list of session title strings.
+ * Handles three formats: JSON array, plain string (legacy), and empty.
+ */
+function _parseSessionTitles(raw) {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [String(parsed)].filter(Boolean);
+    } catch {
+        return [raw];
+    }
+}
+
 /** Fields fetched for a single partner on a granular bus-event update. */
 const KASSA_PARTNER_FIELDS = [
     "id", "name", "street", "city", "state_id", "country_id",
@@ -93,7 +107,7 @@ patch(PosStore.prototype, {
                     (order.get_partner ? order.get_partner() : null);
 
                 if (partner && (partner.x_outstanding_amount || 0) > 0) {
-                    this._kassaAddSessionProduct(order, partner).catch(
+                    this._kassaAddSessionProducts(order, partner).catch(
                         (err) => console.error("[Kassa] Session product auto-add error:", err)
                     );
                 }
@@ -104,8 +118,28 @@ patch(PosStore.prototype, {
     },
 
     /**
-     * Adds the session-specific product to the order at the partner's
-     * outstanding amount as the unit price.
+     * Orchestrator: adds one order line per registered session.
+     * The total outstanding amount is split equally across all sessions.
+     * Idempotent — already-present lines are skipped on re-runs.
+     */
+    async _kassaAddSessionProducts(order, partner) {
+        const titles = _parseSessionTitles(partner.x_session_title);
+        if (!titles.length) {
+            console.warn(
+                "[Kassa] Geen sessietitels op partner %s — geen product auto-toegevoegd.",
+                partner.id
+            );
+            return;
+        }
+        const totalOutstanding = partner.x_outstanding_amount || 0;
+        const pricePerSession = titles.length > 0 ? totalOutstanding / titles.length : 0;
+        for (const title of titles) {
+            await this._kassaAddSessionProduct(order, title, pricePerSession);
+        }
+    },
+
+    /**
+     * Adds a single session product to the order at the given unit price.
      *
      * If the product is not in the POS in-memory catalog (e.g. created by
      * receiver.py after the POS session was already opened), it is fetched
@@ -113,20 +147,10 @@ patch(PosStore.prototype, {
      * subsequent scans of the same session don't need another round-trip.
      *
      * Guards:
-     *   - No x_session_title on partner → warn and skip (cashier handles manually).
      *   - Product not found locally nor in Odoo → warn and skip.
      *   - Line already present → skip (idempotent; safe for effect re-runs).
      */
-    async _kassaAddSessionProduct(order, partner) {
-        const sessionTitle = partner.x_session_title;
-        if (!sessionTitle) {
-            console.warn(
-                "[Kassa] Geen sessietitel op partner %s — geen product auto-toegevoegd.",
-                partner.id
-            );
-            return;
-        }
-
+    async _kassaAddSessionProduct(order, sessionTitle, price) {
         // 1. Search the POS in-memory product catalog first (fast path).
         const allProducts =
             this.models?.["product.product"]?.getAll?.() ||
@@ -138,7 +162,6 @@ patch(PosStore.prototype, {
         );
 
         // 2. Fallback: product was created while this POS session was already open.
-        //    Fetch it from Odoo and insert into the local cache.
         if (!product) {
             try {
                 const results = await this.env.services.orm.searchRead(
@@ -157,8 +180,6 @@ patch(PosStore.prototype, {
                 );
                 if (results && results.length > 0) {
                     const data = results[0];
-                    // Insert into the Odoo 17 POS model store (makes it available
-                    // for future lookups within this session without re-fetching).
                     if (this.models?.["product.product"]?.insert) {
                         product = this.models["product.product"].insert(data);
                     } else {
@@ -180,7 +201,7 @@ patch(PosStore.prototype, {
             return;
         }
 
-        // 3. Do not add a duplicate line if the product is already in the order.
+        // 3. Skip if already in the order.
         const lines =
             order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
         const alreadyPresent = lines.some((l) => {
@@ -189,15 +210,8 @@ patch(PosStore.prototype, {
         });
         if (alreadyPresent) return;
 
-        // 4. Add with the outstanding amount as unit price.
-        order.add_product(product, { price: partner.x_outstanding_amount });
-
-        console.log(
-            "[Kassa] Auto-added '%s' line: €%s for partner_id=%s",
-            sessionTitle,
-            partner.x_outstanding_amount,
-            partner.id
-        );
+        order.add_product(product, { price });
+        console.log("[Kassa] Auto-added '%s' line: €%s", sessionTitle, price.toFixed(2));
     },
 
     /**
@@ -310,9 +324,9 @@ patch(PartnerLine.prototype, {
         return this.props.partner.x_payment_status || "";
     },
 
-    /** Session title for display in the partner list, e.g. "Workshop: IoT met Python". */
-    get kassaSessionTitle() {
-        return this.props.partner.x_session_title || "";
+    /** All session titles for display in the partner list (parsed from JSON or plain string). */
+    get kassaSessionTitles() {
+        return _parseSessionTitles(this.props.partner.x_session_title);
     },
 });
 

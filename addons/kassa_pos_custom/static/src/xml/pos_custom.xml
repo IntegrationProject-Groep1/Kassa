@@ -12,11 +12,11 @@
     -->
     <t t-inherit="point_of_sale.PartnerLine" t-inherit-mode="extension">
         <xpath expr="//td[1]/b" position="after">
-            <t t-if="kassaSessionTitle or kassaHasOutstanding">
+            <t t-if="kassaSessionTitles.length > 0 or kassaHasOutstanding">
                 <div class="kassa-outstanding-info d-flex gap-1 mt-1 flex-wrap">
-                    <t t-if="kassaSessionTitle">
+                    <t t-foreach="kassaSessionTitles" t-as="sessionTitle" t-key="sessionTitle">
                         <span class="badge bg-info text-dark">
-                            <t t-esc="kassaSessionTitle"/>
+                            <t t-esc="sessionTitle"/>
                         </span>
                     </t>
                     <t t-if="kassaHasOutstanding">

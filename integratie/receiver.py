@@ -27,6 +27,7 @@ Duplicate detection uses an in-memory bounded cache (max 10,000 entries)
 with FIFO eviction.
 """
 
+import json
 import os
 import logging
 import threading
@@ -274,7 +275,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_user_id"], "limit": 1},
+        {"fields": ["id", "name", "x_user_id", "x_session_title"], "limit": 1},
     )
 
     # Mapping note: `x_user_id` stores the canonical user identifier.
@@ -291,7 +292,16 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         "x_outstanding_amount": amount,
     }
     if session_title:
-        partner_vals["x_session_title"] = session_title
+        existing_raw = existing[0].get("x_session_title") or "" if existing else ""
+        try:
+            existing_titles = json.loads(existing_raw) if existing_raw else []
+            if not isinstance(existing_titles, list):
+                existing_titles = [existing_titles]
+        except (json.JSONDecodeError, ValueError):
+            existing_titles = [existing_raw] if existing_raw else []
+        if session_title not in existing_titles:
+            existing_titles.append(session_title)
+        partner_vals["x_session_title"] = json.dumps(existing_titles)
     if badge_id:
         partner_vals["x_badge_id"] = badge_id
     if company_id:
