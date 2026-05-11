@@ -18,6 +18,8 @@
         'point_of_sale._assets_pos': [
             'kassa_pos_custom/static/src/js/pos_custom.js',
             'kassa_pos_custom/static/src/xml/pos_custom.xml',
+            'kassa_pos_custom/static/src/js/qr_scanner.js',
+            'kassa_pos_custom/static/src/xml/qr_scanner.xml',
         ],
     },
     'installable': True,
