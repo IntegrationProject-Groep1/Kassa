@@ -600,17 +600,38 @@ class TestPendingTopupLifecycle:
             'zip': '2000', 'city': 'Antwerpen', 'country_code': 'be',
         }
 
-        def poller_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
-            if model == 'res.partner' and method_name == 'write':
-                odoo_state.update(args[1])
-                return True
-            return True
-
-        poller.models.execute_kw.side_effect = poller_execute_kw
+        def _make_poller_responses(amount, order_id):
+            """Return exact side_effect list for one top-up order at Inschrijvingskassa."""
+            return [
+                [odoo_state.copy()],                                      # get_customer_info
+                [{'config_id': [1, 'Inschrijvingskassa']}],              # pos.session
+                [{'name': 'Inschrijvingskassa'}],                         # pos.config
+                [{'id': 1000 + order_id, 'product_id': [80, 'Top-up'],
+                  'price_subtotal_incl': amount}],                        # pos.order.line
+                [{'id': 80, 'x_is_topup': True, 'pos_categ_ids': []}],   # product
+                True,  # res.partner write (x_outstanding_amount)
+                True,  # pos.order bus_event
+                True,  # res.partner write (x_pending_topup_balance)
+                True,  # pos.order write x_wallet_updated
+                True,  # pos.order write x_payment_message_id
+                True,  # pos.order write x_rabbitmq_sent
+            ]
 
         for amount, order_id in [(10.0, 61), (15.0, 62)]:
-            customer_snapshot = odoo_state.copy()
-            poller.get_customer_info = MagicMock(return_value=customer_snapshot)
+            raw = _make_poller_responses(amount, order_id)
+            raw[0] = [odoo_state.copy()]  # always read current state
+            idx = [0]
+
+            def make_kw(raw_responses):
+                def poller_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+                    resp = raw_responses[idx[0]]
+                    idx[0] += 1
+                    if model == 'res.partner' and method_name == 'write':
+                        odoo_state.update(args[1])
+                    return resp
+                return poller_execute_kw
+
+            poller.models.execute_kw.side_effect = make_kw(raw)
             poller.process_order(_make_order(order_id=order_id, total=amount))
 
         assert odoo_state['x_pending_topup_balance'] == 25.0, (
@@ -618,7 +639,7 @@ class TestPendingTopupLifecycle:
         )
         assert odoo_state['x_wallet_balance'] == 0.0
 
-        # Receiver merges all pending
+        # ── Receiver merges all pending ────────────────────────────────────────
         mock_send.reset_mock()
         receiver_models = MagicMock()
 
@@ -627,11 +648,9 @@ class TestPendingTopupLifecycle:
                 return [odoo_state.copy()]
             if model == 'res.partner' and method_name == 'write':
                 odoo_state.update(args[1])
-                return True
             return True
 
         receiver_models.execute_kw.side_effect = receiver_execute_kw
-
         with patch('receiver.get_odoo_connection', return_value=(1, receiver_models)):
             with patch('receiver.send_typed_message', mock_send):
                 receiver.process_message(
