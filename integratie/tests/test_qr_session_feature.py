@@ -398,12 +398,12 @@ class TestWalletLeaseGrantAmountDueUnit:
             "</body></message>"
         )
 
+    def _partner_record(self, outstanding: float = 0.0, status: str = "unpaid") -> list:
+        return [{"id": 10, "name": "Alice", "x_payment_status": status, "x_outstanding_amount": outstanding}]
+
     def test_payment_due_written_to_odoo(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=30.0), uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
@@ -412,10 +412,7 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_payment_due_zero_written(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=0.0), uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
@@ -424,10 +421,7 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_no_payment_due_does_not_set_outstanding(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(), uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
@@ -436,10 +430,7 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_wallet_balance_always_written(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=20.0), uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
@@ -448,10 +439,7 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_lease_active_set_true(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=5.0), uid, models)
 
         write_call = models.execute_kw.call_args_list[1]
@@ -460,10 +448,7 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_bus_event_called_with_payment_due(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._partner_record(), True, True]
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=35.0), uid, models)
 
         bus_call = models.execute_kw.call_args_list[2]
@@ -473,10 +458,24 @@ class TestWalletLeaseGrantAmountDueUnit:
         bus_args = bus_call[0][5]
         assert bus_args[1] == 35.0
 
-    def test_bus_event_called_with_zero_when_no_payment_due(self, odoo):
+    def test_bus_event_uses_stored_amount_when_no_payment_due(self, odoo):
+        """When payment_due absent, bus event carries x_outstanding_amount from DB (not hardcoded 0)."""
         uid, models = odoo
         models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "paid"}],
+            [{"id": 10, "name": "Alice", "x_payment_status": "paid", "x_outstanding_amount": 42.0}],
+            True, True,
+        ]
+        receiver.process_wallet_lease_grant(self._grant_root(), uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        bus_args = bus_call[0][5]
+        assert bus_args[1] == 42.0
+
+    def test_bus_event_zero_when_no_payment_due_and_no_outstanding(self, odoo):
+        """Placeholder partner with no outstanding amount: bus event carries 0.0."""
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid", "x_outstanding_amount": 0.0}],
             True, True,
         ]
         receiver.process_wallet_lease_grant(self._grant_root(), uid, models)
@@ -487,16 +486,19 @@ class TestWalletLeaseGrantAmountDueUnit:
 
     def test_unknown_partner_no_write_no_bus(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[]]  # partner not found
+        models.execute_kw.side_effect = [[]]  # no partner found
         receiver.process_wallet_lease_grant(self._grant_root(payment_due=20.0), uid, models)
 
-        assert models.execute_kw.call_count == 1  # only the search
+        assert models.execute_kw.call_count == 1  # only the search, no write or bus
 
 
 # ── TestWalletLeaseGrantPipelineAmountDue ─────────────────────────────────────
 
 class TestWalletLeaseGrantPipelineAmountDue:
     """End-to-end process_message() integration tests — real XSD validation."""
+
+    def _p(self, outstanding: float = 25.0, status: str = "unpaid") -> list:
+        return [{"id": 10, "name": "Alice", "x_payment_status": status, "x_outstanding_amount": outstanding}]
 
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
@@ -505,11 +507,7 @@ class TestWalletLeaseGrantPipelineAmountDue:
         self, mock_conn, mock_error, mock_send, ch, method
     ):
         models = MagicMock()
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True,   # write
-            True,   # bus event
-        ]
+        models.execute_kw.side_effect = [self._p(), True, True]
         mock_conn.return_value = (1, models)
 
         body = _wallet_lease_grant_xml(payment_due=25.0)
@@ -531,10 +529,8 @@ class TestWalletLeaseGrantPipelineAmountDue:
         self, mock_conn, mock_error, mock_send, ch, method
     ):
         models = MagicMock()
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        # x_outstanding_amount already set by new_registration; grant has no payment_due
+        models.execute_kw.side_effect = [self._p(outstanding=30.0), True, True]
         mock_conn.return_value = (1, models)
 
         body = _wallet_lease_grant_xml()  # no payment_due
@@ -545,7 +541,24 @@ class TestWalletLeaseGrantPipelineAmountDue:
 
         write_call = models.execute_kw.call_args_list[1]
         vals = write_call[0][5][1]
-        assert "x_outstanding_amount" not in vals
+        assert "x_outstanding_amount" not in vals  # not overwritten by grant
+
+    @patch("receiver.send_typed_message")
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_grant_without_payment_due_bus_event_uses_stored_amount(
+        self, mock_conn, mock_error, mock_send, ch, method
+    ):
+        """Bus event carries the real outstanding amount from new_registration, not 0."""
+        models = MagicMock()
+        models.execute_kw.side_effect = [self._p(outstanding=30.0), True, True]
+        mock_conn.return_value = (1, models)
+
+        receiver.process_message(ch, method, None, _wallet_lease_grant_xml())
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][4] == "send_partner_bus_event"
+        assert bus_call[0][5][1] == 30.0  # real amount, not 0.0
 
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
@@ -554,10 +567,7 @@ class TestWalletLeaseGrantPipelineAmountDue:
         self, mock_conn, mock_error, mock_send, ch, method
     ):
         models = MagicMock()
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._p(), True, True]
         mock_conn.return_value = (1, models)
 
         receiver.process_message(ch, method, None, _wallet_lease_grant_xml(payment_due=40.0))
@@ -573,10 +583,7 @@ class TestWalletLeaseGrantPipelineAmountDue:
         self, mock_conn, mock_error, mock_send, ch, method
     ):
         models = MagicMock()
-        models.execute_kw.side_effect = [
-            [{"id": 10, "name": "Alice", "x_payment_status": "unpaid"}],
-            True, True,
-        ]
+        models.execute_kw.side_effect = [self._p(), True, True]
         mock_conn.return_value = (1, models)
 
         mid = _make_id()
