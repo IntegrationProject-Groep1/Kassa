@@ -8,10 +8,11 @@
   </xs:simpleType>
 
   <!--
-    user_sessions_request — Kassa → Planning (RPC request)
-    Sent by the Kassa when a visitor's QR code is scanned.
+    user_sessions_request — Kassa / Frontend → Planning (RPC request)
+    Sent by Kassa when a visitor's QR code is scanned, or by Frontend to fetch a user's sessions.
     Planning responds with user_sessions_response on the reply_to queue.
-    Routing key: kassa.to.planning.user_sessions_request
+    Routing key (Kassa):    kassa.to.planning.user_sessions_request
+    Routing key (Frontend): frontend.to.planning.user_sessions_request
   -->
   <xs:element name="message">
     <xs:complexType>
@@ -26,6 +27,7 @@
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
                     <xs:enumeration value="kassa"/>
+                    <xs:enumeration value="frontend"/>
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
