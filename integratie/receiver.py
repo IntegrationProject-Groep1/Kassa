@@ -582,7 +582,7 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_payment_status"], "limit": 1},
+        {"fields": ["id", "name", "x_payment_status", "x_outstanding_amount"], "limit": 1},
     )
     if not existing:
         logger.warning("[LEASE_GRANT] No partner found for identity_uuid=%s", identity_uuid)
@@ -609,9 +609,17 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         lease_id,
     )
 
+    # When payment_due is absent (Planning was available and CRM didn't send a total),
+    # use the outstanding amount already stored on the partner (set by new_registration).
+    # This ensures the bus event payload reflects the real DB state and the POS OWL
+    # effect fires correctly on the refetch.
+    effective_outstanding = (
+        amount_due if amount_due is not None
+        else float(partner.get("x_outstanding_amount") or 0.0)
+    )
     _publish_partner_bus_event(
         uid, models, partner["id"],
-        amount_due if amount_due is not None else 0.0,
+        effective_outstanding,
         partner.get("x_payment_status") or "unpaid",
         partner.get("name") or "Unknown",
     )
