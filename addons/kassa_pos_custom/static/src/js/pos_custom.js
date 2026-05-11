@@ -20,7 +20,7 @@
 import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
-import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line";
+import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { effect } from "@odoo/owl";
 
 /** Bus channel published by pos.order.send_partner_bus_event. */
