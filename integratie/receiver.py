@@ -582,17 +582,34 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_payment_status", "x_outstanding_amount"], "limit": 1},
+        {"fields": ["id", "name", "x_payment_status", "x_outstanding_amount",
+                    "x_pending_topup_balance"], "limit": 1},
     )
     if not existing:
         logger.warning("[LEASE_GRANT] No partner found for identity_uuid=%s", identity_uuid)
         return
 
     partner = existing[0]
+
+    # ── Apply any pending top-ups that arrived before the lease grant ──────────
+    # If the cashier processed a top-up between the visitor's QR scan and this
+    # lease grant, the amount was parked in x_pending_topup_balance instead of
+    # being added to x_wallet_balance (which would have been overwritten here).
+    # Now we know CRM's authoritative balance — merge and clear the pending field.
+    pending_topup = float(partner.get("x_pending_topup_balance") or 0.0)
+    final_balance = round(current_balance + pending_topup, 2)
+
+    if pending_topup > 0:
+        logger.info(
+            "[LEASE_GRANT] Merging pending top-up €%.2f with CRM balance €%.2f → final €%.2f for %s",
+            pending_topup, current_balance, final_balance, identity_uuid
+        )
+
     write_vals: dict = {
-        "x_wallet_balance": current_balance,
+        "x_wallet_balance": final_balance,
         "x_lease_id": lease_id,
         "x_lease_active": True,
+        "x_pending_topup_balance": 0.0,  # cleared — merged into x_wallet_balance
     }
     if amount_due is not None:
         write_vals["x_outstanding_amount"] = amount_due
@@ -604,9 +621,25 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
     )
     logger.info(
         "[LEASE_GRANT] ✅ Lease granted for %s | balance=%.2f | payment_due=%s | lease_id=%s",
-        identity_uuid, current_balance,
+        identity_uuid, final_balance,
         f"€{amount_due:.2f}" if amount_due is not None else "not provided",
         lease_id,
+    )
+
+    # ── Notify external frontend of the authoritative balance ──────────────────
+    # Now that the lease is granted and the balance is final (including any
+    # pending top-ups), send wallet_balance_update so the frontend always shows
+    # the correct balance regardless of when the top-up was processed.
+    update_xml = build_wallet_balance_update_xml(
+        identity_uuid=identity_uuid,
+        new_balance=final_balance,
+        authority="kassa",
+        status="active",
+    )
+    send_typed_message("wallet_balance_update", update_xml)
+    logger.info(
+        "[LEASE_GRANT] ✅ wallet_balance_update sent to frontend for %s (balance=%.2f)",
+        identity_uuid, final_balance
     )
 
     # When payment_due is absent (Planning was available and CRM didn't send a total),
