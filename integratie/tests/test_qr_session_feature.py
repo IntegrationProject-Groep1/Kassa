@@ -15,7 +15,7 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from lxml import etree
@@ -114,7 +114,10 @@ def _wallet_lease_grant_xml(
     """Build a fully XSD-valid wallet_lease_grant message (payment_due optional)."""
     mid = message_id or _make_id()
     cid = _make_id()
-    due_el = f'<payment_due><amount currency="eur">{payment_due:.2f}</amount></payment_due>' if payment_due is not None else ""
+    due_el = (
+        f'<payment_due><amount currency="eur">{payment_due:.2f}</amount></payment_due>'
+        if payment_due is not None else ""
+    )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<message><header>"
@@ -382,7 +385,10 @@ class TestWalletLeaseGrantAmountDueUnit:
     """Unit tests for process_wallet_lease_grant with payment_due field."""
 
     def _grant_root(self, payment_due: float | None = None) -> ET.Element:
-        due_el = f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>' if payment_due is not None else ""
+        due_el = (
+            f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>'
+            if payment_due is not None else ""
+        )
         return ET.fromstring(
             "<message><header/><body>"
             f"<identity_uuid>{_UUID}</identity_uuid>"
@@ -678,7 +684,7 @@ class TestNewRegistrationSessionIntegration:
         models.execute_kw.side_effect = [
             [],   # partner not found
             88,   # create
-            True, # bus event
+            True,  # bus event
         ]
         mock_conn.return_value = (1, models)
 
@@ -726,7 +732,7 @@ class TestNewRegistrationSessionIntegration:
         models.execute_kw.side_effect = [
             [],   # partner not found
             90,   # create
-            True, # bus event
+            True,  # bus event
         ]
         mock_conn.return_value = (1, models)
 

@@ -240,7 +240,10 @@ class TestProcessNewRegistration:
 
 class TestProcessWalletLeaseGrant:
     def _make_grant_xml(self, payment_due=None):
-        payment_due_el = f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>' if payment_due is not None else ""
+        payment_due_el = (
+            f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>'
+            if payment_due is not None else ""
+        )
         return ET.fromstring(
             "<message><header/><body>"
             "<identity_uuid>550e8400-e29b-41d4-a716-446655440000</identity_uuid>"
@@ -365,7 +368,7 @@ class TestEnsureSessionProduct:
         models.execute_kw.side_effect = [
             [],   # search_read res.partner → not found
             99,   # create partner
-            True, # bus event
+            True,  # bus event
         ]
         root = ET.fromstring(
             "<message><header/><body>"
