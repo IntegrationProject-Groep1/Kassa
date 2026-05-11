@@ -236,6 +236,96 @@ class TestProcessNewRegistration:
         assert vals["vat"] == "BE0123"
 
 
+# ── _ensure_session_product ────────────────────────────────────────────────────
+
+class TestEnsureSessionProduct:
+    def test_creates_product_when_not_found(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],          # search_read product.template → not found
+            [{"id": 10}],  # search_read pos.category "Sessions"
+            42,          # create product.template → new id
+        ]
+        receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
+
+        create_call = models.execute_kw.call_args_list[2]
+        assert create_call[0][3] == "product.template"
+        assert create_call[0][4] == "create"
+        vals = create_call[0][5][0]
+        assert vals["name"] == "Workshop: IoT met Python"
+        assert vals["available_in_pos"] is True
+        assert vals["type"] == "consu"
+        assert vals["list_price"] == 0.0
+
+    def test_skips_when_product_already_exists(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7}],  # search_read product.template → found
+        ]
+        receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
+
+        # Only one XML-RPC call (the search); no create
+        assert models.execute_kw.call_count == 1
+
+    def test_new_registration_with_session_title_calls_ensure_product(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],              # search_read res.partner → not found
+            99,              # create partner
+            [],              # search_read product.template → not found
+            [{"id": 10}],   # search_read pos.category
+            55,              # create product
+            True,            # pos.order.send_partner_bus_event
+        ]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>t@t.com</email>"
+            "<contact><first_name>Jan</first_name><last_name>Jansen</last_name></contact>"
+            "<type>private</type>"
+            "<session_title>Workshop: IoT met Python</session_title>"
+            "<payment_due><amount currency=\"eur\">25.00</amount><status>unpaid</status></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        # Verify product creation was called with the correct session title
+        product_create = next(
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template" and c[0][4] == "create"
+        )
+        assert product_create[0][5][0]["name"] == "Workshop: IoT met Python"
+
+    def test_new_registration_without_session_title_skips_product(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],   # search_read res.partner → not found
+            99,   # create partner
+            True, # bus event
+        ]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>t@t.com</email>"
+            "<contact><first_name>Jan</first_name><last_name>Jansen</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><amount currency=\"eur\">25.00</amount><status>unpaid</status></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        # No product.template calls
+        product_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template"
+        ]
+        assert product_calls == []
+
+
 # ── process_profile_update ─────────────────────────────────────────────────────
 
 class TestProcessProfileUpdate:
