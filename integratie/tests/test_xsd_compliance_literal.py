@@ -91,6 +91,47 @@ class TestXSDCompliance:
         valid, errors = validate_xml(xml, "schema_error.xsd")
         assert valid, f"XSD Error in system_error: {errors}"
 
+    def test_wallet_lease_grant_with_payment_due_compliance(self):
+        """wallet_lease_grant including optional payment_due must pass XSD."""
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-11T10:00:00Z</timestamp>"
+            "<source>crm</source>"
+            "<type>wallet_lease_grant</type>"
+            "<version>2.0</version>"
+            f"<correlation_id>{uuid.uuid4()}</correlation_id>"
+            "</header><body>"
+            f"<identity_uuid>{uuid.uuid4()}</identity_uuid>"
+            '<current_balance currency="eur">50.00</current_balance>'
+            "<lease_id>LEASE-001</lease_id>"
+            '<payment_due><amount currency="eur">25.00</amount><status>unpaid</status></payment_due>'
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_grant.xsd")
+        assert valid, f"XSD Error in wallet_lease_grant (with payment_due): {errors}"
+
+    def test_wallet_lease_grant_without_payment_due_compliance(self):
+        """wallet_lease_grant without payment_due (backward compat) must pass XSD."""
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message><header>"
+            f"<message_id>{uuid.uuid4()}</message_id>"
+            "<timestamp>2026-05-11T10:00:00Z</timestamp>"
+            "<source>crm</source>"
+            "<type>wallet_lease_grant</type>"
+            "<version>2.0</version>"
+            f"<correlation_id>{uuid.uuid4()}</correlation_id>"
+            "</header><body>"
+            f"<identity_uuid>{uuid.uuid4()}</identity_uuid>"
+            '<current_balance currency="eur">50.00</current_balance>'
+            "<lease_id>LEASE-001</lease_id>"
+            "</body></message>"
+        )
+        valid, errors = validate_xml(xml, "schema_wallet_lease_grant.xsd")
+        assert valid, f"XSD Error in wallet_lease_grant (no payment_due): {errors}"
+
     def test_wallet_lease_request_compliance(self):
         xml = sender.build_wallet_lease_request_xml(
             identity_uuid=str(uuid.uuid4()),

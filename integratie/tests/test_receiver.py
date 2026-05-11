@@ -236,6 +236,68 @@ class TestProcessNewRegistration:
         assert vals["vat"] == "BE0123"
 
 
+# ── process_wallet_lease_grant ────────────────────────────────────────────────
+
+class TestProcessWalletLeaseGrant:
+    def _make_grant_xml(self, payment_due=None):
+        payment_due_el = f'<payment_due><amount currency="eur">{payment_due}</amount></payment_due>' if payment_due is not None else ""
+        return ET.fromstring(
+            "<message><header/><body>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440000</identity_uuid>"
+            '<current_balance currency="eur">50.00</current_balance>'
+            "<lease_id>LEASE-001</lease_id>"
+            f"{payment_due_el}"
+            "</body></message>"
+        )
+
+    def test_grant_with_amount_due_sets_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],  # search_read
+            True,   # write
+            True,   # bus event
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        written_vals = write_call[0][5][1]
+        assert written_vals["x_outstanding_amount"] == 25.0
+        assert written_vals["x_wallet_balance"] == 50.0
+        assert written_vals["x_lease_active"] is True
+
+    def test_grant_without_amount_due_does_not_set_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],  # search_read
+            True,   # write
+            True,   # bus event
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        written_vals = write_call[0][5][1]
+        assert "x_outstanding_amount" not in written_vals
+
+    def test_grant_publishes_bus_event(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan Peeters", "x_payment_status": "unpaid"}],
+            True,
+            True,
+        ]
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+
+    def test_grant_unknown_partner_logs_warning(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[]]  # search_read → not found
+        receiver.process_wallet_lease_grant(self._make_grant_xml(payment_due=25.0), uid, models)
+        assert models.execute_kw.call_count == 1  # only the search, no write
+
+
 # ── _ensure_session_product ────────────────────────────────────────────────────
 
 class TestEnsureSessionProduct:
