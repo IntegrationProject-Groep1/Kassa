@@ -133,9 +133,15 @@ patch(PosStore.prototype, {
             return;
         }
         const totalOutstanding = partner.x_outstanding_amount || 0;
-        const pricePerSession = titles.length > 0 ? totalOutstanding / titles.length : 0;
-        for (const title of titles) {
-            await this._kassaAddSessionProduct(order, title, pricePerSession);
+        // Cent-based distribution: floor each line, give remainder to the last
+        // so the sum always equals the exact outstanding amount (no rounding drift).
+        const basePerSession = Math.floor((totalOutstanding * 100) / titles.length);
+        let remainingCents = Math.round(totalOutstanding * 100);
+        for (let i = 0; i < titles.length; i++) {
+            const isLast = i === titles.length - 1;
+            const priceCents = isLast ? remainingCents : basePerSession;
+            await this._kassaAddSessionProduct(order, titles[i], priceCents / 100);
+            remainingCents -= priceCents;
         }
     },
 

@@ -111,8 +111,15 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
                     for session in body_el.findall(".//session"):
                         title = (session.findtext("title") or "").strip()
                         sid = (session.findtext("session_id") or "").strip()
+                        price_el = session.find("price")
+                        price: float | None = None
+                        if price_el is not None and price_el.text:
+                            try:
+                                price = float(price_el.text.strip())
+                            except ValueError:
+                                pass
                         if title:
-                            result.append({"session_id": sid, "title": title})
+                            result.append({"session_id": sid, "title": title, "price": price})
             except Exception as exc:
                 _logger.warning("[Kassa QR] Could not parse user_sessions_response: %s", exc)
 
@@ -177,25 +184,38 @@ def _publish_lease_request(identity_uuid: str) -> None:
 
 # ── Odoo helpers ──────────────────────────────────────────────────────────────
 
-def _ensure_session_product(env, session_title: str) -> None:
-    """Find or create a POS-available session product via Odoo ORM (idempotent)."""
-    if env["product.template"].search(
-        [("name", "=", session_title), ("available_in_pos", "=", True)], limit=1
-    ):
+def _ensure_session_products(env, session_titles: List[str]) -> None:
+    """Find or create POS-available session products in bulk (idempotent).
+
+    One search for all existing products, one category fetch — then only
+    create what is missing.  pos.category has no company_id in Odoo 17,
+    so no company filter is applied.
+    """
+    if not session_titles:
+        return
+
+    existing = env["product.template"].search([
+        ("name", "in", session_titles),
+        ("available_in_pos", "=", True),
+    ])
+    existing_names = set(existing.mapped("name"))
+    titles_to_create = [t for t in session_titles if t not in existing_names]
+
+    if not titles_to_create:
         return
 
     categ = env["pos.category"].search([("name", "=", "Sessions")], limit=1)
-    vals = {
-        "name": session_title,
-        "type": "consu",
-        "list_price": 0.0,
-        "available_in_pos": True,
-    }
-    if categ:
-        vals["pos_categ_ids"] = [(6, 0, [categ.id])]
-
-    env["product.template"].create(vals)
-    _logger.info("[Kassa QR] Created session product: '%s'", session_title)
+    for title in titles_to_create:
+        vals: Dict = {
+            "name": title,
+            "type": "consu",
+            "list_price": 0.0,
+            "available_in_pos": True,
+        }
+        if categ:
+            vals["pos_categ_ids"] = [(6, 0, [categ.id])]
+        env["product.template"].create(vals)
+        _logger.info("[Kassa QR] Created session product: '%s'", title)
 
 
 # ── Controller ────────────────────────────────────────────────────────────────
@@ -232,10 +252,37 @@ class KassaQrController(http.Controller):
 
         if sessions:
             titles_json = json.dumps([s["title"] for s in sessions])
+
+            # Compute total outstanding from session prices when Planning provides them.
+            # Uses cent-based math to avoid floating-point drift across multiple sessions.
+            prices = [s["price"] for s in sessions if s.get("price") is not None]
+            total_from_planning = (
+                round(sum(round(p * 100) for p in prices) / 100, 2)
+                if prices else None
+            )
+
+            write_vals: Dict = {}
             if partner.x_session_title != titles_json:
-                partner.write({"x_session_title": titles_json})
-            for s in sessions:
-                _ensure_session_product(env, s["title"])
+                write_vals["x_session_title"] = titles_json
+            if total_from_planning is not None:
+                write_vals["x_outstanding_amount"] = total_from_planning
+                write_vals["x_payment_status"] = "unpaid"
+
+            if write_vals:
+                partner.write(write_vals)
+                # Notify any POS terminal that has this partner selected.
+                try:
+                    env["pos.order"].send_partner_bus_event(
+                        partner.id,
+                        float(partner.x_outstanding_amount or 0.0),
+                        partner.x_payment_status or "unpaid",
+                        partner.name or "",
+                    )
+                    _logger.info("[Kassa QR] Bus event published for partner %s after Planning update", partner.id)
+                except Exception as exc:
+                    _logger.warning("[Kassa QR] Could not publish bus event: %s", exc)
+
+            _ensure_session_products(env, [s["title"] for s in sessions])
         else:
             # Fall back to whatever was stored from prior new_registration messages.
             raw = partner.x_session_title or ""
