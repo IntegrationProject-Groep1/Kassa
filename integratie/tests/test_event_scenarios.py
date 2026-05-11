@@ -408,3 +408,234 @@ class TestComplexEventScenarios:
         poller.process_order(refund_order)
         sent_types = [c[0][0] for c in mock_send.call_args_list]
         assert 'refund_processed' in sent_types
+
+
+# ── Pending Top-up Lifecycle Integration Tests ─────────────────────────────────
+# These tests chain OrderPoller and receiver together via a shared in-memory
+# Odoo state to verify the full pending-topup → lease-grant → balance-merge flow.
+
+def _wallet_lease_grant_xml(identity_uuid: str, balance: float, lease_id: str) -> bytes:
+    """Build a minimal valid wallet_lease_grant XML message."""
+    import uuid
+    mid = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<message>'
+        '<header>'
+        f'<message_id>{mid}</message_id>'
+        '<timestamp>2026-05-11T22:00:00Z</timestamp>'
+        '<source>crm</source>'
+        '<type>wallet_lease_grant</type>'
+        '<version>2.0</version>'
+        f'<correlation_id>{cid}</correlation_id>'
+        '</header>'
+        '<body>'
+        f'<identity_uuid>{identity_uuid}</identity_uuid>'
+        f'<current_balance currency="eur">{balance:.2f}</current_balance>'
+        f'<lease_id>{lease_id}</lease_id>'
+        '</body>'
+        '</message>'
+    ).encode('utf-8')
+
+
+class TestPendingTopupLifecycle:
+    """
+    Cross-component integration tests: OrderPoller × receiver.
+
+    These tests verify the FULL pending-topup lifecycle:
+      1. Visitor scans QR → lease requested (x_lease_active=True, x_lease_id='')
+      2. Cashier processes top-up BEFORE lease grant arrives
+         → Poller parks amount in x_pending_topup_balance (does NOT call
+           action_add_wallet_amount, does NOT send wallet_balance_update)
+      3. CRM sends wallet_lease_grant with current_balance
+         → Receiver merges: final_balance = crm_balance + x_pending_topup_balance
+         → x_pending_topup_balance cleared to 0
+         → wallet_balance_update sent to frontend with the correct merged balance
+
+    The shared `odoo_state` dict simulates Odoo's database across both components.
+    """
+
+    @pytest.fixture
+    def ch(self):
+        m = MagicMock()
+        m.delivery_tag = 42
+        return m
+
+    @pytest.fixture
+    def method(self):
+        m = MagicMock()
+        m.delivery_tag = 42
+        return m
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_full_pending_topup_lifecycle(self, mock_send, poller, ch, method):
+        """
+        Full 2-step integration: top-up parked by poller → merged by receiver.
+        """
+        odoo_state = {
+            'id': 100, 'name': 'Test User',
+            'x_user_id': _UUID, 'x_badge_id': _BADGE,
+            'x_wallet_balance': 0.0, 'x_pending_topup_balance': 0.0,
+            'x_lease_active': True, 'x_lease_id': '',
+            'x_lease_transaction_count': 0,
+            'x_payment_status': 'unpaid', 'x_outstanding_amount': 0.0,
+            'is_company': False, 'email': 'test@example.com',
+            'customer_type': 'private', 'street': 'Teststraat 1',
+            'zip': '1000', 'city': 'Brussel', 'country_code': 'be',
+        }
+
+        def poller_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+            if method_name in ('read', 'search_read'):
+                if model == 'res.partner':
+                    return [odoo_state.copy()]
+                if model == 'pos.session':
+                    return [{'config_id': [1, 'Inschrijvingskassa']}]
+                if model == 'pos.config':
+                    return [{'name': 'Inschrijvingskassa'}]
+                if model == 'pos.order.line':
+                    return [
+                        {'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': 20.0,
+                         'qty': 1, 'price_unit': 20.0, 'tax_ids': []}
+                        for lid in args[0]
+                    ]
+                if model == 'product.product':
+                    return [{'id': pid, 'x_is_topup': True, 'pos_categ_ids': []} for pid in args[0]]
+                return []
+            if method_name == 'write':
+                if model == 'res.partner':
+                    odoo_state.update(args[1])
+                return True
+            return True
+
+        poller.models.execute_kw.side_effect = poller_execute_kw
+        poller.process_order(_make_order(order_id=60, total=20.0))
+
+        assert odoo_state.get('x_pending_topup_balance') == 20.0
+        assert odoo_state['x_wallet_balance'] == 0.0
+
+        # Receiver processing
+        mock_send.reset_mock()
+        receiver_models = MagicMock()
+
+        def receiver_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+            if model == 'res.partner' and method_name == 'search_read':
+                return [odoo_state.copy()]
+            if model == 'res.partner' and method_name == 'write':
+                odoo_state.update(args[1])
+            return True
+
+        receiver_models.execute_kw.side_effect = receiver_execute_kw
+        with patch('receiver.get_odoo_connection', return_value=(1, receiver_models)):
+            with patch('receiver.send_typed_message', mock_send):
+                receiver.process_message(ch, method, None, _wallet_lease_grant_xml(_UUID, 50.0, 'LEASE-FINAL'))
+
+        assert odoo_state['x_wallet_balance'] == 70.0
+        assert odoo_state['x_pending_topup_balance'] == 0.0
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_multiple_pending_topups_all_merged(self, mock_send, poller, ch, method):
+        """
+        Edge case: two top-up orders processed before lease grant arrives.
+        """
+        odoo_state = {
+            'id': 101, 'name': 'Double Top-up User',
+            'x_user_id': _UUID, 'x_badge_id': _BADGE,
+            'x_wallet_balance': 0.0, 'x_pending_topup_balance': 0.0,
+            'x_lease_active': True, 'x_lease_id': '',
+            'x_lease_transaction_count': 0,
+            'x_payment_status': 'unpaid', 'x_outstanding_amount': 0.0,
+            'is_company': False, 'email': 'double@example.com',
+            'customer_type': 'private', 'street': 'Dubbel 2',
+            'zip': '2000', 'city': 'Antwerpen', 'country_code': 'be',
+        }
+
+        current_amount = [10.0]
+
+        def poller_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+            if method_name in ('read', 'search_read'):
+                if model == 'res.partner':
+                    return [odoo_state.copy()]
+                if model == 'pos.session':
+                    return [{'config_id': [1, 'Inschrijvingskassa']}]
+                if model == 'pos.config':
+                    return [{'name': 'Inschrijvingskassa'}]
+                if model == 'pos.order.line':
+                    return [
+                        {'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': current_amount[0],
+                         'qty': 1, 'price_unit': current_amount[0], 'tax_ids': []}
+                        for lid in args[0]
+                    ]
+                if model == 'product.product':
+                    return [{'id': pid, 'x_is_topup': True, 'pos_categ_ids': []} for pid in args[0]]
+                return []
+            if method_name == 'write':
+                if model == 'res.partner':
+                    odoo_state.update(args[1])
+                return True
+            return True
+
+        poller.models.execute_kw.side_effect = poller_execute_kw
+
+        for amount, order_id in [(10.0, 61), (15.0, 62)]:
+            current_amount[0] = amount
+            poller.process_order(_make_order(order_id=order_id, total=amount))
+
+        assert odoo_state['x_pending_topup_balance'] == 25.0
+        assert odoo_state['x_wallet_balance'] == 0.0
+
+        # Receiver processing
+        mock_send.reset_mock()
+        receiver_models = MagicMock()
+
+        def receiver_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+            if model == 'res.partner' and method_name == 'search_read':
+                return [odoo_state.copy()]
+            if model == 'res.partner' and method_name == 'write':
+                odoo_state.update(args[1])
+            return True
+
+        receiver_models.execute_kw.side_effect = receiver_execute_kw
+        with patch('receiver.get_odoo_connection', return_value=(1, receiver_models)):
+            with patch('receiver.send_typed_message', mock_send):
+                receiver.process_message(ch, method, None, _wallet_lease_grant_xml(_UUID, 30.0, 'LEASE-DOUBLE'))
+
+        assert odoo_state['x_wallet_balance'] == 55.0
+        assert odoo_state['x_pending_topup_balance'] == 0.0
+
+    @patch('sender.send_typed_message', return_value=True)
+    def test_lease_grant_without_pending_sets_crm_balance(self, mock_send, ch, method):
+        """
+        Normal flow: lease grant arrives with NO pending top-ups.
+        Final balance = CRM balance exactly. x_pending_topup_balance stays 0.
+        """
+        odoo_state = {
+            'id': 102, 'name': 'Normal User',
+            'x_user_id': _UUID, 'x_wallet_balance': 0.0,
+            'x_pending_topup_balance': 0.0,   # no pending top-ups
+            'x_payment_status': 'unpaid', 'x_outstanding_amount': 0.0,
+        }
+
+        receiver_models = MagicMock()
+
+        def receiver_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
+            if model == 'res.partner' and method_name == 'search_read':
+                return [odoo_state.copy()]
+            if model == 'res.partner' and method_name == 'write':
+                odoo_state.update(args[1])
+                return True
+            return True
+
+        receiver_models.execute_kw.side_effect = receiver_execute_kw
+
+        with patch('receiver.get_odoo_connection', return_value=(1, receiver_models)):
+            with patch('receiver.send_typed_message', mock_send):
+                receiver.process_message(
+                    ch, method, None, _wallet_lease_grant_xml(_UUID, 40.0, 'LEASE-NORMAL')
+                )
+
+        assert odoo_state['x_wallet_balance'] == 40.0
+        assert odoo_state['x_pending_topup_balance'] == 0.0
+
+        receiver_sent = [c[0][0] for c in mock_send.call_args_list]
+        assert 'wallet_balance_update' in receiver_sent

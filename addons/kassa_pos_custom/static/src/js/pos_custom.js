@@ -20,7 +20,7 @@
 import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
-import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line";
+import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { effect } from "@odoo/owl";
 
 /** Bus channel published by pos.order.send_partner_bus_event. */
@@ -271,6 +271,26 @@ patch(PosStore.prototype, {
  *      but pay directly).
  */
 patch(PaymentScreen.prototype, {
+    setup() {
+        super.setup(...arguments);
+        try {
+            const order = this.currentOrder;
+            if (!order?.to_invoice) return;
+            const lines = order.get_paymentlines?.() || order.payment_ids || [];
+            if (lines.length > 0) return;
+            const pm = (
+                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
+                this.pos.payment_methods || []
+            ).find((m) => m.name === "Customer Account");
+            if (pm) {
+                this.addNewPaymentLine(pm);
+                console.log("[Kassa] Auto-added Customer Account for pre-set invoice (company member).");
+            }
+        } catch (err) {
+            console.warn("[Kassa] Could not auto-add Customer Account on PaymentScreen entry:", err);
+        }
+    },
+
     addNewPaymentLine(paymentMethod) {
         const result = super.addNewPaymentLine(...arguments);
         try {
