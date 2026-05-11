@@ -93,6 +93,11 @@ export class QrScanButton extends Component {
             ? new BarcodeDetector({ formats: ["qr_code"] })
             : null;
 
+        if (!detector && !window.jsQR) {
+            this._setError("QR-scannen wordt niet ondersteund door deze browser.");
+            return;
+        }
+
         while (this._scanning) {
             try {
                 const video = this.videoRef.el;
@@ -103,8 +108,10 @@ export class QrScanButton extends Component {
                         const codes = await detector.detect(video);
                         if (codes.length > 0) rawValue = codes[0].rawValue;
                     } else if (window.jsQR) {
-                        this._canvas.width  = video.videoWidth;
-                        this._canvas.height = video.videoHeight;
+                        if (this._canvas.width !== video.videoWidth || this._canvas.height !== video.videoHeight) {
+                            this._canvas.width  = video.videoWidth;
+                            this._canvas.height = video.videoHeight;
+                        }
                         this._ctx.drawImage(video, 0, 0, this._canvas.width, this._canvas.height);
                         const imgData = this._ctx.getImageData(0, 0, this._canvas.width, this._canvas.height);
                         const result  = window.jsQR(imgData.data, imgData.width, imgData.height);
