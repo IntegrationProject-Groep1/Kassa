@@ -558,9 +558,24 @@ class TestEventEndedPipeline:
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
-    def test_valid_event_ended_passes_xsd_and_returns_all_leases(
+    def test_valid_event_ended_passes_xsd_and_acks(
         self, mock_conn, mock_error, mock_send, ch, method
     ):
+        """XSD-valid event_ended is accepted (acked) without errors."""
+        uid = 1
+        models = MagicMock()
+        mock_conn.return_value = (uid, models)
+
+        body = _event_ended_xml()
+        receiver.process_message(ch, method, None, body)
+
+        mock_error.assert_not_called()
+        ch.basic_nack.assert_not_called()
+        ch.basic_ack.assert_called_once()
+
+    @patch("receiver.send_typed_message")
+    def test_do_return_all_leases_returns_all_active_leases(self, mock_send):
+        """_do_return_all_leases sends wallet_lease_return for every active partner."""
         uid = 1
         models = MagicMock()
         active_partners = [
@@ -570,14 +585,8 @@ class TestEventEndedPipeline:
              "x_wallet_balance": 5.0, "x_lease_id": "L2", "x_lease_transaction_count": 0},
         ]
         models.execute_kw.side_effect = [active_partners, True]
-        mock_conn.return_value = (uid, models)
 
-        body = _event_ended_xml()
-        receiver.process_message(ch, method, None, body)
-
-        mock_error.assert_not_called()
-        ch.basic_nack.assert_not_called()
-        ch.basic_ack.assert_called_once()
+        receiver._do_return_all_leases(uid, models)
 
         assert mock_send.call_count == 2
         assert all(c[0][0] == "wallet_lease_return" for c in mock_send.call_args_list)

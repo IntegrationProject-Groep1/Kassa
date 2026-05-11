@@ -17,6 +17,7 @@
 
 import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
+import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line";
 import { effect } from "@odoo/owl";
 
@@ -187,6 +188,64 @@ patch(PosStore.prototype, {
             console.log("[Kassa] Partner updated from bus event:", partnerId);
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
+        }
+    },
+});
+
+// ── PaymentScreen patch ───────────────────────────────────────────────────────
+
+/**
+ * Two-way convenience link between "Customer Account" and the Invoice toggle:
+ *
+ *   1. Selecting "Customer Account" on the left  → auto-enables Invoice.
+ *   2. Enabling the Invoice toggle on the right  → auto-adds "Customer Account"
+ *      as the payment method (only when no payment line exists yet, so the
+ *      cashier can still swap it to Cash/Card for customers who want an invoice
+ *      but pay directly).
+ */
+patch(PaymentScreen.prototype, {
+    addNewPaymentLine(paymentMethod) {
+        const result = super.addNewPaymentLine(...arguments);
+        try {
+            if (paymentMethod?.name === "Customer Account") {
+                const order = this.currentOrder;
+                if (order && !order.to_invoice) {
+                    if (order.set_to_invoice) {
+                        order.set_to_invoice(true);
+                    } else {
+                        order.to_invoice = true;
+                    }
+                    console.log("[Kassa] Auto-enabled Invoice for Customer Account.");
+                }
+            }
+        } catch (err) {
+            console.warn("[Kassa] Could not auto-enable invoice:", err);
+        }
+        return result;
+    },
+
+    async toggleIsToInvoice() {
+        await super.toggleIsToInvoice(...arguments);
+        try {
+            const order = this.currentOrder;
+            if (!order || !order.to_invoice) return;
+
+            // Only auto-add when no payment line has been chosen yet.
+            const lines = order.get_paymentlines ? order.get_paymentlines() : (order.payment_ids || []);
+            if (lines.length > 0) return;
+
+            const pm = (
+                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
+                this.pos.payment_methods ||
+                []
+            ).find((m) => m.name === "Customer Account");
+
+            if (pm) {
+                this.addNewPaymentLine(pm);
+                console.log("[Kassa] Auto-added Customer Account for Invoice.");
+            }
+        } catch (err) {
+            console.warn("[Kassa] Could not auto-add Customer Account:", err);
         }
     },
 });

@@ -193,7 +193,6 @@ def test_registration_and_idempotency():
         <last_name>User</last_name>
       </contact>
       <type>private</type>
-      <session_id>sess-001</session_id>
       <payment_due>
         <amount currency="eur">10.00</amount>
         <status>unpaid</status>

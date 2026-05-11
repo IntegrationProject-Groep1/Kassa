@@ -9,6 +9,7 @@
 
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -37,14 +38,55 @@ from odoo_setup import (
 defusedxml.xmlrpc.monkey_patch()
 
 
+def _classify_connection_error(exc: BaseException) -> str | None:
+    """Return a human-readable reason string if exc is a network/DNS failure, else None."""
+    seen: set[int] = set()
+    queue: list[BaseException] = [exc]
+    while queue:
+        err = queue.pop()
+        if id(err) in seen:
+            continue
+        seen.add(id(err))
+        if isinstance(err, socket.gaierror):
+            return "host not found (DNS resolution failed)"
+        if isinstance(err, ConnectionRefusedError):
+            return "connection refused (service may not be running yet)"
+        if isinstance(err, TimeoutError):
+            return "connection timed out"
+        # pika wraps socket errors as: AMQPConnectionError((<class 'socket.gaierror'>, instance))
+        if err.args and isinstance(err.args[0], tuple) and len(err.args[0]) >= 1:
+            cls = err.args[0][0]
+            if isinstance(cls, type) and issubclass(cls, socket.gaierror):
+                return "host not found (DNS resolution failed)"
+            if isinstance(cls, type) and issubclass(cls, ConnectionRefusedError):
+                return "connection refused (service may not be running yet)"
+        for attr in ("__cause__", "__context__"):
+            chained = getattr(err, attr, None)
+            if chained:
+                queue.append(chained)
+    return None
+
+
 def _run_receiver() -> None:
     """Start the RabbitMQ receiver in a thread. Retries on connection failure."""
+    _logger = logging.getLogger("main")
     retry_delay = 5  # seconds between retries
     while True:
         try:
             receiver.start_listening()
         except Exception as exc:
-            print(f"[MAIN] Receiver crashed: {exc} – retrying in {retry_delay}s…", flush=True)
+            host = os.environ.get("RABBIT_HOST", "rabbitmq")
+            reason = _classify_connection_error(exc)
+            if reason:
+                _logger.warning(
+                    "Cannot connect to RabbitMQ at '%s': %s. Retrying in %ds.",
+                    host, reason, retry_delay,
+                )
+            else:
+                _logger.error(
+                    "Receiver crashed (%s): %s — retrying in %ds.",
+                    type(exc).__name__, exc, retry_delay,
+                )
             time.sleep(retry_delay)
 
 
