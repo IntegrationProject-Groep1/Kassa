@@ -494,7 +494,11 @@ class TestPendingTopupLifecycle:
                 if model == 'pos.config':
                     return [{'name': 'Inschrijvingskassa'}]
                 if model == 'pos.order.line':
-                    return [{'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': 20.0, 'qty': 1, 'price_unit': 20.0, 'tax_ids': []} for lid in args[0]]
+                    return [
+                        {'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': 20.0,
+                         'qty': 1, 'price_unit': 20.0, 'tax_ids': []}
+                        for lid in args[0]
+                    ]
                 if model == 'product.product':
                     return [{'id': pid, 'x_is_topup': True, 'pos_categ_ids': []} for pid in args[0]]
                 return []
@@ -513,6 +517,7 @@ class TestPendingTopupLifecycle:
         # Receiver processing
         mock_send.reset_mock()
         receiver_models = MagicMock()
+
         def receiver_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
             if model == 'res.partner' and method_name == 'search_read':
                 return [odoo_state.copy()]
@@ -556,7 +561,11 @@ class TestPendingTopupLifecycle:
                 if model == 'pos.config':
                     return [{'name': 'Inschrijvingskassa'}]
                 if model == 'pos.order.line':
-                    return [{'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': current_amount[0], 'qty': 1, 'price_unit': current_amount[0], 'tax_ids': []} for lid in args[0]]
+                    return [
+                        {'id': lid, 'product_id': [80, 'Top-up'], 'price_subtotal_incl': current_amount[0],
+                         'qty': 1, 'price_unit': current_amount[0], 'tax_ids': []}
+                        for lid in args[0]
+                    ]
                 if model == 'product.product':
                     return [{'id': pid, 'x_is_topup': True, 'pos_categ_ids': []} for pid in args[0]]
                 return []
@@ -578,6 +587,7 @@ class TestPendingTopupLifecycle:
         # Receiver processing
         mock_send.reset_mock()
         receiver_models = MagicMock()
+
         def receiver_execute_kw(db, uid, pwd, model, method_name, args, kw=None):
             if model == 'res.partner' and method_name == 'search_read':
                 return [odoo_state.copy()]
