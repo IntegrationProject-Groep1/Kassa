@@ -262,16 +262,9 @@ patch(PosStore.prototype, {
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
 /**
- * Two-way convenience link between "Customer Account" and the Invoice toggle:
- *
- *   1. Selecting "Customer Account" on the left  → auto-enables Invoice.
- *   2. Enabling the Invoice toggle on the right  → auto-adds "Customer Account"
- *      as the payment method (only when no payment line exists yet, so the
- *      cashier can still swap it to Cash/Card for customers who want an invoice
- *      but pay directly).
- *
- * Story 19: Badge Wallet is hidden via a template t-if on PaymentScreenMethods.
- * addNewPaymentLine keeps a safety-net block for the onMounted auto-add path.
+ * - Selecting "Customer Account" → auto-enables Invoice (company flow).
+ * - Entering PaymentScreen with to_invoice already set → auto-adds Customer Account.
+ * - Story 19: Badge Wallet hidden via template t-if; safety net in addNewPaymentLine.
  */
 patch(PaymentScreen.prototype, {
     setup() {
@@ -321,30 +314,6 @@ patch(PaymentScreen.prototype, {
         return result;
     },
 
-    async toggleIsToInvoice() {
-        await super.toggleIsToInvoice(...arguments);
-        try {
-            const order = this.currentOrder;
-            if (!order || !order.to_invoice) return;
-
-            // Only auto-add when no payment line has been chosen yet.
-            const lines = order.get_paymentlines ? order.get_paymentlines() : (order.payment_ids || []);
-            if (lines.length > 0) return;
-
-            const pm = (
-                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
-                this.pos.payment_methods ||
-                []
-            ).find((m) => m.name === "Customer Account");
-
-            if (pm) {
-                this.addNewPaymentLine(pm);
-                console.log("[Kassa] Auto-added Customer Account for Invoice.");
-            }
-        } catch (err) {
-            console.warn("[Kassa] Could not auto-add Customer Account:", err);
-        }
-    },
 });
 
 // ── PartnerLine patch ─────────────────────────────────────────────────────────
