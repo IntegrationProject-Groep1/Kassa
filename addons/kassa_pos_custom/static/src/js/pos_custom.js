@@ -261,10 +261,6 @@ patch(PosStore.prototype, {
 
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
-// Capture original paymentMethods getter before patching so we can extend it.
-const _origGetPaymentMethods =
-    Object.getOwnPropertyDescriptor(PaymentScreen.prototype, "paymentMethods")?.get;
-
 /**
  * Two-way convenience link between "Customer Account" and the Invoice toggle:
  *
@@ -284,13 +280,14 @@ patch(PaymentScreen.prototype, {
      * linked to the order.  OWL tracks `currentOrder.partner_id` as a reactive
      * dependency, so the list updates the moment a customer is selected or
      * deselected — no manual re-render needed.
+     *
+     * "Badge Wallet" is matched by name — this is safe because it is a
+     * project-specific payment method created by odoo_setup.py with this exact
+     * fixed name; it is never translated.
      */
     get paymentMethods() {
-        const all = _origGetPaymentMethods?.call(this)
-            ?? this.pos.models?.["pos.payment.method"]?.getAll?.()
-            ?? this.pos.payment_methods
-            ?? [];
-        const hasCustomer = !!this.currentOrder?.partner_id?.id;
+        const all = super.paymentMethods;
+        const hasCustomer = !!this.currentOrder?.partner_id;
         return hasCustomer ? all : all.filter((m) => m.name !== "Badge Wallet");
     },
 
@@ -315,9 +312,16 @@ patch(PaymentScreen.prototype, {
     },
 
     addNewPaymentLine(paymentMethod) {
-        // Safety net: block Badge Wallet even if called directly (e.g. programmatically)
-        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder?.partner_id?.id) {
-            console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+        // Safety net: block Badge Wallet if triggered programmatically while no customer is selected.
+        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder?.partner_id) {
+            try {
+                this.env.services.notification.add(
+                    "Badge Wallet vereist een gekoppelde klant. Selecteer eerst een klant.",
+                    { type: "warning", sticky: false }
+                );
+            } catch (err) {
+                console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.", err);
+            }
             return;
         }
 
