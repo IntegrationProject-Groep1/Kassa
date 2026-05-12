@@ -177,7 +177,9 @@ class OrderPoller:
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
-                    [order_ids, fields + ['x_wallet_updated', 'x_payment_message_id', 'x_invoice_message_id', 'x_rabbitmq_error']])
+                    [order_ids, fields + [
+                        'x_wallet_updated', 'x_payment_message_id', 'x_invoice_message_id', 'x_rabbitmq_error'
+                    ]])
             except xmlrpc.client.Fault:
                 # Fallback if custom fields are missing
                 orders = self.models.execute_kw(
