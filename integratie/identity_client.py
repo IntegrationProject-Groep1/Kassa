@@ -283,6 +283,10 @@ def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
     status, payload = _parse_identity_response(resp_xml)
     if status == "ok":
         return payload
+    logger.warning(
+        "[IDENTITY] lookup_by_email failed for %s: error_code=%s message=%s",
+        email, payload.get("error_code"), payload.get("message"),
+    )
     return None
 
 
@@ -293,4 +297,8 @@ def lookup_by_uuid(master_uuid: str) -> Optional[Dict[str, Optional[str]]]:
     status, payload = _parse_identity_response(resp_xml)
     if status == "ok":
         return payload
+    logger.warning(
+        "[IDENTITY] lookup_by_uuid failed for %s: error_code=%s message=%s",
+        master_uuid, payload.get("error_code"), payload.get("message"),
+    )
     return None

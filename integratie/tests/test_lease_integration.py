@@ -262,14 +262,17 @@ class TestBadgeScanBadgePipeline:
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
-    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+    def test_session_location_sends_lease_and_sessions_request(self, mock_conn, mock_error, mock_send, ch, method):
         models = MagicMock()
-        models.execute_kw.return_value = [_partner()]
+        models.execute_kw.side_effect = [[_partner()], True]
         mock_conn.return_value = (1, models)
 
         receiver.process_message(ch, method, None, _badge_scanned_badge_xml("BADGE-001", "session"))
 
-        mock_send.assert_not_called()
+        assert mock_send.call_count == 2
+        msg_types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_lease_request" in msg_types
+        assert "user_sessions_request" in msg_types
         mock_error.assert_not_called()
         ch.basic_ack.assert_called_once()
 
@@ -393,14 +396,17 @@ class TestBadgeScanQRPipeline:
     @patch("receiver.send_typed_message")
     @patch("receiver.send_error_to_queue")
     @patch("receiver.get_odoo_connection")
-    def test_session_location_no_lease_request(self, mock_conn, mock_error, mock_send, ch, method):
+    def test_session_location_sends_lease_and_sessions_request(self, mock_conn, mock_error, mock_send, ch, method):
         models = MagicMock()
-        models.execute_kw.return_value = [_partner()]
+        models.execute_kw.side_effect = [[_partner()], True]
         mock_conn.return_value = (1, models)
 
         receiver.process_message(ch, method, None, _badge_scanned_qr_xml(_UUID, "session"))
 
-        mock_send.assert_not_called()
+        assert mock_send.call_count == 2
+        msg_types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_lease_request" in msg_types
+        assert "user_sessions_request" in msg_types
         mock_error.assert_not_called()
         ch.basic_ack.assert_called_once()
 

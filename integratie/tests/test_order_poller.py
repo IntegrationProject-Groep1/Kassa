@@ -467,6 +467,50 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
 
 
 @patch('order_poller.sender')
+def test_process_consumption_badge_wallet_anonymous_blocked(mock_sender, poller):
+    """Anonymous order + Badge Wallet → system_error sent, no wallet deduction, order processable."""
+    order = {
+        'id': 42,
+        'lines': [],
+        'amount_total': 5.0,
+        'payment_ids': [10],
+        'x_wallet_updated': False,
+        'create_date': '2026-04-01 12:00:00',
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 5.0}],  # pos.payment read
+    ]
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>anon-corr</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>anon-pay</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.side_effect = [True, True]
+
+    ok, _corr, payment_msg_id = poller._process_consumption(
+        order, customer_info=None, is_anonymous=True
+    )
+
+    assert ok is True
+
+    mock_sender.send_error_to_queue.assert_called_once()
+    call_args = mock_sender.send_error_to_queue.call_args[0]
+    assert call_args[0] == "badge_wallet_anonymous_blocked"
+    assert call_args[1] is None
+    assert "42" in call_args[2]
+
+    wallet_calls = [
+        c for c in poller.models.execute_kw.call_args_list
+        if len(c[0]) > 4 and c[0][4] == 'action_process_wallet_payment'
+    ]
+    assert len(wallet_calls) == 0
+
+    msg_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'wallet_balance_update' not in msg_types
+
+
+@patch('order_poller.sender')
 def test_process_order_topup_increases_wallet_balance(mock_sender, poller):
     """Top-up orders with a fully-granted lease: balance updated + wallet_balance_update sent."""
     customer_info = {

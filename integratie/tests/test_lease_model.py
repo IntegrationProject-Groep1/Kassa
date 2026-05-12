@@ -154,11 +154,22 @@ class TestBadgeScanCheckIn:
         assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
-    def test_session_scan_does_not_trigger_lease(self, mock_send, odoo):
+    def test_session_scan_triggers_lease_and_sessions_request(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.return_value = [_badge_partner()]
+        models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_badge_root("session"), uid, models)
-        mock_send.assert_not_called()
+        assert mock_send.call_count == 2
+        msg_types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_lease_request" in msg_types
+        assert "user_sessions_request" in msg_types
+
+    @patch("receiver.send_typed_message")
+    def test_session_scan_sends_sessions_request_even_if_lease_active(self, mock_send, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = [_badge_partner(lease_active=True)]
+        receiver.process_badge_scan(_badge_root("session"), uid, models)
+        assert mock_send.call_count == 1
+        assert mock_send.call_args[0][0] == "user_sessions_request"
 
     @patch("receiver.send_error_to_queue")
     @patch("receiver.send_typed_message")
@@ -168,6 +179,23 @@ class TestBadgeScanCheckIn:
         receiver.process_badge_scan(_badge_root("entrance"), uid, models)
         mock_send.assert_not_called()
         mock_error.assert_called_once()
+
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.send_typed_message")
+    def test_sends_error_when_partner_has_no_user_id(self, mock_send, mock_error, odoo):
+        """Badge recognised but partner has no x_user_id — must report to kassa.errors, not silently drop."""
+        uid, models = odoo
+        partner_no_uuid = {
+            "id": 7, "name": "Unknown", "x_user_id": "",
+            "x_wallet_balance": 0.0, "x_date_of_birth": False,
+            "is_company": False, "x_lease_active": False,
+            "x_lease_id": "", "x_lease_transaction_count": 0,
+        }
+        models.execute_kw.return_value = [partner_no_uuid]
+        receiver.process_badge_scan(_badge_root("entrance"), uid, models)
+        mock_send.assert_not_called()
+        mock_error.assert_called_once()
+        assert mock_error.call_args[1]["error_code"] == "partner_not_linked"
 
 
 # ── process_badge_scan — QR code path ─────────────────────────────────────────
@@ -200,11 +228,14 @@ class TestQRScanCheckIn:
         assert mock_send.call_args[0][0] == "wallet_lease_request"
 
     @patch("receiver.send_typed_message")
-    def test_qr_session_scan_does_not_trigger_lease(self, mock_send, odoo):
+    def test_qr_session_scan_triggers_lease_and_sessions_request(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.return_value = [_badge_partner()]
+        models.execute_kw.side_effect = [[_badge_partner()], True]
         receiver.process_badge_scan(_qr_root("session"), uid, models)
-        mock_send.assert_not_called()
+        assert mock_send.call_count == 2
+        msg_types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_lease_request" in msg_types
+        assert "user_sessions_request" in msg_types
 
     @patch("receiver.send_typed_message")
     def test_qr_scan_skips_if_lease_already_active(self, mock_send, odoo):
