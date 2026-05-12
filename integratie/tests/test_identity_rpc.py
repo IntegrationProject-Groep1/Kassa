@@ -38,12 +38,21 @@ def test_rpc_success(monkeypatch):
     sample = (
         b"<?xml version='1.0'?>"
         b"<identity_response><status>ok</status><user>"
-        b"<master_uuid>rpc-1</master_uuid></user></identity_response>"
+        b"<master_uuid>rpc-1</master_uuid>"
+        b"<email>test@test.com</email>"
+        b"<created_by>test</created_by>"
+        b"<created_at>2026-05-08T10:00:00</created_at>"
+        b"</user></identity_response>"
     )
     fake = FakeChannel(reply_body=sample, respond=True)
     monkeypatch.setattr(identity_client, "connect_to_rabbitmq", lambda: (None, fake))
 
-    res = identity_client._rpc_call("identity.user.create.request", b"<x/>".decode("utf-8"))
+    valid_request = (
+        "<?xml version='1.0' encoding='utf-8'?>"
+        "<identity_request><email>test@test.com</email>"
+        "<source_system>test</source_system></identity_request>"
+    )
+    res = identity_client._rpc_call("identity.user.create.request", valid_request)
     assert "master_uuid" in res
 
 
