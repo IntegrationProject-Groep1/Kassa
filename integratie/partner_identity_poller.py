@@ -97,7 +97,7 @@ class PartnerIdentityPoller:
                 self.odoo_db, self.uid, self.odoo_pass,
                 "res.partner", "search_read",
                 [domain],
-                {"fields": ["x_user_id"], "limit": 1}
+                {"fields": ["x_user_id"], "limit": 1, "order": "active desc, id asc"}
             )
             if existing:
                 return existing[0]["x_user_id"]
