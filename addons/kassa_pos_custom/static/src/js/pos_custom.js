@@ -270,27 +270,10 @@ patch(PosStore.prototype, {
  *      cashier can still swap it to Cash/Card for customers who want an invoice
  *      but pay directly).
  *
- * Story 19: Badge Wallet is hidden until a customer is selected on the order.
- * The paymentMethods getter filters it out reactively; addNewPaymentLine keeps
- * a safety-net block in case the getter is bypassed.
+ * Story 19: Badge Wallet is hidden via a template t-if on PaymentScreenMethods.
+ * addNewPaymentLine keeps a safety-net block for the onMounted auto-add path.
  */
 patch(PaymentScreen.prototype, {
-    /**
-     * Hide "Badge Wallet" from the payment method list when no customer is
-     * linked to the order.  OWL tracks `currentOrder.partner_id` as a reactive
-     * dependency, so the list updates the moment a customer is selected or
-     * deselected — no manual re-render needed.
-     *
-     * "Badge Wallet" is matched by name — this is safe because it is a
-     * project-specific payment method created by odoo_setup.py with this exact
-     * fixed name; it is never translated.
-     */
-    get paymentMethods() {
-        const all = super.paymentMethods;
-        const hasCustomer = !!this.currentOrder?.partner_id;
-        return hasCustomer ? all : all.filter((m) => m.name !== "Badge Wallet");
-    },
-
     setup() {
         super.setup(...arguments);
         try {
@@ -312,16 +295,10 @@ patch(PaymentScreen.prototype, {
     },
 
     addNewPaymentLine(paymentMethod) {
-        // Safety net: block Badge Wallet if triggered programmatically while no customer is selected.
-        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder?.partner_id) {
-            try {
-                this.env.services.notification.add(
-                    "Badge Wallet vereist een gekoppelde klant. Selecteer eerst een klant.",
-                    { type: "warning", sticky: false }
-                );
-            } catch (err) {
-                console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.", err);
-            }
+        // Safety net: block Badge Wallet if called programmatically (e.g. onMounted auto-add)
+        // while no customer is selected. The template t-if hides the button for the normal path.
+        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder.get_partner()) {
+            console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
             return;
         }
 
