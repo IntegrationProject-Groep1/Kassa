@@ -237,9 +237,17 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             models, odoo_db, uid, odoo_pass, "ir.module.module", "read",
             [[module_id]], {"fields": ["state"]}
         )
-        if not module_state or module_state[0].get("state") != "installed":
+        state = module_state[0].get("state") if module_state else None
+        if state != "installed":
+            print(f"Installing addon '{addon_name}'...", flush=True)
             _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
                  "button_immediate_install", [[module_id]])
+        else:
+            # Always upgrade so new JS/XML/controller files are picked up
+            # when the pod restarts with fresh code from the init container.
+            print(f"Upgrading addon '{addon_name}' to register new assets...", flush=True)
+            _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
+                 "button_immediate_upgrade", [[module_id]])
     return True
 
 
