@@ -616,7 +616,11 @@ class TestProcessMessage:
     @patch("receiver.validate_xml")
     def test_nacks_on_odoo_connection_error(self, mock_validate, mock_odoo, mock_send_error, ch, method):
         mock_odoo.side_effect = ConnectionError("Odoo down")
-        body = _xml_bytes("badge_scanned", "<badge_id>B1</badge_id><location>bar</location>")
+        body = _xml_bytes(
+            "badge_scanned",
+            "<badge_id>B1</badge_id><location>bar</location>"
+            "<scanned_at>2026-03-28T12:00:00Z</scanned_at>",
+        )
         receiver.process_message(ch, method, None, body)
 
         # In the new robust receiver, we basic_publish to retry queue and basic_ack the original
@@ -633,7 +637,8 @@ class TestProcessMessage:
         mock_odoo.side_effect = ConnectionError("Temporary Odoo outage")
         body = _xml_bytes(
             "badge_scanned",
-            "<badge_id>B1</badge_id><location>bar</location>",
+            "<badge_id>B1</badge_id><location>bar</location>"
+            "<scanned_at>2026-03-28T12:00:00Z</scanned_at>",
             message_id="550e8400-e29b-41d4-a716-446655440007",
         )
 
@@ -682,7 +687,11 @@ class TestProcessMessage:
         models.execute_kw.return_value = []  # badge not found
         mock_odoo.return_value = (uid, models)
 
-        body = _xml_bytes("badge_scanned", "<badge_id>BADGE-X</badge_id><location>bar</location>")
+        body = _xml_bytes(
+            "badge_scanned",
+            "<badge_id>BADGE-X</badge_id><location>bar</location>"
+            "<scanned_at>2026-03-28T12:00:00Z</scanned_at>",
+        )
         receiver.process_message(ch, method, None, body)
 
         ch.basic_ack.assert_called_once_with(delivery_tag=42)
