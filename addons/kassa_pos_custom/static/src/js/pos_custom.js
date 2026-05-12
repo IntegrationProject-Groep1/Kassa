@@ -262,63 +262,58 @@ patch(PosStore.prototype, {
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
 /**
- * Two-way convenience link between "Customer Account" and the Invoice toggle:
- *
- *   1. Selecting "Customer Account" on the left  → auto-enables Invoice.
- *   2. Enabling the Invoice toggle on the right  → auto-adds "Customer Account"
- *      as the payment method (only when no payment line exists yet, so the
- *      cashier can still swap it to Cash/Card for customers who want an invoice
- *      but pay directly).
+ * - Company customer selected → auto-enable Invoice + add Customer Account.
+ * - Selecting "Customer Account" manually → auto-enables Invoice.
+ * - Story 19: Badge Wallet hidden via template t-if; safety net in addNewPaymentLine.
  */
 patch(PaymentScreen.prototype, {
+    _kassaFindPm(name) {
+        return (
+            this.pos.models?.["pos.payment.method"]?.getAll?.() ||
+            this.pos.payment_methods || []
+        ).find((m) => m.name === name);
+    },
+
+    _kassaActivateCompanyFlow() {
+        const order = this.currentOrder;
+        const partner = order.get_partner();
+        if (!partner || !(partner.is_company || partner.parent_id)) return;
+        if (!order.is_to_invoice()) order.set_to_invoice(true);
+        const lines = order.get_paymentlines?.() || [];
+        if (lines.length > 0) return;
+        const pm = this._kassaFindPm("Customer Account");
+        if (pm) this.addNewPaymentLine(pm);
+    },
+
     setup() {
         super.setup(...arguments);
         try {
-            const order = this.currentOrder;
-            if (!order?.to_invoice) return;
-            const lines = order.get_paymentlines?.() || order.payment_ids || [];
-            if (lines.length > 0) return;
-            const pm = (
-                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
-                this.pos.payment_methods || []
-            ).find((m) => m.name === "Customer Account");
-            if (pm) {
-                this.addNewPaymentLine(pm);
-                console.log("[Kassa] Auto-added Customer Account for pre-set invoice (company member).");
-            }
+            this._kassaActivateCompanyFlow();
         } catch (err) {
-            console.warn("[Kassa] Could not auto-add Customer Account on PaymentScreen entry:", err);
+            console.warn("[Kassa] Could not auto-activate company flow on entry:", err);
+        }
+    },
+
+    async selectPartner() {
+        await super.selectPartner(...arguments);
+        try {
+            this._kassaActivateCompanyFlow();
+        } catch (err) {
+            console.warn("[Kassa] Could not auto-activate company flow after partner select:", err);
         }
     },
 
     addNewPaymentLine(paymentMethod) {
-        // Story 19: hard-block Badge Wallet when no customer is linked to the order
-        if (paymentMethod?.name === "Badge Wallet") {
-            if (!this.currentOrder?.partner_id?.id) {
-                try {
-                    this.env.services.notification.add(
-                        "Badge Wallet vereist een gekoppelde klant. Selecteer eerst een klant.",
-                        { type: "warning", sticky: false }
-                    );
-                } catch {
-                    console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
-                }
-                return;
-            }
+        // Safety net: block Badge Wallet if called programmatically while no customer is selected.
+        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder.get_partner()) {
+            console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+            return;
         }
 
         const result = super.addNewPaymentLine(...arguments);
         try {
-            if (paymentMethod?.name === "Customer Account") {
-                const order = this.currentOrder;
-                if (order && !order.to_invoice) {
-                    if (order.set_to_invoice) {
-                        order.set_to_invoice(true);
-                    } else {
-                        order.to_invoice = true;
-                    }
-                    console.log("[Kassa] Auto-enabled Invoice for Customer Account.");
-                }
+            if (paymentMethod?.name === "Customer Account" && !this.currentOrder.is_to_invoice()) {
+                this.currentOrder.set_to_invoice(true);
             }
         } catch (err) {
             console.warn("[Kassa] Could not auto-enable invoice:", err);
@@ -326,30 +321,6 @@ patch(PaymentScreen.prototype, {
         return result;
     },
 
-    async toggleIsToInvoice() {
-        await super.toggleIsToInvoice(...arguments);
-        try {
-            const order = this.currentOrder;
-            if (!order || !order.to_invoice) return;
-
-            // Only auto-add when no payment line has been chosen yet.
-            const lines = order.get_paymentlines ? order.get_paymentlines() : (order.payment_ids || []);
-            if (lines.length > 0) return;
-
-            const pm = (
-                this.pos.models?.["pos.payment.method"]?.getAll?.() ||
-                this.pos.payment_methods ||
-                []
-            ).find((m) => m.name === "Customer Account");
-
-            if (pm) {
-                this.addNewPaymentLine(pm);
-                console.log("[Kassa] Auto-added Customer Account for Invoice.");
-            }
-        } catch (err) {
-            console.warn("[Kassa] Could not auto-add Customer Account:", err);
-        }
-    },
 });
 
 // ── PartnerLine patch ─────────────────────────────────────────────────────────
