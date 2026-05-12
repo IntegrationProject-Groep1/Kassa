@@ -46,7 +46,7 @@
 ```mermaid
 flowchart LR
     subgraph Incoming
-        CRM[CRM / Identity]
+        CRM[CRM]
         IoT[IoT Badge Scanners]
         PLANNING[Planning Service]
     end
@@ -261,7 +261,7 @@ pytest integratie/tests/ -v
  ┃ ┣ 📄 main.py                   # Service entrypoint
  ┃ ┣ 📄 receiver.py               # RabbitMQ consumer + incoming flow handlers
  ┃ ┣ 📄 order_poller.py           # Polls paid/done Odoo POS orders
- ┃ ┣ 📄 partner_identity_poller.py# Links Odoo partners with identity UUIDs
+ ┃ ┣ 📄 partner_identity_poller.py # Links Odoo partners with identity UUIDs
  ┃ ┣ 📄 sender.py                 # Outgoing XML builders + RabbitMQ publishing + outbox
  ┃ ┗ 📄 odoo_setup.py             # Idempotent Odoo bootstrap/configuration
  ┣ 📂 tools/                      # Top-level helper scripts
