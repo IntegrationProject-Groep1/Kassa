@@ -915,6 +915,17 @@ class OrderPoller:
         pay_info = self._get_special_payment_info(payment_ids)
         ok_wallet = True
 
+        if pay_info["is_badge_wallet"] and is_anonymous:
+            sender.send_error_to_queue(
+                "badge_wallet_anonymous_blocked",
+                None,
+                f"Order {order['id']}: Badge Wallet payment on anonymous order — no balance deducted."
+            )
+            logger.warning(
+                "⚠️ [STORY-19] Anonymous order %s used Badge Wallet — system_error sent to kassa.errors.",
+                order['id']
+            )
+
         if pay_info["is_badge_wallet"] and customer_info and not order.get('x_wallet_updated'):
             # BEST PRACTICE: Use action_process_wallet_payment for atomic balance updates
             try:
