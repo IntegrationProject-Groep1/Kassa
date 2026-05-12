@@ -87,6 +87,7 @@ ROUTING_KEYS = {
     "wallet_balance_update": "kassa.frontend.wallet",
     "wallet_lease_request": "kassa.to.crm.wallet_lease_request",
     "wallet_lease_return": "kassa.to.crm.wallet_lease_return",
+    "user_sessions_request": "kassa.to.planning.user_sessions_request",
     "system_error": "kassa.errors",
     "log": "logs",
 }

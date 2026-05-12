@@ -292,6 +292,21 @@ patch(PaymentScreen.prototype, {
     },
 
     addNewPaymentLine(paymentMethod) {
+        // Story 19: hard-block Badge Wallet when no customer is linked to the order
+        if (paymentMethod?.name === "Badge Wallet") {
+            if (!this.currentOrder?.partner_id?.id) {
+                try {
+                    this.env.services.notification.add(
+                        "Badge Wallet vereist een gekoppelde klant. Selecteer eerst een klant.",
+                        { type: "warning", sticky: false }
+                    );
+                } catch {
+                    console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+                }
+                return;
+            }
+        }
+
         const result = super.addNewPaymentLine(...arguments);
         try {
             if (paymentMethod?.name === "Customer Account") {

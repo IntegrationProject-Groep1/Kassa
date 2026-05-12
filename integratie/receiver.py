@@ -45,7 +45,7 @@ from sender import (
     send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME,
     send_typed_message,
     build_wallet_lease_request_xml, build_wallet_lease_return_xml,
-    build_wallet_balance_update_xml,
+    build_wallet_balance_update_xml, build_user_sessions_request_xml,
 )
 from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
@@ -487,24 +487,41 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         partner["id"], scan_label, location,
     )
 
-    if location in ("entrance", "bar", "main_bar"):
+    if location in ("entrance", "bar", "main_bar", "session"):
         if not identity_uuid:
             logger.warning("[BADGE_SCANNED] check_in skipped: no identity_uuid for partner %s", partner["id"])
+            send_error_to_queue(
+                error_code="partner_not_linked",
+                related_message_id=message_id,
+                error_description=(
+                    f"Partner (Odoo ID={partner['id']}) found via {scan_label} "
+                    f"but has no x_user_id — cannot request wallet lease."
+                ),
+            )
             return
-        if partner.get("x_lease_active"):
+        if not partner.get("x_lease_active"):
+            xml = build_wallet_lease_request_xml(
+                identity_uuid=identity_uuid,
+                badge_id=badge_id or None,
+            )
+            send_typed_message("wallet_lease_request", xml, record_id=partner["id"], model="res.partner")
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "res.partner", "write",
+                [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
+            )
+            logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
+        else:
             logger.info("[BADGE_SCANNED] check_in: lease already active for %s, skipping", identity_uuid)
-            return
-        xml = build_wallet_lease_request_xml(
-            identity_uuid=identity_uuid,
-            badge_id=badge_id or None,
-        )
-        send_typed_message("wallet_lease_request", xml, record_id=partner["id"], model="res.partner")
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "write",
-            [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
-        )
-        logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
+        if location == "session":
+            sessions_xml = build_user_sessions_request_xml(
+                identity_uuid=identity_uuid,
+                correlation_id=message_id,
+            )
+            send_typed_message("user_sessions_request", sessions_xml)
+            logger.info("[BADGE_SCANNED] ✅ Sessions request sent for %s", identity_uuid)
+    else:
+        logger.info("[BADGE_SCANNED] Location=%s: no lease action taken for %s", location, scan_label)
 
 
 def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
@@ -518,6 +535,7 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
     Kassa remains consistent and CRM reconciles at event-end rather than
     receiving a duplicate return on the next check-out.
     """
+    logger.info("[LEASE_RETURN] Initiating lease return for partner_id=%d", partner_id)
     fresh: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
@@ -572,6 +590,9 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         current_balance = float(current_balance_text)
     except ValueError:
         raise ValueError(f"wallet_lease_grant: invalid current_balance '{current_balance_text}'")
+
+    logger.info("[LEASE_GRANT] Received for identity_uuid=%s | balance=%.2f | lease_id=%s",
+                identity_uuid, current_balance, lease_id or "<none>")
 
     amount_due: Optional[float] = None
     payment_due_el = body.find("payment_due")
@@ -675,6 +696,9 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         add_amount = float(add_amount_text)
     except ValueError:
         raise ValueError(f"wallet_remote_topup: invalid add_amount '{add_amount_text}'")
+
+    logger.info("[REMOTE_TOPUP] Received for identity_uuid=%s | add_amount=%.2f | reason=%s",
+                identity_uuid, add_amount, reason or "<none>")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -895,6 +919,16 @@ def process_message(ch, method, properties, body):
 
         if msg_type not in SCHEMA_MAP:
             raise ValueError(f"Unknown message type: '{msg_type}'")
+
+        # user_event is informational only — no Odoo action needed.
+        # Handle it here so we never open an Odoo connection for it, which
+        # would cause spurious retries when Odoo is temporarily unreachable.
+        if msg_type == "user_event":
+            logger.info("[RECEIVER] user_event received (no Odoo action): %s", related_message_id)
+            if related_message_id:
+                _remember_message_id(related_message_id)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
         uid, models = get_odoo_connection()
 
