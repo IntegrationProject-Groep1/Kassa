@@ -35,4 +35,16 @@
         </xpath>
     </t>
 
+
+    <!--
+        Story 19 — Hide Badge Wallet when no customer is linked to the order.
+        OWL re-evaluates currentOrder.get_partner() reactively whenever the
+        partner changes, so the button appears/disappears without a page reload.
+    -->
+    <t t-inherit="point_of_sale.PaymentScreenMethods" t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('paymentmethod')]" position="attributes">
+            <attribute name="t-if">paymentMethod.name !== 'Badge Wallet' || currentOrder.get_partner()</attribute>
+        </xpath>
+    </t>
+
 </templates>
