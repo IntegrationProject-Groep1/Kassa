@@ -279,7 +279,7 @@ patch(PaymentScreen.prototype, {
         const partner = order.get_partner();
         if (!partner || !(partner.is_company || partner.parent_id)) return;
         if (!order.is_to_invoice()) order.set_to_invoice(true);
-        const lines = order.get_paymentlines?.() || [];
+        const lines = order.get_paymentlines?.() || order.payment_ids || [];
         if (lines.length > 0) return;
         const pm = this._kassaFindPm("Customer Account");
         if (pm) this.addNewPaymentLine(pm);
