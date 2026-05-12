@@ -261,6 +261,10 @@ patch(PosStore.prototype, {
 
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
+// Capture original paymentMethods getter before patching so we can extend it.
+const _origGetPaymentMethods =
+    Object.getOwnPropertyDescriptor(PaymentScreen.prototype, "paymentMethods")?.get;
+
 /**
  * Two-way convenience link between "Customer Account" and the Invoice toggle:
  *
@@ -269,8 +273,27 @@ patch(PosStore.prototype, {
  *      as the payment method (only when no payment line exists yet, so the
  *      cashier can still swap it to Cash/Card for customers who want an invoice
  *      but pay directly).
+ *
+ * Story 19: Badge Wallet is hidden until a customer is selected on the order.
+ * The paymentMethods getter filters it out reactively; addNewPaymentLine keeps
+ * a safety-net block in case the getter is bypassed.
  */
 patch(PaymentScreen.prototype, {
+    /**
+     * Hide "Badge Wallet" from the payment method list when no customer is
+     * linked to the order.  OWL tracks `currentOrder.partner_id` as a reactive
+     * dependency, so the list updates the moment a customer is selected or
+     * deselected — no manual re-render needed.
+     */
+    get paymentMethods() {
+        const all = _origGetPaymentMethods?.call(this)
+            ?? this.pos.models?.["pos.payment.method"]?.getAll?.()
+            ?? this.pos.payment_methods
+            ?? [];
+        const hasCustomer = !!this.currentOrder?.partner_id?.id;
+        return hasCustomer ? all : all.filter((m) => m.name !== "Badge Wallet");
+    },
+
     setup() {
         super.setup(...arguments);
         try {
@@ -292,19 +315,10 @@ patch(PaymentScreen.prototype, {
     },
 
     addNewPaymentLine(paymentMethod) {
-        // Story 19: hard-block Badge Wallet when no customer is linked to the order
-        if (paymentMethod?.name === "Badge Wallet") {
-            if (!this.currentOrder?.partner_id?.id) {
-                try {
-                    this.env.services.notification.add(
-                        "Badge Wallet vereist een gekoppelde klant. Selecteer eerst een klant.",
-                        { type: "warning", sticky: false }
-                    );
-                } catch {
-                    console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
-                }
-                return;
-            }
+        // Safety net: block Badge Wallet even if called directly (e.g. programmatically)
+        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder?.partner_id?.id) {
+            console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+            return;
         }
 
         const result = super.addNewPaymentLine(...arguments);
