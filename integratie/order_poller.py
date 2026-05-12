@@ -305,6 +305,11 @@ class OrderPoller:
                         " — continuing without x_user_id",
                         partner_id, e
                     )
+                    sender.send_error_to_queue(
+                        "identity_service_unavailable",
+                        None,
+                        f"Identity fallback lookup failed for partner {partner_id} (email={email}): {e}",
+                    )
                 except Exception as e:
                     logger.error(
                         "❌ [IDENTITY FALLBACK] Unexpected error resolving UUID for partner %s: %s",
