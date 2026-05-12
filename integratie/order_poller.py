@@ -177,7 +177,7 @@ class OrderPoller:
                 orders = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'read',
-                    [order_ids, fields + ['x_wallet_updated', 'x_payment_message_id', 'x_rabbitmq_error']])
+                    [order_ids, fields + ['x_wallet_updated', 'x_payment_message_id', 'x_invoice_message_id', 'x_rabbitmq_error']])
             except xmlrpc.client.Fault:
                 # Fallback if custom fields are missing
                 orders = self.models.execute_kw(
@@ -950,10 +950,14 @@ class OrderPoller:
                 ok_wallet = False
 
         # Story 7: B2B vs B2C Invoice Logic
-        # Businesses (companies) using "Customer Account" pay later (status='open', amount=0, method='invoice')
-        # All others pay at the register (status='paid', method='on_site')
-        is_pay_later = pay_info["is_customer_account"] or (
-            (order.get('to_invoice') or order.get('account_move')) and customer_type == 'company'
+        # Companies pay later when using Customer Account or flagged for invoice
+        # (status='pending', amount=0, method='company_link')
+        # Private individuals always pay at the register, even when requesting an invoice copy
+        # (status='paid', method='on_site')
+        is_pay_later = customer_type == 'company' and (
+            pay_info["is_customer_account"]
+            or order.get('to_invoice')
+            or order.get('account_move')
         )
 
         invoice_status = "pending" if is_pay_later else "paid"
