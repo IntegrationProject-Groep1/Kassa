@@ -92,7 +92,6 @@ class PartnerIdentityPoller:
             domain = [
                 ["email", "=", email],
                 ["x_user_id", "!=", False],
-                ["active", "=", True],
             ]
             existing = self.models.execute_kw(
                 self.odoo_db, self.uid, self.odoo_pass,
