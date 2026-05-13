@@ -386,8 +386,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     dob_str = (body.findtext("date_of_birth") or "").strip()
     company_id = (body.findtext("company_id") or "").strip()
 
-    payment_due_el = body.find("payment_due")
-
     if not identity_uuid:
         raise ValueError("profile_update: identity_uuid missing in <body>")
 
@@ -405,11 +403,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     }
     if company_id:
         update_vals["x_company_id"] = company_id
-    if payment_due_el is not None:
-        status = (payment_due_el.findtext("status") or "pending").strip()
-        amount = parse_xml_float(payment_due_el.find("amount"))
-        update_vals["x_payment_status"] = status
-        update_vals["x_outstanding_amount"] = amount
     if body.find("vat_number") is not None:
         update_vals["vat"] = vat_number if vat_number else False
     if company_name and not name:
@@ -418,17 +411,13 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
     payment_due_el = body.find("payment_due")
+    outstanding_amount: Optional[float] = None
+    payment_status: Optional[str] = None
     if payment_due_el is not None:
-        try:
-            outstanding_amount = float(payment_due_el.findtext("amount", "0").strip())
-        except ValueError:
-            outstanding_amount = 0.0
-        payment_status = payment_due_el.findtext("status", "unpaid").strip()
+        outstanding_amount = parse_xml_float(payment_due_el.find("amount"))
+        payment_status = (payment_due_el.findtext("status") or "unpaid").strip()
         update_vals["x_outstanding_amount"] = outstanding_amount
         update_vals["x_payment_status"] = payment_status
-    else:
-        outstanding_amount = None
-        payment_status = None
 
     if existing:
         partner_id = existing[0]["id"]
