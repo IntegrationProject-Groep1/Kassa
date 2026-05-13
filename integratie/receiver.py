@@ -41,11 +41,14 @@ from typing import Any, List, Dict, Optional, Tuple, cast
 from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
+import uuid as _uuid
+
 from sender import (
     send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME,
     send_typed_message,
     build_wallet_lease_request_xml, build_wallet_lease_return_xml,
     build_wallet_balance_update_xml, build_user_sessions_request_xml,
+    build_session_view_request_xml,
 )
 from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
@@ -547,7 +550,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
             logger.info(
                 "[USER_SESSIONS_REQUEST] XSD validation + publish | routing_key=kassa.to.planning.user_sessions_request"
             )
-            send_typed_message("user_sessions_request", sessions_xml)
+            send_typed_message("user_sessions_request", sessions_xml, exchange="planning.exchange")
             logger.info(
                 "[USER_SESSIONS_REQUEST] ✅ Sent to planning.exchange | identity_uuid=%s | correlation_id=%s",
                 identity_uuid, message_id,
@@ -1303,6 +1306,21 @@ def start_listening():
         logger.warning("Could not flush on startup: %s", e)
         msg = f"Startup flush failure: {str(e)[:500]}"
         monitor.log("warning", "system_error", msg)
+
+    # Send session_view_request to Planning on every (re)connect so POS always
+    # has up-to-date session products. This fires at startup and on reconnect,
+    # so sessions are available even if Planning wasn't ready at Docker start.
+    try:
+        _corr = str(_uuid.uuid4())
+        send_typed_message(
+            "session_view_request",
+            build_session_view_request_xml(correlation_id=_corr),
+            exchange="planning.exchange",
+            buffer_on_fail=False,
+        )
+        logger.info("[RECEIVER] ✅ session_view_request sent to Planning | correlation_id=%s", _corr)
+    except Exception as e:
+        logger.warning("[RECEIVER] Could not send session_view_request at connect: %s", e)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
