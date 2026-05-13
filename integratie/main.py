@@ -13,6 +13,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
 
@@ -165,6 +166,22 @@ def main():
     )
     receiver_thread.start()
     print("✅ Receiver thread started", flush=True)
+
+    # Give the receiver thread a moment to establish its RabbitMQ connection
+    # before sending the startup session_view_request, so kassa.incoming is
+    # already bound and ready to receive Planning's response.
+    time.sleep(2)
+    try:
+        corr_id = str(uuid.uuid4())
+        session_view_xml = sender.build_session_view_request_xml(correlation_id=corr_id)
+        sender.send_typed_message(
+            "session_view_request",
+            session_view_xml,
+            exchange="planning.exchange",
+        )
+        print(f"✅ [STARTUP] Session view request sent | correlation_id={corr_id}", flush=True)
+    except Exception as _e:
+        print(f"⚠️  [STARTUP] Could not send session view request: {_e}", flush=True)
 
     # Step 7: Initialize and start Order Poller
     print("📦 Starting Order Poller...", flush=True)
