@@ -335,9 +335,9 @@ class TestEnsureSessionProduct:
     def test_creates_product_with_price(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [
-            [],           # product not found
-            [{"id": 10}], # Sessions category found
-            42,           # create
+            [],            # product not found
+            [{"id": 10}],  # Sessions category found
+            42,            # create
         ]
         receiver._ensure_session_product(uid, models, "Keynote", price=15.0)
 
@@ -466,9 +466,9 @@ class TestProcessSessionViewResponse:
         )
         root = self._make_root(sessions_xml, status="ok", count=1)
         models.execute_kw.side_effect = [
-            [],           # search_read product.template → not found
-            [{"id": 10}], # Sessions category
-            42,           # create product
+            [],            # search_read product.template → not found
+            [{"id": 10}],  # Sessions category
+            42,            # create product
         ]
         receiver.process_session_view_response(root, uid, models)
 
