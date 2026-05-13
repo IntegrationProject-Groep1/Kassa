@@ -742,6 +742,7 @@ def test_user_sessions_response_creates_pos_product():
 
     session_title = f"QR Session {TEST_ID}"
     correlation_id = str(uuid.uuid4())
+    identity_uuid = str(uuid.uuid4())
 
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
@@ -754,6 +755,7 @@ def test_user_sessions_response_creates_pos_product():
     <correlation_id>{correlation_id}</correlation_id>
   </header>
   <body>
+    <identity_uuid>{identity_uuid}</identity_uuid>
     <status>ok</status>
     <session_count>1</session_count>
     <sessions>
