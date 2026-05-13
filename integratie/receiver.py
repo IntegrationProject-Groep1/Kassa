@@ -97,6 +97,8 @@ SCHEMA_MAP = {
     "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
     "event_ended": os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
+    "user_sessions_response": os.path.join(SCHEMA_DIR, "schema_user_sessions_response.xsd"),
+    "session_view_response":  os.path.join(SCHEMA_DIR, "schema_session_view_response.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -188,16 +190,33 @@ def _publish_partner_bus_event(
 
 # ── Business logic per message type ───────────────────────────────────────────
 
-def _ensure_session_product(uid: int, models: OdooModelsProxy, session_title: str) -> None:
-    """Find or create a POS-available product for the given session title (idempotent)."""
+def _ensure_session_product(
+    uid: int, models: OdooModelsProxy, session_title: str, price: float | None = None
+) -> None:
+    """Find or create a POS-available product for the given session title (idempotent).
+
+    If *price* is provided it is always written to list_price, even when the
+    product already exists — so Planning's price stays in sync with Odoo.
+    """
     existing = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "product.template", "search_read",
         [[["name", "=", session_title], ["available_in_pos", "=", True]]],
-        {"fields": ["id"], "limit": 1},
+        {"fields": ["id", "list_price"], "limit": 1},
     )
     if existing:
-        logger.debug("[SESSION_PRODUCT] Already exists: '%s'", session_title)
+        product_id = existing[0]["id"]
+        if price is not None and existing[0].get("list_price") != price:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "product.template", "write",
+                [[product_id], {"list_price": price}],
+            )
+            logger.info(
+                "[SESSION_PRODUCT] ✓ Updated price for '%s': %.2f", session_title, price
+            )
+        else:
+            logger.debug("[SESSION_PRODUCT] Already exists (no price change): '%s'", session_title)
         return
 
     # Look up the Sessions POS category created by odoo_setup.
@@ -212,14 +231,17 @@ def _ensure_session_product(uid: int, models: OdooModelsProxy, session_title: st
     vals: Dict[str, Any] = {
         "name": session_title,
         "type": "consu",
-        "list_price": 0.0,
+        "list_price": price if price is not None else 0.0,
         "available_in_pos": True,
     }
     if categ_id:
         vals["pos_categ_ids"] = [(6, 0, [categ_id])]
 
     models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "create", [vals])
-    logger.info("[SESSION_PRODUCT] ✓ Created POS product: '%s'", session_title)
+    logger.info(
+        "[SESSION_PRODUCT] ✓ Created POS product: '%s' | price=%.2f",
+        session_title, price if price is not None else 0.0,
+    )
 
 
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -514,12 +536,22 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
         else:
             logger.info("[BADGE_SCANNED] check_in: lease already active for %s, skipping", identity_uuid)
         if location == "session":
+            logger.info(
+                "[USER_SESSIONS_REQUEST] Building request | identity_uuid=%s | correlation_id=%s",
+                identity_uuid, message_id,
+            )
             sessions_xml = build_user_sessions_request_xml(
                 identity_uuid=identity_uuid,
                 correlation_id=message_id,
             )
+            logger.info(
+                "[USER_SESSIONS_REQUEST] XSD validation + publish | routing_key=kassa.to.planning.user_sessions_request"
+            )
             send_typed_message("user_sessions_request", sessions_xml)
-            logger.info("[BADGE_SCANNED] ✅ Sessions request sent for %s", identity_uuid)
+            logger.info(
+                "[USER_SESSIONS_REQUEST] ✅ Sent to planning.exchange | identity_uuid=%s | correlation_id=%s",
+                identity_uuid, message_id,
+            )
     else:
         logger.info("[BADGE_SCANNED] Location=%s: no lease action taken for %s", location, scan_label)
 
@@ -858,6 +890,146 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
         logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
 
 
+def process_user_sessions_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle user_sessions_response from Planning (RPC reply to user_sessions_request).
+
+    For each session the visitor is registered for, ensure a POS product exists
+    in the Inschrijvingskassa under the 'Sessions' category.  Price stays 0.0
+    until a future story adds price-sync.
+    Binding required on planning.exchange: kassa.incoming ← planning.to.kassa.user_sessions_response
+    """
+    header = root.find("header")
+    body = root.find("body")
+    correlation_id = header.findtext("correlation_id") if header is not None else "unknown"
+    status = (body.findtext("status") or "unknown").strip() if body is not None else "unknown"
+    sessions = body.findall(".//session") if body is not None else []
+    session_count = len(sessions)
+
+    logger.info(
+        "[USER_SESSIONS_RESPONSE] ✅ Received | correlation_id=%s | status=%s | session_count=%d",
+        correlation_id, status, session_count,
+    )
+
+    if status == "not_found" or session_count == 0:
+        logger.warning(
+            "[USER_SESSIONS_RESPONSE] No sessions found for correlation_id=%s", correlation_id
+        )
+        return
+
+    for i, session in enumerate(sessions, 1):
+        session_id = session.findtext("session_id") or "?"
+        title = session.findtext("title") or "?"
+        start = session.findtext("start_datetime") or "?"
+        end = session.findtext("end_datetime") or "?"
+        loc = session.findtext("location") or "?"
+        session_type = session.findtext("session_type") or "?"
+        status_val = session.findtext("status") or "?"
+        max_att = session.findtext("max_attendees") or "?"
+        cur_att = session.findtext("current_attendees") or "?"
+        speaker_el = session.find("speaker")
+        if speaker_el is not None:
+            fn = speaker_el.findtext("contact/first_name") or ""
+            ln = speaker_el.findtext("contact/last_name") or ""
+            speaker = f"{fn} {ln}".strip() or "-"
+        else:
+            speaker = "-"
+        price_el = session.find("price")
+        price = (
+            f"{price_el.text} {price_el.get('currency', '')}".strip()
+            if price_el is not None else "-"
+        )
+        logger.info(
+            "[USER_SESSIONS_RESPONSE] Session %d/%d: id=%s | '%s' | %s–%s | loc=%s"
+            " | type=%s | status=%s | attendees=%s/%s | speaker=%s | price=%s",
+            i, session_count, session_id, title, start, end, loc,
+            session_type, status_val, cur_att, max_att, speaker, price,
+        )
+
+        if title and title != "?":
+            session_price: float | None = None
+            if price_el is not None:
+                try:
+                    session_price = float(price_el.text or 0)
+                except (ValueError, TypeError):
+                    pass
+            _ensure_session_product(uid, models, title, price=session_price)
+
+    logger.info(
+        "[USER_SESSIONS_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
+        " | correlation_id=%s",
+        session_count, correlation_id,
+    )
+
+
+def process_session_view_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle session_view_response from Planning (startup all-sessions fetch).
+
+    For each session, ensure a POS product exists in the Inschrijvingskassa under
+    the 'Sessions' category with the price from Planning.
+    Binding required on planning.exchange: kassa.incoming ← planning.to.kassa.session.view.response
+    """
+    body = root.find("body")
+    request_message_id = (body.findtext("request_message_id") or "unknown") if body is not None else "unknown"
+    status = (body.findtext("status") or "unknown").strip() if body is not None else "unknown"
+    sessions = body.findall(".//session") if body is not None else []
+    session_count = len(sessions)
+
+    logger.info(
+        "[SESSION_VIEW_RESPONSE] ✅ Received | request_message_id=%s | status=%s | session_count=%d",
+        request_message_id, status, session_count,
+    )
+
+    if status == "not_found" or session_count == 0:
+        logger.warning(
+            "[SESSION_VIEW_RESPONSE] No sessions returned | request_message_id=%s", request_message_id
+        )
+        return
+
+    for i, session in enumerate(sessions, 1):
+        session_id = session.findtext("session_id") or "?"
+        title = session.findtext("title") or "?"
+        start = session.findtext("start_datetime") or "?"
+        end = session.findtext("end_datetime") or "?"
+        loc = session.findtext("location") or "?"
+        session_type = session.findtext("session_type") or "?"
+        status_val = session.findtext("status") or "?"
+        max_att = session.findtext("max_attendees") or "?"
+        cur_att = session.findtext("current_attendees") or "?"
+        speaker_el = session.find("speaker")
+        if speaker_el is not None:
+            fn = speaker_el.findtext("contact/first_name") or ""
+            ln = speaker_el.findtext("contact/last_name") or ""
+            speaker = f"{fn} {ln}".strip() or "-"
+        else:
+            speaker = "-"
+        price_el = session.find("price")
+        price = (
+            f"{price_el.text} {price_el.get('currency', '')}".strip()
+            if price_el is not None else "-"
+        )
+        logger.info(
+            "[SESSION_VIEW_RESPONSE] Session %d/%d: id=%s | '%s' | %s–%s | loc=%s"
+            " | type=%s | status=%s | attendees=%s/%s | speaker=%s | price=%s",
+            i, session_count, session_id, title, start, end, loc,
+            session_type, status_val, cur_att, max_att, speaker, price,
+        )
+
+        if title and title != "?":
+            session_price: float | None = None
+            if price_el is not None:
+                try:
+                    session_price = float(price_el.text or 0)
+                except (ValueError, TypeError):
+                    pass
+            _ensure_session_product(uid, models, title, price=session_price)
+
+    logger.info(
+        "[SESSION_VIEW_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
+        " | request_message_id=%s",
+        session_count, request_message_id,
+    )
+
+
 # ── Central message processing ─────────────────────────────────────────────────
 def process_message(ch, method, properties, body):
     """
@@ -946,6 +1118,10 @@ def process_message(ch, method, properties, body):
             process_wallet_remote_topup(root, uid, models)
         elif msg_type == "event_ended":
             process_event_ended(root, uid, models)
+        elif msg_type == "user_sessions_response":
+            process_user_sessions_response(root, uid, models)
+        elif msg_type == "session_view_response":
+            process_session_view_response(root, uid, models)
 
         if related_message_id:
             _remember_message_id(related_message_id)
