@@ -47,6 +47,7 @@ const KASSA_PARTNER_FIELDS = [
     "is_company", "parent_id", "customer_rank", "active_lang_count",
     "x_wallet_balance", "x_user_id", "x_badge_id",
     "x_outstanding_amount", "x_payment_status", "x_session_title",
+    "x_lease_active", "x_lease_id",
 ];
 
 // ── PosStore patch ────────────────────────────────────────────────────────────
@@ -304,10 +305,28 @@ patch(PaymentScreen.prototype, {
     },
 
     addNewPaymentLine(paymentMethod) {
-        // Safety net: block Badge Wallet if called programmatically while no customer is selected.
-        if (paymentMethod?.name === "Badge Wallet" && !this.currentOrder.get_partner()) {
-            console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
-            return;
+        if (paymentMethod?.name === "Badge Wallet") {
+            const partner = this.currentOrder.get_partner();
+            if (!partner) {
+                console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+                return;
+            }
+            // Require a confirmed lease (x_lease_id non-empty) so we don't process
+            // a payment before the CRM has responded to the wallet_lease_request.
+            if (!partner.x_lease_active || !partner.x_lease_id) {
+                console.warn("[Kassa] Badge Wallet geblokkeerd: wallet-lease nog niet bevestigd door CRM.");
+                return;
+            }
+            const balanceCents = Math.round((partner.x_wallet_balance ?? 0) * 100);
+            const dueCents = Math.round(this.currentOrder.get_due() * 100);
+            if (balanceCents < dueCents) {
+                console.warn(
+                    "[Kassa] Badge Wallet geblokkeerd: onvoldoende saldo (€%s < €%s).",
+                    (partner.x_wallet_balance ?? 0).toFixed(2),
+                    this.currentOrder.get_due().toFixed(2)
+                );
+                return;
+            }
         }
 
         const result = super.addNewPaymentLine(...arguments);
@@ -344,6 +363,20 @@ patch(PartnerLine.prototype, {
     /** All session titles for display in the partner list (parsed from JSON or plain string). */
     get kassaSessionTitles() {
         return _parseSessionTitles(this.props.partner.x_session_title);
+    },
+
+    /**
+     * True only when the CRM has confirmed the wallet lease (x_lease_id non-empty).
+     * Prevents showing a stale €0.00 balance during the gap between QR scan and
+     * wallet_lease_grant arriving from the CRM.
+     */
+    get kassaHasWallet() {
+        return !!this.props.partner.x_lease_active;
+    },
+
+    /** Formatted wallet balance string, e.g. "12.50". */
+    get kassaWalletBalance() {
+        return (this.props.partner.x_wallet_balance || 0).toFixed(2);
     },
 });
 

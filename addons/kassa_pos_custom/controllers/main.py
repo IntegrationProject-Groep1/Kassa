@@ -323,6 +323,14 @@ class KassaQrController(http.Controller):
 
         _publish_lease_request(identity_uuid)
 
+        # Mark lease as requested so the POS wallet notification appears immediately.
+        # x_lease_id stays "" until CRM confirms; Badge Wallet payment is blocked until then.
+        partner.write({
+            "x_lease_active": True,
+            "x_lease_id": "",
+            "x_lease_transaction_count": 0,
+        })
+
         status = "not_found_and_created" if created else "lease_requested"
         return {
             "status": status,

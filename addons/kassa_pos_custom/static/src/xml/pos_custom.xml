@@ -12,7 +12,7 @@
     -->
     <t t-inherit="point_of_sale.PartnerLine" t-inherit-mode="extension">
         <xpath expr="//td[1]/b" position="after">
-            <t t-if="kassaSessionTitles.length > 0 or kassaHasOutstanding">
+            <t t-if="kassaSessionTitles.length > 0 or kassaHasOutstanding or kassaHasWallet">
                 <div class="kassa-outstanding-info d-flex gap-1 mt-1 flex-wrap">
                     <t t-foreach="kassaSessionTitles" t-as="sessionTitle" t-key="sessionTitle">
                         <span class="badge bg-info text-dark">
@@ -30,6 +30,11 @@
                             Onbetaald
                         </span>
                     </t>
+                    <t t-if="kassaHasWallet">
+                        <span t-att-class="'badge ' + ((props.partner.x_wallet_balance || 0) > 0 ? 'bg-success' : 'bg-secondary')">
+                            Wallet: €<t t-esc="kassaWalletBalance"/>
+                        </span>
+                    </t>
                 </div>
             </t>
         </xpath>
@@ -41,9 +46,54 @@
         OWL re-evaluates currentOrder.get_partner() reactively whenever the
         partner changes, so the button appears/disappears without a page reload.
     -->
+    <!--
+        Wallet balance notification shown next to the customer name on the payment screen.
+        Stays visible as long as a Kassa visitor is selected.
+        Green = sufficient balance; red = insufficient (Badge Wallet button is also hidden).
+    -->
+    <t t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('payment-buttons')]" position="inside">
+            <t t-if="currentOrder.partner_id &amp;&amp; currentOrder.partner_id.x_lease_active">
+                <t t-set="kassaBalance" t-value="currentOrder.partner_id.x_wallet_balance || 0"/>
+                <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.totalDue || 0) * 100)"/>
+                <div t-att-class="'kassa-wallet-notification mt-1 p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
+                    <i class="fa fa-credit-card me-1"/>
+                    Wallet: €<t t-esc="kassaBalance.toFixed(2)"/>
+                    <t t-if="!kassaSufficient">
+                        <span class="d-block small fw-normal">Onvoldoende saldo</span>
+                    </t>
+                </div>
+            </t>
+        </xpath>
+    </t>
+
+    <!--
+        Wallet balance notification on the product screen, above the Customer/Payment buttons.
+        Visible from the moment a Kassa visitor is selected until they pay or are deselected.
+    -->
+    <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
+        <xpath expr="//ActionpadWidget" position="before">
+            <t t-if="currentOrder.partner_id &amp;&amp; currentOrder.partner_id.x_lease_active">
+                <t t-set="kassaBalance" t-value="currentOrder.partner_id.x_wallet_balance || 0"/>
+                <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.totalDue || 0) * 100)"/>
+                <div t-att-class="'kassa-wallet-notification p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
+                    <i class="fa fa-credit-card me-1"/>
+                    Wallet: €<t t-esc="kassaBalance.toFixed(2)"/>
+                    <t t-if="!kassaSufficient">
+                        <span class="d-block small fw-normal">Onvoldoende saldo</span>
+                    </t>
+                </div>
+            </t>
+        </xpath>
+    </t>
+
+    <!--
+        Hide Badge Wallet button when no customer is selected or when the
+        customer's wallet balance is insufficient to cover the remaining order total.
+    -->
     <t t-inherit="point_of_sale.PaymentScreenMethods" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('paymentmethod')]" position="attributes">
-            <attribute name="t-if">paymentMethod.name !== 'Badge Wallet' || currentOrder.get_partner()</attribute>
+            <attribute name="t-if">paymentMethod.name !== 'Badge Wallet' || (currentOrder.partner_id &amp;&amp; currentOrder.partner_id.x_lease_active &amp;&amp; currentOrder.partner_id.x_lease_id &amp;&amp; Math.round((currentOrder.partner_id.x_wallet_balance || 0) * 100) >= Math.round((currentOrder.totalDue || 0) * 100))</attribute>
         </xpath>
     </t>
 
