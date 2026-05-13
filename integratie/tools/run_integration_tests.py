@@ -724,14 +724,15 @@ def test_session_view_response_creates_pos_product():
         f"found={len(products)}, price={products[0]['list_price'] if products else 'n/a'}",
     )
 
-    # Cleanup
+    # Cleanup — archive instead of delete: open POS sessions block product deletion
     if products:
         pt_ids = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "product.template", "search",
             [[["name", "=", session_title]]],
         )
         if pt_ids:
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "unlink", [pt_ids])
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "write",
+                              [pt_ids, {"active": False}])
 
 
 def test_user_sessions_response_creates_pos_product():
@@ -788,13 +789,15 @@ def test_user_sessions_response_creates_pos_product():
         f"found={len(products)}, price={products[0]['list_price'] if products else 'n/a'}",
     )
 
+    # Cleanup — archive instead of delete: open POS sessions block product deletion
     if products:
         pt_ids = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "product.template", "search",
             [[["name", "=", session_title]]],
         )
         if pt_ids:
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "unlink", [pt_ids])
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "write",
+                              [pt_ids, {"active": False}])
 
 
 def test_kassa_notify_product_update_callable():
@@ -887,13 +890,15 @@ def test_session_product_in_sessions_category():
         f"found={len(products)}, categ_ids={products[0]['pos_categ_ids'] if products else 'n/a'}",
     )
 
+    # Cleanup — archive instead of delete: open POS sessions block product deletion
     if products:
         pt_ids = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "product.template", "search",
             [[["name", "=", session_title]]],
         )
         if pt_ids:
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "unlink", [pt_ids])
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "write",
+                              [pt_ids, {"active": False}])
 
 
 def test_lease_topup_rejected_without_active_lease():
