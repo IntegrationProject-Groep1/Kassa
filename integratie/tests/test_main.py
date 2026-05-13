@@ -96,7 +96,7 @@ class TestMainSetup:
         # All missing fields are now created in a single batched 'create' call
         create_calls = [c for c in mock_models.execute_kw.call_args_list if c[0][4] == "create"]
         assert len(create_calls) == 1
-        assert len(create_calls[0][0][5][0]) == 23
+        assert len(create_calls[0][0][5][0]) == 24
 
     @patch("odoo_setup.xmlrpc.client.ServerProxy")
     def test_ensure_custom_fields_all_present(self, mock_proxy, mock_sleep):

@@ -337,7 +337,7 @@ class TestEnsureSessionProductEdgeCases:
 
     def test_skips_create_when_product_exists(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[{"id": 5}]]  # product found
+        models.execute_kw.side_effect = [[{"id": 5, "list_price": 0.0}]]  # found, no price change
         receiver._ensure_session_product(uid, models, "Existing Workshop")
         assert models.execute_kw.call_count == 1
 
@@ -367,12 +367,12 @@ class TestEnsureSessionProductEdgeCases:
 
     def test_idempotent_second_call_does_nothing(self, odoo):
         uid, models = odoo
-        # First call: create; second call: already exists
+        # First call: create; second call: already exists, no price change
         models.execute_kw.side_effect = [
-            [],          # first: not found
-            [],          # first: no category
-            44,          # first: created
-            [{"id": 44}],  # second: found
+            [],                    # first: not found
+            [],                    # first: no category
+            44,                    # first: created
+            [{"id": 44, "list_price": 0.0}],  # second: found, same price
         ]
         receiver._ensure_session_product(uid, models, "Workshop X")
         receiver._ensure_session_product(uid, models, "Workshop X")

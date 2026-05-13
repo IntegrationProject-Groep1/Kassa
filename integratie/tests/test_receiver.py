@@ -325,11 +325,44 @@ class TestEnsureSessionProduct:
     def test_skips_when_product_already_exists(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [
-            [{"id": 7}],  # search_read product.template → found
+            [{"id": 7, "list_price": 0.0}],  # search_read product.template → found, same price
         ]
         receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
 
-        # Only one XML-RPC call (the search); no create
+        # Only one XML-RPC call (the search); no create, no price write
+        assert models.execute_kw.call_count == 1
+
+    def test_creates_product_with_price(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],            # product not found
+            [{"id": 10}],  # Sessions category found
+            42,            # create
+        ]
+        receiver._ensure_session_product(uid, models, "Keynote", price=15.0)
+
+        create_call = models.execute_kw.call_args_list[2]
+        assert create_call[0][5][0]["list_price"] == 15.0
+
+    def test_updates_price_when_product_exists_with_different_price(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "list_price": 0.0}],  # found, price differs
+            True,                             # write
+        ]
+        receiver._ensure_session_product(uid, models, "Keynote", price=25.0)
+
+        write_call = models.execute_kw.call_args_list[1]
+        assert write_call[0][4] == "write"
+        assert write_call[0][5][1]["list_price"] == 25.0
+
+    def test_no_price_write_when_price_unchanged(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "list_price": 25.0}],  # found, same price
+        ]
+        receiver._ensure_session_product(uid, models, "Keynote", price=25.0)
+
         assert models.execute_kw.call_count == 1
 
     def test_new_registration_with_session_title_calls_ensure_product(self, odoo):
@@ -389,6 +422,98 @@ class TestEnsureSessionProduct:
             if c[0][3] == "product.template"
         ]
         assert product_calls == []
+
+
+class TestProcessSessionViewResponse:
+    """Tests for process_session_view_response — startup all-sessions handler."""
+
+    def _make_root(self, sessions_xml: str, status: str = "ok", count: int = 1,
+                   req_msg_id: str = "550e8400-e29b-41d4-a716-446655440001") -> ET.Element:
+        xml = (
+            "<message>"
+            "<header>"
+            f"<message_id>550e8400-e29b-41d4-a716-446655440000</message_id>"
+            "<timestamp>2026-05-13T09:00:00Z</timestamp>"
+            "<source>planning</source>"
+            "<type>session_view_response</type>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body>"
+            f"<request_message_id>{req_msg_id}</request_message_id>"
+            f"<status>{status}</status>"
+            f"<session_count>{count}</session_count>"
+            f"<sessions>{sessions_xml}</sessions>"
+            "</body>"
+            "</message>"
+        )
+        return ET.fromstring(xml)
+
+    def test_creates_product_for_each_session(self, odoo):
+        uid, models = odoo
+        sessions_xml = (
+            "<session>"
+            "<session_id>sess-001</session_id>"
+            "<title>Workshop: IoT</title>"
+            "<start_datetime>2026-05-15T14:00:00Z</start_datetime>"
+            "<end_datetime>2026-05-15T16:00:00Z</end_datetime>"
+            "<location>B3</location>"
+            "<session_type>workshop</session_type>"
+            "<status>published</status>"
+            "<max_attendees>30</max_attendees>"
+            "<current_attendees>12</current_attendees>"
+            '<price currency="eur">25.00</price>'
+            "</session>"
+        )
+        root = self._make_root(sessions_xml, status="ok", count=1)
+        models.execute_kw.side_effect = [
+            [],            # search_read product.template → not found
+            [{"id": 10}],  # Sessions category
+            42,            # create product
+        ]
+        receiver.process_session_view_response(root, uid, models)
+
+        create_call = models.execute_kw.call_args_list[2]
+        assert create_call[0][4] == "create"
+        vals = create_call[0][5][0]
+        assert vals["name"] == "Workshop: IoT"
+        assert vals["list_price"] == 25.0
+
+    def test_no_action_when_status_not_found(self, odoo):
+        uid, models = odoo
+        root = self._make_root("", status="not_found", count=0)
+        receiver.process_session_view_response(root, uid, models)
+        models.execute_kw.assert_not_called()
+
+    def test_no_action_when_sessions_empty(self, odoo):
+        uid, models = odoo
+        root = self._make_root("", status="ok", count=0)
+        receiver.process_session_view_response(root, uid, models)
+        models.execute_kw.assert_not_called()
+
+    def test_uses_request_message_id_from_body(self, odoo):
+        """Handler reads request_message_id from body, not correlation_id from header."""
+        uid, models = odoo
+        sessions_xml = (
+            "<session>"
+            "<session_id>s1</session_id>"
+            "<title>Keynote</title>"
+            "<start_datetime>2026-05-15T10:00:00Z</start_datetime>"
+            "<end_datetime>2026-05-15T11:00:00Z</end_datetime>"
+            "<location>Aula</location>"
+            "<session_type>keynote</session_type>"
+            "<status>published</status>"
+            "<max_attendees>200</max_attendees>"
+            "<current_attendees>0</current_attendees>"
+            "</session>"
+        )
+        custom_req_id = "550e8400-e29b-41d4-a716-446655441234"
+        root = self._make_root(sessions_xml, status="ok", count=1, req_msg_id=custom_req_id)
+        models.execute_kw.side_effect = [
+            [{"id": 5, "list_price": 0.0}],  # product already exists
+        ]
+        receiver.process_session_view_response(root, uid, models)
+        # Product already exists → only one call (search), no create
+        assert models.execute_kw.call_count == 1
 
 
 # ── process_profile_update ─────────────────────────────────────────────────────

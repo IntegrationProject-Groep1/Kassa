@@ -275,6 +275,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("pos.order", "x_rabbitmq_sent", "Sent to CRM via RabbitMQ", "boolean", {}),
         ("pos.order", "x_wallet_updated", "Wallet Balance Adjusted", "boolean", {}),
         ("pos.order", "x_payment_message_id", "CRM Payment Correlation ID", "char", {}),
+        ("pos.order", "x_invoice_message_id", "Invoice Request Message ID", "char", {}),
         ("pos.order", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
         ("res.partner", "x_rabbitmq_error", "RabbitMQ Integration Error", "text", {}),
         ("res.partner", "x_lease_active",            "Wallet Lease Active",        "boolean", {}),
