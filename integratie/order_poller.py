@@ -539,7 +539,7 @@ class OrderPoller:
                         except Exception as e:
                             logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
 
-                    if customer_info and customer_info.get('customer_type') == 'company':
+                    if inv_sent and customer_info and customer_info.get('customer_type') == 'company':
                         logger.info(f"📄 Invoice request sent for company order {order_id}")
             elif order.get('amount_total', 0) >= 0 and is_anonymous:
                 logger.warning(
