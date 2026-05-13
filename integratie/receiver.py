@@ -963,6 +963,17 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
         session_count, correlation_id,
     )
 
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info(
+            "[USER_SESSIONS_RESPONSE] Bus notification sent to %d open POS session(s)", notified
+        )
+    except Exception as exc:
+        logger.warning("[USER_SESSIONS_RESPONSE] Could not push bus notification: %s", exc)
+
 
 def process_session_view_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_view_response from Planning (startup all-sessions fetch).
@@ -1031,6 +1042,19 @@ def process_session_view_response(root: Element, uid: int, models: OdooModelsPro
         " | request_message_id=%s",
         session_count, request_message_id,
     )
+
+    # Push updated product list to all open POS sessions via the bus so the
+    # cashier's screen refreshes without a manual reload.
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info(
+            "[SESSION_VIEW_RESPONSE] Bus notification sent to %d open POS session(s)", notified
+        )
+    except Exception as exc:
+        logger.warning("[SESSION_VIEW_RESPONSE] Could not push bus notification: %s", exc)
 
 
 # ── Central message processing ─────────────────────────────────────────────────
