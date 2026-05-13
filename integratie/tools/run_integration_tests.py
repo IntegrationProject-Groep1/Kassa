@@ -393,7 +393,7 @@ def test_refund_flow():
 
 
 def test_invoice_flow():
-    section("TEST 9: Invoice Request Flow")
+    section("TEST 9: Private Person Invoice Request Flow")
     uid, models = get_rpc()
     session_id = ensure_opened_session(uid, models)
 
@@ -402,16 +402,21 @@ def test_invoice_flow():
         [[["x_user_id", "=", TEST_USER_ID]]]
     )
     if not partner_ids:
-        report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
+        report_result("Sender: Invoice Request (private)", False, "Setup failed: Test partner not found")
         return
     partner_id = partner_ids[0]
+
+    # Ensure partner is private (not a company)
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+                      [[partner_id], {"is_company": False}])
+
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
         [[["available_in_pos", "=", True]]], {"limit": 1}
     )
     product_id = product_ids[0]
 
-    # Create order with to_invoice=True
+    # Private person requests invoice — cashier sets to_invoice=True; pays cash (state stays paid)
     order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
         "session_id": session_id, "partner_id": partner_id, "to_invoice": True,
         "amount_total": 20.0, "amount_paid": 20.0, "amount_tax": 0.0, "amount_return": 0.0,
@@ -422,15 +427,101 @@ def test_invoice_flow():
     }])
 
     models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "paid"}])
-    print(f"  [ODOO] Created Invoice Order ID: {order_id}")
+    print(f"  [ODOO] Created Private Invoice Order ID: {order_id}")
 
-    wait(12, "order poller to pick up invoice request")
+    wait(12, "order poller to pick up private invoice request")
 
     order = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "pos.order", "read", [order_id, ["x_rabbitmq_sent"]]
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read",
+        [order_id, ["x_rabbitmq_sent", "x_invoice_message_id"]]
     )[0]
-    ok = order["x_rabbitmq_sent"] is True
-    report_result("Sender: Invoice Request", ok, f"x_rabbitmq_sent = {order['x_rabbitmq_sent']}")
+    sent_ok = order["x_rabbitmq_sent"] is True
+    invoice_ok = bool(order.get("x_invoice_message_id"))
+    report_result(
+        "Sender: Invoice Request (private)",
+        sent_ok and invoice_ok,
+        f"x_rabbitmq_sent={order['x_rabbitmq_sent']}, x_invoice_message_id={'set' if invoice_ok else 'missing'}"
+    )
+
+
+def test_company_customer_account_pending_flow():
+    section("TEST 9b: Company Customer Account — Deferred Payment Flow")
+    uid, models = get_rpc()
+    session_id = ensure_opened_session(uid, models)
+
+    # Find or create a company partner with VAT and x_user_id
+    company_user_id = str(uuid.uuid4())
+    company_partner_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "create", [{
+        "name": f"TestCorp-{TEST_ID}",
+        "is_company": True,
+        "email": f"corp-{TEST_ID}@example.com",
+        "vat": "BE0123456789",
+        "x_user_id": company_user_id,
+        "street": "Zakenlaan 1",
+        "city": "Gent",
+        "zip": "9000",
+    }])
+    print(f"  [ODOO] Created company partner ID: {company_partner_id}")
+
+    # Find Customer Account payment method
+    ca_pm_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.payment.method", "search",
+        [[["name", "ilike", "Customer Account"]]], {"limit": 1}
+    )
+    if not ca_pm_ids:
+        report_result(
+            "Sender: Company Customer Account (pending)",
+            False,
+            "Customer Account payment method not found in Odoo"
+        )
+        # Cleanup
+        models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+                          [[company_partner_id], {"active": False}])
+        return
+    ca_pm_id = ca_pm_ids[0]
+
+    product_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "product.product", "search",
+        [[["available_in_pos", "=", True]]], {"limit": 1}
+    )
+    product_id = product_ids[0]
+
+    # Company order: to_invoice=True + Customer Account (Odoo sets both automatically on validate)
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "create", [{
+        "session_id": session_id, "partner_id": company_partner_id, "to_invoice": True,
+        "amount_total": 50.0, "amount_paid": 50.0, "amount_tax": 0.0, "amount_return": 0.0,
+    }])
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order.line", "create", [{
+        "order_id": order_id, "product_id": product_id, "qty": 1, "price_unit": 50.0,
+        "price_subtotal": 50.0, "price_subtotal_incl": 50.0,
+    }])
+    # Attach Customer Account payment
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.payment", "create", [{
+        "pos_order_id": order_id, "payment_method_id": ca_pm_id, "amount": 50.0,
+    }])
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.order", "write", [[order_id], {"state": "invoiced"}])
+    print(f"  [ODOO] Created Company Customer Account Order ID: {order_id}")
+
+    wait(12, "order poller to pick up company customer account order")
+
+    order = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "pos.order", "read",
+        [order_id, ["x_rabbitmq_sent", "x_invoice_message_id", "x_payment_message_id"]]
+    )[0]
+    sent_ok = order["x_rabbitmq_sent"] is True
+    invoice_ok = bool(order.get("x_invoice_message_id"))
+    payment_ok = bool(order.get("x_payment_message_id"))
+    report_result(
+        "Sender: Company Customer Account (pending)",
+        sent_ok and invoice_ok and payment_ok,
+        f"sent={order['x_rabbitmq_sent']}, invoice_msg={'set' if invoice_ok else 'missing'}, "
+        f"payment_msg={'set' if payment_ok else 'missing'}"
+    )
+
+    # Cleanup
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+                      [[company_partner_id], {"active": False}])
 
 
 def test_wallet_payment_flow():
@@ -961,6 +1052,7 @@ def main():
         test_pos_order_sync()
         test_refund_flow()
         test_invoice_flow()
+        test_company_customer_account_pending_flow()
         test_wallet_payment_flow()
         test_anonymous_order_flow()
         test_xsd_rejection()

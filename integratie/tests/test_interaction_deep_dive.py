@@ -110,9 +110,11 @@ class TestSystemicInteractions:
     @patch('order_poller.sender.build_invoice_request_xml', return_value="<inv/>")
     @patch('order_poller.sender.build_consumption_order_xml', return_value="<c/>")
     @patch('order_poller.sender.build_payment_registered_xml', return_value="<p/>")
-    def test_b2b_auto_invoice_logic(self, mock_p, mock_c, mock_build_inv, mock_send, poller):
-        # Company order should trigger invoice request
-        poller.process_order(_make_order(order_id=401))
+    def test_invoice_sent_when_to_invoice_true(self, mock_p, mock_c, mock_build_inv, mock_send, poller):
+        # Odoo sets to_invoice=True automatically for company orders on validate
+        order = {**_make_order(order_id=401), 'to_invoice': True, 'account_move': None,
+                 'x_invoice_message_id': None, 'x_rabbitmq_error': ''}
+        poller.process_order(order)
         assert mock_build_inv.called
 
     def test_cancel_registration_rpc(self):
