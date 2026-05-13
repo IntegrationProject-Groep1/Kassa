@@ -1,10 +1,8 @@
-"""B2B Auto-Invoice Tests
+"""B2B Invoice Tests
 
-Story: B2B Auto-Invoice automation
-When a company customer places an order, an invoice_request should be automatically
-generated WITHOUT requiring the kassier to click the Factuur button.
-
-This ensures contract compliance: company customers must always be invoiced.
+For company customers, Odoo auto-activates to_invoice=True and Customer Account on validate.
+For private persons, the cashier manually activates to_invoice at the bar.
+invoice_request is sent whenever to_invoice=True or account_move is set, for all customer types.
 """
 import os
 import uuid
@@ -110,17 +108,17 @@ def make_private_customer(partner_id=9):
 class TestB2BAutoInvoice:
     """B2B Auto-Invoice generation tests."""
 
-    def test_auto_invoice_generated_for_company_without_to_invoice_flag(self, poller, mock_odoo, mock_sender):
+    def test_company_with_to_invoice_gets_invoice_request(self, poller, mock_odoo, mock_sender):
         """
-        GIVEN a company customer order without to_invoice flag
+        GIVEN a company customer order with to_invoice=True (set automatically by Odoo on validate)
         WHEN process_order is called
-        THEN invoice_request should be automatically generated (via _process_invoice_request)
+        THEN invoice_request should be generated
         """
         order = {
             'id': 100,
             'partner_id': 5,
             'amount_total': 100.0,
-            'to_invoice': False,
+            'to_invoice': True,
             'account_move': None,
             'lines': [],
             'payment_ids': [],
@@ -137,7 +135,6 @@ class TestB2BAutoInvoice:
              patch.object(poller, '_process_invoice_request', return_value=(True, str(uuid.uuid4()))) as mock_invoice:
             poller.process_order(order)
 
-            # Verify _process_invoice_request was called (auto-invoice for company)
             mock_invoice.assert_called_once()
 
     def test_deduplication_skips_invoice_if_already_sent(self, poller, mock_odoo, mock_sender):
@@ -152,7 +149,7 @@ class TestB2BAutoInvoice:
             'id': 102,
             'partner_id': 7,
             'amount_total': 75.0,
-            'to_invoice': False,
+            'to_invoice': True,
             'account_move': None,
             'x_invoice_message_id': invoice_msg_id,
             'lines': [],
@@ -235,7 +232,7 @@ class TestB2BAutoInvoice:
 
     def test_company_without_vat_blocks_invoice(self, poller, mock_odoo, mock_sender):
         """
-        GIVEN a company customer order without VAT
+        GIVEN a company customer order without VAT (to_invoice=True as Odoo sets it)
         WHEN process_order is called
         THEN invoice generation should be attempted but blocked by VAT check
         """
@@ -243,7 +240,7 @@ class TestB2BAutoInvoice:
             'id': 106,
             'partner_id': 11,
             'amount_total': 100.0,
-            'to_invoice': False,
+            'to_invoice': True,
             'account_move': None,
             'lines': [],
             'payment_ids': [],

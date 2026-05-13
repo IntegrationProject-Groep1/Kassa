@@ -501,16 +501,15 @@ class OrderPoller:
                     logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
                     all_sent = False
 
-            # Story 7 & B2B Auto-Invoice: Invoice Request logic
+            # Invoice request logic: to_invoice is the single gate for all customers.
+            # For companies, Odoo auto-activates to_invoice + Customer Account on validate.
+            # For private persons, the cashier manually activates to_invoice at the bar.
+            # Payment method then determines paid/pending (see is_pay_later below).
             should_invoice = (order.get('amount_total', 0) >= 0
                               and not is_anonymous
                               and not is_registration)
-            is_company = customer_info and customer_info.get('customer_type') == 'company'
 
-            # Check if invoice request should be sent:
-            # 1. Manually flagged via to_invoice or account_move fields (Story 7)
-            # 2. Automatically for all company orders (B2B Auto-Invoice)
-            if should_invoice and (order.get('to_invoice') or order.get('account_move') or is_company):
+            if should_invoice and (order.get('to_invoice') or order.get('account_move')):
                 # De-duplication: Check if invoice_request was already sent for this order
                 # (indicated by x_invoice_message_id field)
                 if order.get('x_invoice_message_id'):
@@ -540,8 +539,8 @@ class OrderPoller:
                         except Exception as e:
                             logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
 
-                    if is_company:
-                        logger.info(f"📄 B2B Auto-Invoice triggered for company order {order_id}")
+                    if customer_info and customer_info.get('customer_type') == 'company':
+                        logger.info(f"📄 Invoice request sent for company order {order_id}")
             elif order.get('amount_total', 0) >= 0 and is_anonymous:
                 logger.warning(
                     "⚠️ Klant zonder account: geen invoice_request aangemaakt"
@@ -952,12 +951,12 @@ class OrderPoller:
                 monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
                 ok_wallet = False
 
-        # Story 7: B2B vs B2C Invoice Logic
-        # Only Customer Account (the dedicated POS "pay later" method) triggers deferred payment.
-        # to_invoice / account_move mean an invoice document was requested or created — a company
-        # can request an invoice copy after paying by wallet or cash, so those flags must NOT
-        # set amount_paid=0 or the CRM would record a debt for an already-settled payment.
-        is_pay_later = customer_type == 'company' and pay_info["is_customer_account"]
+        # Deferred payment is driven purely by the payment method, not the customer type.
+        # Customer Account = money not yet collected → pending.
+        # Cash / card / badge wallet (including when an invoice doc is requested) → paid.
+        # Private persons must always pay on-site; Customer Account on a private order is a
+        # cashier error — "pending" is still the financially correct status in that case.
+        is_pay_later = pay_info["is_customer_account"]
 
         invoice_status = "pending" if is_pay_later else "paid"
         amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))
