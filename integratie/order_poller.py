@@ -952,15 +952,11 @@ class OrderPoller:
                 ok_wallet = False
 
         # Story 7: B2B vs B2C Invoice Logic
-        # Companies pay later when using Customer Account or flagged for invoice
-        # (status='pending', amount=0, method='company_link')
-        # Private individuals always pay at the register, even when requesting an invoice copy
-        # (status='paid', method='on_site')
-        is_pay_later = customer_type == 'company' and (
-            pay_info["is_customer_account"]
-            or order.get('to_invoice')
-            or order.get('account_move')
-        )
+        # Only Customer Account (the dedicated POS "pay later" method) triggers deferred payment.
+        # to_invoice / account_move mean an invoice document was requested or created — a company
+        # can request an invoice copy after paying by wallet or cash, so those flags must NOT
+        # set amount_paid=0 or the CRM would record a debt for an already-settled payment.
+        is_pay_later = customer_type == 'company' and pay_info["is_customer_account"]
 
         invoice_status = "pending" if is_pay_later else "paid"
         amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))

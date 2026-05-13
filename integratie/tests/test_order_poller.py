@@ -1191,3 +1191,66 @@ def test_process_consumption_does_not_mark_paid_for_anonymous(mock_sender, polle
     with patch.object(poller, '_update_partner_registration_paid') as mock_update:
         poller._process_consumption(order, None, is_anonymous=True)
         mock_update.assert_not_called()
+
+
+@patch('order_poller.sender')
+def test_company_wallet_payment_with_to_invoice_is_not_pay_later(mock_sender, poller):
+    """Regression: company pays by wallet AND requests invoice → must be 'paid', not 'pending'.
+
+    to_invoice=True only means an invoice document is requested; the wallet was already debited.
+    Only is_customer_account (the POS 'Customer Account' method) triggers deferred payment.
+    """
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-wallet-inv</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-wallet-inv</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+    mock_sender.build_wallet_balance_update_xml.return_value = (
+        '<message><header><message_id>wallet-inv</message_id></header></message>'
+    )
+
+    customer_info = {
+        'id': 55, 'x_wallet_balance': 100.0, 'x_user_id': 'UUID-COMPANY-55',
+        'x_badge_id': 'BADGE-55', 'x_lease_active': True, 'x_lease_id': 'LEASE-55',
+        'x_pending_topup_balance': 0.0, 'is_company': True, 'parent_id': False,
+        'email': 'company@example.com', 'customer_type': 'company',
+        'name': 'ACME BV', 'street': 'Industrielaan 1',
+        'zip': '2000', 'city': 'Antwerpen', 'country_code': 'be',
+        'vat': 'BE0123456789',  # required for company per contract Section 11.1
+    }
+    # Payment method is Badge Wallet — NOT Customer Account
+    order = {
+        'id': 99, 'partner_id': 55, 'lines': [(500,)], 'amount_total': 50.0,
+        'payment_ids': [5001],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 10:00:00',
+        'to_invoice': True,   # company requested invoice copy
+        'account_move': 777,  # invoice doc created in Odoo
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'id': 500, 'product_id': (10, 'Workshop'), 'qty': 1,
+          'price_unit': 50.0, 'tax_ids': [], 'price_subtotal_incl': 50.0}],
+        [{'id': 10, 'x_is_topup': False, 'pos_categ_ids': []}],
+        # _get_special_payment_info reads payments: Badge Wallet, not Customer Account
+        [{'payment_method_id': (1, 'Badge Wallet'), 'amount': 50.0}],
+        75.0,   # action_process_wallet_payment new balance
+        True,   # x_wallet_updated
+        True,   # lease tx count increment
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+
+    result = poller.process_order(order)
+    assert result is True
+
+    # payment_registered must have invoice_status='paid', amount_paid=50.0
+    pay_call_kwargs = mock_sender.build_payment_registered_xml.call_args
+    assert pay_call_kwargs[1]['invoice_status'] == 'paid', (
+        "company+wallet+to_invoice must NOT be treated as pay_later"
+    )
+    assert pay_call_kwargs[1]['amount_paid'] == 50.0
+    assert pay_call_kwargs[1]['payment_method'] == 'on_site'
