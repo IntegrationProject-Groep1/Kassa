@@ -266,7 +266,7 @@ class TestWalletInsufficientBalance:
         ]
         _mock_sender_xmls(mock_sender)
 
-        ok, _corr, _pay = poller._process_consumption(
+        ok, _corr, _pay, *_ = poller._process_consumption(
             _order(4.0), _customer(balance=3.0), is_anonymous=False
         )
 
@@ -330,7 +330,7 @@ class TestWalletInsufficientBalance:
         ]
         _mock_sender_xmls(mock_sender)
 
-        ok, _corr, _pay = poller._process_consumption(
+        ok, _corr, _pay, *_ = poller._process_consumption(
             _order(2.50), _customer(balance=3.0), is_anonymous=False
         )
 

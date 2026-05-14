@@ -144,7 +144,7 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     order = {'id': 7, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
     with patch.object(poller, '_process_consumption') as mock_pc:
-        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id")
+        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id", "paid", "on_site")
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -390,7 +390,7 @@ def test_process_consumption_sets_payment_link_fields(mock_sender, poller):
         'create_date': '2026-04-01 12:00:00',
     }
 
-    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id, *_ = poller._process_consumption(
         order, None, is_anonymous=True)
 
     assert ok is True
@@ -438,7 +438,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     )
     mock_sender.send_typed_message.side_effect = [True, True, True]
 
-    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id, *_ = poller._process_consumption(
         order, customer_info, is_anonymous=False)
 
     assert ok is True
@@ -488,7 +488,7 @@ def test_process_consumption_badge_wallet_anonymous_blocked(mock_sender, poller)
     )
     mock_sender.send_typed_message.side_effect = [True, True]
 
-    ok, _corr, payment_msg_id = poller._process_consumption(
+    ok, _corr, payment_msg_id, *_ = poller._process_consumption(
         order, customer_info=None, is_anonymous=True
     )
 
@@ -1624,3 +1624,140 @@ class TestCheckPosSessions:
         poller.check_pos_sessions()  # must not raise
 
         mock_sender.send_typed_message.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T1-1 — Story 8: Refund correlation_id must be UUID from payment_registered
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_refund_correlation_id_is_payment_message_uuid(mock_sender, poller):
+    """
+    Story 8: refund_processed must use the payment_registered UUID as correlation_id,
+    not a generated UUID or an ORDER-{id} format.
+    """
+    real_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    order = {
+        'id': 50, 'amount_total': -10.0,
+        'lines': [(99,)],
+        'payment_ids': [1], 'x_wallet_updated': False,
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'payment_method_id': (2, 'Cash'), 'amount': -10.0}],  # payments
+        [{'id': 99, 'refunded_orderline_id': (55, 'Line')}],    # refund line
+        [{'id': 55, 'order_id': (7, 'POS/007')}],               # original line
+        [{'id': 7, 'x_payment_message_id': real_uuid}],          # original order UUID
+    ]
+
+    poller._process_refund(order, 50, None, is_anonymous=True)
+
+    call_kwargs = mock_sender.build_refund_processed_xml.call_args[1]
+    assert call_kwargs['original_payment_msg_id'] == real_uuid, (
+        f"Expected UUID '{real_uuid}', got '{call_kwargs['original_payment_msg_id']}' — "
+        "refund must correlate to the original payment_registered message ID"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T1-5 — Story 21: x_outstanding_amount reset after Inschrijvingskassa payment
+# ---------------------------------------------------------------------------
+
+def test_update_partner_registration_paid_resets_outstanding(poller):
+    """_update_partner_registration_paid writes x_outstanding_amount=0.0 and x_payment_status='paid'."""
+    poller.models.execute_kw.side_effect = [
+        True,  # res.partner write
+        True,  # pos.order send_partner_bus_event
+    ]
+
+    poller._update_partner_registration_paid(partner_id=7, partner_name="Alice")
+
+    write_call = poller.models.execute_kw.call_args_list[0]
+    assert write_call[0][3] == 'res.partner'
+    assert write_call[0][4] == 'write'
+    vals = write_call[0][5][1]
+    assert vals['x_outstanding_amount'] == 0.0
+    assert vals['x_payment_status'] == 'paid'
+
+
+def test_update_partner_registration_paid_sends_bus_event_with_zero(poller):
+    """_update_partner_registration_paid sends a bus event with amount=0.0 and status='paid'."""
+    poller.models.execute_kw.side_effect = [
+        True,  # write
+        True,  # bus event
+    ]
+
+    poller._update_partner_registration_paid(partner_id=7, partner_name="Alice")
+
+    bus_call = poller.models.execute_kw.call_args_list[1]
+    assert bus_call[0][3] == 'pos.order'
+    assert bus_call[0][4] == 'send_partner_bus_event'
+    args = bus_call[0][5]
+    assert args[0] == 7       # partner_id
+    assert args[1] == 0.0     # outstanding_amount
+    assert args[2] == 'paid'  # payment_status
+
+
+# ---------------------------------------------------------------------------
+# Story 6: Bar Kassa (consumption) never auto-marks partner paid
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_bar_kassa_consumption_never_calls_update_partner_paid(mock_sender, poller):
+    """Bar Kassa consumption orders must not trigger _update_partner_registration_paid."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>test-id-111</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>test-id-222</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 60, 'amount_total': 15.0,
+        'lines': [(10,)], 'payment_ids': [1],
+    }
+    customer_info = {
+        'id': 3, 'name': 'Bob', 'x_user_id': 'usr-bob',
+        'x_wallet_balance': 50.0, 'x_outstanding_amount': 0.0,
+        'x_payment_status': 'paid', 'email': 'bob@example.com',
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'id': 10, 'product_id': (1, 'Beer'), 'qty': 1, 'price_unit': 15.0, 'tax_ids': []}],
+        [{'id': 1, 'list_price': 15.0, 'taxes_id': []}],  # product tax
+        [{'payment_method_id': (2, 'Cash'), 'amount': 15.0}],
+    ]
+
+    with patch.object(poller, '_update_partner_registration_paid') as mock_paid:
+        poller._process_consumption(order, customer_info, is_anonymous=False)
+        mock_paid.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Story 19: anonymous Badge Wallet blocked — correct error code
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_anonymous_badge_wallet_system_error_code(mock_sender, poller):
+    """Anonymous Badge Wallet payment produces error_code='badge_wallet_anonymous_blocked'."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>anon-test-id</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 70, 'amount_total': 5.0,
+        'lines': [(20,)], 'payment_ids': [2],
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'id': 20, 'product_id': (1, 'Beer'), 'qty': 1, 'price_unit': 5.0, 'tax_ids': []}],
+        [{'id': 1, 'list_price': 5.0, 'taxes_id': []}],
+        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 5.0}],
+    ]
+
+    poller._process_consumption(order, customer_info=None, is_anonymous=True)
+
+    # The error is sent via send_error_to_queue, not send_typed_message
+    mock_sender.send_error_to_queue.assert_called_once()
+    call_args = mock_sender.send_error_to_queue.call_args[0]
+    assert call_args[0] == 'badge_wallet_anonymous_blocked', \
+        f"Expected error code 'badge_wallet_anonymous_blocked', got '{call_args[0]}'"

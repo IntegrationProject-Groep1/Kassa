@@ -131,7 +131,7 @@ class TestB2BAutoInvoice:
         customer_data = make_company_customer(5, 'NL123456789')
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()), "paid", "on_site")), \
              patch.object(poller, '_process_invoice_request', return_value=(True, str(uuid.uuid4()))) as mock_invoice:
             poller.process_order(order)
 
@@ -163,7 +163,7 @@ class TestB2BAutoInvoice:
         customer_data = make_company_customer(7, 'NL987654321')
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()), "paid", "on_site")), \
              patch.object(poller, '_process_invoice_request') as mock_invoice:
             poller.process_order(order)
 
@@ -193,7 +193,7 @@ class TestB2BAutoInvoice:
         customer_data = make_private_customer(8)
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()), "paid", "on_site")), \
              patch.object(poller, '_process_invoice_request') as mock_invoice:
             poller.process_order(order)
 
@@ -223,7 +223,7 @@ class TestB2BAutoInvoice:
         customer_data = make_private_customer(9)
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()))), \
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()), "paid", "on_site")), \
              patch.object(poller, '_process_invoice_request', return_value=(True, str(uuid.uuid4()))) as mock_invoice:
             poller.process_order(order)
 
@@ -254,7 +254,7 @@ class TestB2BAutoInvoice:
         mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
 
         # Mock send_error_to_queue to prevent RabbitMQ connection attempts
-        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()))), \
+        with patch.object(poller, '_process_consumption', return_value=(True, str(uuid.uuid4()), str(uuid.uuid4()), "paid", "on_site")), \
              patch('integratie.order_poller.sender.send_error_to_queue'):
             poller.process_order(order)
             # VAT check is tested in test_vat_validation.py
