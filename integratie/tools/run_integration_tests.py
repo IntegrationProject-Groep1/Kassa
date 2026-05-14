@@ -547,6 +547,13 @@ def test_wallet_payment_flow():
         report_result("Sender: POS Order Polling", False, "Setup failed: Test partner not found")
         return
     partner_id = partner_ids[0]
+
+    # Ensure partner has sufficient wallet balance and an active confirmed lease for this test.
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write", [
+        [partner_id],
+        {"x_wallet_balance": 50.0, "x_lease_active": True, "x_lease_id": "test-lease-wallet-10"},
+    ])
+
     product_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.product", "search",
         [[["available_in_pos", "=", True]]], {"limit": 1}
