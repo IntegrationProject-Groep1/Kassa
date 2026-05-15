@@ -366,14 +366,13 @@ patch(PaymentScreen.prototype, {
      * order is processed. Errors are still propagated normally.
      */
     async validate() {
+        const order = this.currentOrder;
         await super.validate(...arguments);
-        try {
+        if (order?.finalized) {
             this.env.services.notification.add(
                 _t("Betaling geslaagd!"),
                 { type: "success", sticky: false }
             );
-        } catch (err) {
-            console.warn("[Kassa] Could not show payment notification:", err);
         }
     },
 
