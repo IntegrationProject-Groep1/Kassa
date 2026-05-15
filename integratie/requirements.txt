@@ -3,4 +3,5 @@ lxml
 python-dotenv
 requests
 defusedxml
+fastmcp>=2.0
 
