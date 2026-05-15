@@ -1095,22 +1095,21 @@ def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
 def process_session_created(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_created from Frontend.
 
-    Merges the new session into x_session_title on the matching partner.
-    Idempotent: skips if a dict with the same session_id already exists.
+    A session being created has no user linked to it — it describes the session
+    itself (title, dates, price, etc.). Kassa only needs to ensure the matching
+    POS product exists so it is ready when visitors scan their badge.
     Binding: kassa.incoming ← frontend.to.kassa.session.created
     """
     body = root.find("body")
     if body is None:
         raise ValueError("session_created: <body> missing")
 
-    identity_uuid = (body.findtext("identity_uuid") or "").strip()
-    session_el = body.find("session")
-    if not identity_uuid or session_el is None:
-        raise ValueError("session_created: identity_uuid or <session> missing")
+    session_id = (body.findtext("session_id") or "").strip()
+    title = (body.findtext("title") or "").strip()
+    if not session_id or not title:
+        raise ValueError("session_created: session_id or title missing")
 
-    session_id = (session_el.findtext("session_id") or "").strip()
-    title = (session_el.findtext("title") or "").strip()
-    price_el = session_el.find("price")
+    price_el = body.find("price")
     price: Optional[float] = None
     if price_el is not None and price_el.text:
         try:
@@ -1118,63 +1117,28 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
         except (ValueError, TypeError):
             pass
 
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"], "limit": 1},
-    )
-    if not existing:
-        logger.warning("[SESSION_CREATED] ⚠ Partner not found for identity_uuid=%s — ack", identity_uuid)
-        return
-
-    partner = existing[0]
-    partner_id = partner["id"]
-    sessions = _parse_session_list(partner.get("x_session_title") or "")
-
-    if session_id and any(s.get("session_id") == session_id for s in sessions):
-        logger.info("[SESSION_CREATED] ↩ Duplicate session_id=%s — skipping write", session_id)
-    else:
-        sessions.append({"session_id": session_id, "title": title, "price": price})
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "write",
-            [[partner_id], {"x_session_title": json.dumps(sessions)}],
-        )
-        logger.info(
-            "[SESSION_CREATED] ✓ Session '%s' added for partner_id=%s", title, partner_id
-        )
-
-    if title:
-        _ensure_session_product(uid, models, title, price=price)
-
-    _publish_partner_bus_event(
-        uid, models, partner_id,
-        partner.get("x_outstanding_amount") or 0.0,
-        partner.get("x_payment_status") or "unpaid",
-        partner.get("name") or "Unknown",
-    )
+    _ensure_session_product(uid, models, title, price=price)
+    logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
 
 
 def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_updated from Frontend.
 
-    Finds the entry by session_id and updates title/price in-place.
-    Upserts (appends) if session_id is not found.
+    A session update has no user linked — it describes changes to the session
+    itself (new title, price, dates, etc.). Kassa updates the matching POS
+    product so the correct name/price is shown at scan time.
     Binding: kassa.incoming ← frontend.to.kassa.session.updated
     """
     body = root.find("body")
     if body is None:
         raise ValueError("session_updated: <body> missing")
 
-    identity_uuid = (body.findtext("identity_uuid") or "").strip()
-    session_el = body.find("session")
-    if not identity_uuid or session_el is None:
-        raise ValueError("session_updated: identity_uuid or <session> missing")
+    session_id = (body.findtext("session_id") or "").strip()
+    title = (body.findtext("title") or "").strip()
+    if not session_id or not title:
+        raise ValueError("session_updated: session_id or title missing")
 
-    session_id = (session_el.findtext("session_id") or "").strip()
-    title = (session_el.findtext("title") or "").strip()
-    price_el = session_el.find("price")
+    price_el = body.find("price")
     price: Optional[float] = None
     if price_el is not None and price_el.text:
         try:
@@ -1182,100 +1146,30 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
         except (ValueError, TypeError):
             pass
 
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"], "limit": 1},
-    )
-    if not existing:
-        logger.warning("[SESSION_UPDATED] ⚠ Partner not found for identity_uuid=%s — ack", identity_uuid)
-        return
-
-    partner = existing[0]
-    partner_id = partner["id"]
-    sessions = _parse_session_list(partner.get("x_session_title") or "")
-
-    found = False
-    for s in sessions:
-        if s.get("session_id") == session_id:
-            s["title"] = title
-            s["price"] = price
-            found = True
-            break
-
-    if not found:
-        sessions.append({"session_id": session_id, "title": title, "price": price})
-        logger.info("[SESSION_UPDATED] ↩ session_id=%s not found — upserted as new", session_id)
-
-    models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "write",
-        [[partner_id], {"x_session_title": json.dumps(sessions)}],
-    )
-    logger.info(
-        "[SESSION_UPDATED] ✓ Session '%s' updated for partner_id=%s", title, partner_id
-    )
-
-    if title:
-        _ensure_session_product(uid, models, title, price=price)
-
-    _publish_partner_bus_event(
-        uid, models, partner_id,
-        partner.get("x_outstanding_amount") or 0.0,
-        partner.get("x_payment_status") or "unpaid",
-        partner.get("name") or "Unknown",
-    )
+    _ensure_session_product(uid, models, title, price=price)
+    logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
 
 
 def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_deleted from Frontend.
 
-    Removes the matching session_id entry from x_session_title.
-    Does NOT delete the POS product — other partners may still reference it.
+    A session deletion has no user linked — the session itself is gone.
+    Kassa does NOT delete the POS product: visitors who already paid or are
+    mid-transaction may still need it. Log and ack.
     Binding: kassa.incoming ← frontend.to.kassa.session.deleted
     """
     body = root.find("body")
     if body is None:
         raise ValueError("session_deleted: <body> missing")
 
-    identity_uuid = (body.findtext("identity_uuid") or "").strip()
     session_id = (body.findtext("session_id") or "").strip()
-    if not identity_uuid or not session_id:
-        raise ValueError("session_deleted: identity_uuid or session_id missing")
+    if not session_id:
+        raise ValueError("session_deleted: session_id missing")
 
-    existing: List[OdooRecord] = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "res.partner", "search_read",
-        [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"], "limit": 1},
-    )
-    if not existing:
-        logger.warning("[SESSION_DELETED] ⚠ Partner not found for identity_uuid=%s — ack", identity_uuid)
-        return
-
-    partner = existing[0]
-    partner_id = partner["id"]
-    sessions = _parse_session_list(partner.get("x_session_title") or "")
-    updated = [s for s in sessions if s.get("session_id") != session_id]
-
-    if len(updated) == len(sessions):
-        logger.info("[SESSION_DELETED] ↩ session_id=%s not in list — no-op", session_id)
-    else:
-        models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "res.partner", "write",
-            [[partner_id], {"x_session_title": json.dumps(updated)}],
-        )
-        logger.info(
-            "[SESSION_DELETED] ✓ session_id=%s removed for partner_id=%s", session_id, partner_id
-        )
-
-    _publish_partner_bus_event(
-        uid, models, partner_id,
-        partner.get("x_outstanding_amount") or 0.0,
-        partner.get("x_payment_status") or "unpaid",
-        partner.get("name") or "Unknown",
+    reason = (body.findtext("reason") or "").strip()
+    logger.info(
+        "[SESSION_DELETED] Session id=%s removed from system%s — POS product kept.",
+        session_id, f" (reason: {reason})" if reason else "",
     )
 
 

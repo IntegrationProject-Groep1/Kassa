@@ -9,8 +9,9 @@
 
   <!--
     session_updated — Frontend → Kassa
-    Sent when an existing session registration for a user is modified.
-    Match by session_id; update title and/or price in-place.
+    Sent when session details change (title, price, dates, location, status, etc.).
+    No user is linked — this describes the session itself.
+    Kassa uses this to update the matching POS product.
     Routing key: frontend.to.kassa.session.updated
     Contract section: 7.2
   -->
@@ -21,8 +22,8 @@
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id" type="UUIDType"/>
-              <xs:element name="timestamp"  type="xs:dateTime"/>
+              <xs:element name="message_id"    type="UUIDType"/>
+              <xs:element name="timestamp"     type="xs:dateTime"/>
               <xs:element name="source">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
@@ -51,23 +52,59 @@
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <!-- UUID of the user whose session registration changed -->
-              <xs:element name="identity_uuid" type="UUIDType"/>
-              <xs:element name="session">
+              <xs:element name="session_id"       type="xs:string"/>
+              <xs:element name="title"            type="xs:string"/>
+              <xs:element name="start_datetime"   type="xs:dateTime"/>
+              <xs:element name="end_datetime"     type="xs:dateTime"/>
+              <xs:element name="location"         type="xs:string"  minOccurs="0"/>
+              <xs:element name="session_type"     minOccurs="0">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="keynote"/>
+                    <xs:enumeration value="workshop"/>
+                    <xs:enumeration value="reception"/>
+                    <xs:enumeration value="other"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="status"           minOccurs="0">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="draft"/>
+                    <xs:enumeration value="published"/>
+                    <xs:enumeration value="cancelled"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="max_attendees"     type="xs:positiveInteger"   minOccurs="0"/>
+              <xs:element name="current_attendees" type="xs:nonNegativeInteger" minOccurs="0"/>
+              <!-- Updated price (optional; absent = unchanged) -->
+              <xs:element name="price" minOccurs="0">
+                <xs:complexType>
+                  <xs:simpleContent>
+                    <xs:extension base="xs:decimal">
+                      <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+                    </xs:extension>
+                  </xs:simpleContent>
+                </xs:complexType>
+              </xs:element>
+              <!-- Optional reason for the change -->
+              <xs:element name="change_reason" type="xs:string" minOccurs="0"/>
+              <!-- Optional speaker — identity_uuid only present if speaker is a registered user -->
+              <xs:element name="speaker" minOccurs="0">
                 <xs:complexType>
                   <xs:sequence>
-                    <xs:element name="session_id" type="xs:string"/>
-                    <xs:element name="title"      type="xs:string"/>
-                    <!-- Updated price (optional; absent = unchanged) -->
-                    <xs:element name="price" minOccurs="0">
+                    <xs:element name="identity_uuid" type="UUIDType" minOccurs="0"/>
+                    <xs:element name="contact">
                       <xs:complexType>
-                        <xs:simpleContent>
-                          <xs:extension base="xs:decimal">
-                            <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
-                          </xs:extension>
-                        </xs:simpleContent>
+                        <xs:sequence>
+                          <xs:element name="first_name" type="xs:string"/>
+                          <xs:element name="last_name"  type="xs:string"/>
+                        </xs:sequence>
                       </xs:complexType>
                     </xs:element>
+                    <xs:element name="organisation" type="xs:string" minOccurs="0"/>
+                    <xs:element name="email"        type="xs:string" minOccurs="0"/>
                   </xs:sequence>
                 </xs:complexType>
               </xs:element>
