@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, api
+from odoo.tools import float_compare
 
 
 class PosOrder(models.Model):
@@ -47,7 +48,7 @@ class PosOrder(models.Model):
         if lock_row is None:
             raise ValueError(f"Partner {partner_id} was deleted during balance check.")
         current_balance = float(lock_row[0])
-        if round(current_balance, 2) < round(float(amount_deducted), 2):
+        if float_compare(current_balance, float(amount_deducted), precision_digits=2) == -1:
             raise ValueError(
                 f"Insufficient wallet balance for partner {partner_id}: "
                 f"balance=€{current_balance:.2f}, required=€{amount_deducted:.2f}"

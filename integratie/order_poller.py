@@ -223,6 +223,7 @@ class OrderPoller:
                 'x_wallet_balance', 'x_pending_topup_balance',
                 'vat', 'street', 'city', 'zip', 'country_id',
                 'x_lease_active', 'x_lease_id', 'x_lease_transaction_count',
+                'x_session_title',
             ]
             try:
                 # Attempt to read all integration fields
@@ -810,24 +811,19 @@ class OrderPoller:
                     f"❌ CRITICAL: Could not trace refund to original order for traceability (Order {order_id}): {e}"
                 )
 
-        # Build session_id lookup map from partner's x_session_title
+        # Build session_id lookup map from partner's x_session_title (already in customer_info)
         session_title_map: dict[str, str] = {}
         if customer_info:
             try:
-                partner_data = self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'res.partner', 'read',
-                    [customer_info['id'], ['x_session_title']]
-                )
-                raw = (partner_data[0].get('x_session_title') or '') if partner_data else ''
+                raw = customer_info.get('x_session_title') or ''
                 entries = json.loads(raw) if raw else []
                 if not isinstance(entries, list):
                     entries = [entries]
                 for entry in entries:
-                    if entry.get('session_id') and entry.get('title'):
+                    if isinstance(entry, dict) and entry.get('session_id') and entry.get('title'):
                         session_title_map[entry['title'].lower()] = entry['session_id']
             except Exception as e:
-                logger.warning(f"⚠️ Could not fetch x_session_title for refund items: {e}")
+                logger.warning(f"⚠️ Could not parse x_session_title for refund items: {e}")
 
         # Fetch refund line details to include in the message
         refund_items = []
