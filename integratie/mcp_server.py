@@ -55,6 +55,9 @@ def get_sales_summary(date_from: str | None = None, date_to: str | None = None) 
     Get a POS sales revenue summary.
     date_from / date_to: optional ISO date strings, e.g. '2026-05-01'.
     Returns total revenue, order count, and a breakdown by day.
+
+    Authoritative for on-site POS revenue during an event (real-time Odoo).
+    NOT for invoiced/accounting revenue — use `facturatie__get_revenue_summary` instead.
     """
     domain: list = [["state", "in", ["paid", "done", "invoiced"]]]
     if date_from:
@@ -88,6 +91,9 @@ def get_recent_orders(limit: int = 20) -> dict[str, Any]:
     """
     Get the most recent POS orders (default 20, max 100).
     Includes the customer's current wallet balance and master UUID.
+
+    POS orders only (live on-site sales). Wallet balance in the response is the
+    LIVE Odoo value, not the CRM cache.
     """
     limit = min(limit, 100)
     try:
@@ -143,6 +149,10 @@ def get_all_wallets() -> dict[str, Any]:
     Get all active wallet balances.
     Returns customers with a positive wallet balance, ordered by balance descending.
     Uses the custom x_wallet_balance field on res.partner.
+
+    Returns live Odoo wallet balances. Authoritative ONLY for members whose CRM
+    Wallet_Status__c='Leased'. For members not on lease, the CRM value
+    (`crm__get_member_wallet`) is the source of truth.
     """
     try:
         partners = _odoo(
@@ -177,13 +187,58 @@ def get_all_wallets() -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_wallet_by_master_uuid(master_uuid: str) -> dict[str, Any]:
+    """
+    Get the LIVE wallet balance for a member by their Master UUID (from CRM).
+
+    Call this whenever `crm__get_member_wallet` returns Wallet_Status__c='Leased'
+    — during a lease Kassa holds the source-of-truth balance, not CRM.
+    Returns the Odoo partner record with x_wallet_balance, x_user_id, x_badge_id,
+    x_outstanding_amount, x_pending_topup_balance, x_payment_status.
+    """
+    if not master_uuid:
+        return {"error": "master_uuid is required", "found": False}
+    try:
+        partners = _odoo(
+            "res.partner", "search_read",
+            [[["x_user_id", "=", master_uuid]]],
+            {
+                "fields": [
+                    "id", "name", "x_user_id", "x_badge_id",
+                    "x_wallet_balance", "x_pending_topup_balance",
+                    "x_outstanding_amount", "x_payment_status",
+                ],
+                "limit": 1,
+            },
+        )
+        if not partners:
+            return {"error": f"No Odoo partner found with master_uuid '{master_uuid}'", "found": False}
+        p = partners[0]
+        return {
+            "found": True,
+            "customer": p.get("name"),
+            "master_uuid": p.get("x_user_id") or None,
+            "badge_id": p.get("x_badge_id") or None,
+            "wallet_balance": p.get("x_wallet_balance", 0),
+            "pending_topup": p.get("x_pending_topup_balance", 0),
+            "outstanding_amount": p.get("x_outstanding_amount", 0),
+            "payment_status": p.get("x_payment_status") or None,
+            "currency": "EUR",
+            "source": "kassa_live",
+        }
+    except Exception as exc:
+        return {"error": f"Odoo unavailable: {exc}", "found": False}
+
+
+@mcp.tool()
 def process_refund(order_id: str, reason: str) -> dict[str, Any]:
     """
     Issue a refund for a POS order.
     order_id: the order name/reference (e.g. 'POS/2026/0042').
     reason: written reason for the refund (required).
 
-    NOTE: This is a WRITE operation. Always confirm with the admin before calling this.
+    WRITE operation. Always confirm with the admin before calling
+    (per chatbot system prompt Rule 4).
     """
     if not reason or not reason.strip():
         return {"error": "A reason is required to process a refund.", "success": False}
