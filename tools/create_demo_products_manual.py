@@ -47,6 +47,7 @@ print('\nCreating demo products')
 products = [
     ("Top-up EUR 10", "TOPUP-010", 10.0, 'Top-ups', 0.0, {'x_is_topup': True}),
     ("Top-up EUR 20", "TOPUP-020", 20.0, 'Top-ups', 0.0, {'x_is_topup': True}),
+    ("Top-up Algemeen", "TOPUP-ALG", 0.0, 'Top-ups', 0.0, {'x_is_topup': True}),
     ("Cola", "DRINK-001", 2.50, 'Drinks', 21.0, {}),
     ("Water", "DRINK-002", 1.80, 'Drinks', 6.0, {}),
     ("Coffee", "DRINK-003", 2.20, 'Drinks', 6.0, {}),
