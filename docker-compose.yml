@@ -57,6 +57,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  kassa-mcp:
+    build: .
+    container_name: kassa_mcp
+    command: python mcp_server.py
+    environment:
+      - ODOO_URL=${ODOO_URL:-http://kassa-web:8069}
+      - ODOO_DB=${ODOO_DB:-odoo_kassa}
+      - ODOO_USER=${ODOO_USER:-odoo}
+      - ODOO_PASS=${ODOO_PASS:-myodoo}
+      - PORT=${MCP_PORT:-8004}
+    ports:
+      - "${MCP_EXTERNAL_PORT:-30031}:${MCP_PORT:-8004}"
+    volumes:
+      - ./integratie:/app
+    depends_on:
+      kassa-web:
+        condition: service_started
+    restart: unless-stopped
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: kassa_rabbitmq
