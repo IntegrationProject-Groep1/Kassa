@@ -262,7 +262,10 @@ class KassaQrController(http.Controller):
         sessions = _fetch_sessions_from_frontend(identity_uuid)
 
         if sessions:
-            titles_json = json.dumps([s["title"] for s in sessions])
+            titles_json = json.dumps([
+                {"session_id": s.get("session_id", ""), "title": s["title"], "price": s.get("price")}
+                for s in sessions
+            ])
 
             # Compute total outstanding from session prices when Planning provides them.
             # Uses cent-based math to avoid floating-point drift across multiple sessions.
@@ -300,13 +303,15 @@ class KassaQrController(http.Controller):
             if raw:
                 try:
                     stored = json.loads(raw)
-                    sessions = (
-                        [{"session_id": "", "title": t} for t in stored]
-                        if isinstance(stored, list)
-                        else [{"session_id": "", "title": raw}]
-                    )
+                    if isinstance(stored, list):
+                        sessions = [
+                            s if isinstance(s, dict) else {"session_id": "", "title": s, "price": None}
+                            for s in stored
+                        ]
+                    else:
+                        sessions = [{"session_id": "", "title": raw, "price": None}]
                 except (json.JSONDecodeError, ValueError):
-                    sessions = [{"session_id": "", "title": raw}]
+                    sessions = [{"session_id": "", "title": raw, "price": None}]
             if not sessions:
                 _logger.info(
                     "[Kassa QR] No sessions found from Planning for %s; "
