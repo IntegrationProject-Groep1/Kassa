@@ -227,7 +227,8 @@ class TestOrderPollerInvoiceRequestDetection:
         }
 
         # Process the order
-        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-123', 'payment-msg-456', 'paid', 'on_site')):
+        _rv = (True, 'msg-123', 'payment-msg-456', 'paid', 'on_site')
+        with patch.object(poller, '_process_consumption', return_value=_rv):
             with patch.object(poller, '_process_invoice_request', return_value=(True, 'inv-msg-123')) as mock_inv:
                 with patch.object(poller, 'get_customer_info', return_value=customer_info):
                     poller.process_order(order)
@@ -260,7 +261,8 @@ class TestOrderPollerInvoiceRequestDetection:
 
         poller.models.execute_kw.return_value = []
 
-        with patch.object(poller, '_process_consumption', return_value=(True, 'msg-124', 'payment-msg-457', 'paid', 'on_site')):
+        _rv = (True, 'msg-124', 'payment-msg-457', 'paid', 'on_site')
+        with patch.object(poller, '_process_consumption', return_value=_rv):
             with patch.object(poller, '_process_invoice_request') as mock_inv:
                 poller.process_order(order)
 

@@ -763,51 +763,41 @@ def test_lease_remote_topup():
     )
 
 
-def test_session_view_response_creates_pos_product():
-    """Integration: session_view_response message → POS product created in Odoo.
-
-    Sends a session_view_response directly to kassa.incoming and waits for
-    the receiver to process it via process_session_view_response.
-    """
-    section("TEST 15: session_view_response Creates POS Product")
+def test_session_created_creates_pos_product():
+    """Integration: session_created message (Frontend→Kassa) → POS product created in Odoo."""
+    section("TEST 15: session_created Creates POS Product")
     uid, models = get_rpc()
 
     session_title = f"Integration Test Session {TEST_ID}"
-    req_msg_id = str(uuid.uuid4())
+    identity_uuid = str(uuid.uuid4())
 
-    # Build a minimal valid session_view_response
+    # Create a test partner so the handler can look it up by x_user_id
+    partner_id = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "create",
+        [{"name": f"Session Test Partner {TEST_ID}", "x_user_id": identity_uuid}],
+    )
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{str(uuid.uuid4())}</message_id>
     <timestamp>2026-05-13T09:00:00Z</timestamp>
-    <source>planning</source>
-    <type>session_view_response</type>
+    <source>frontend</source>
+    <type>session_created</type>
     <version>2.0</version>
   </header>
   <body>
-    <request_message_id>{req_msg_id}</request_message_id>
-    <status>ok</status>
-    <session_count>1</session_count>
-    <sessions>
-      <session>
-        <session_id>integ-sess-{TEST_ID}</session_id>
-        <title>{session_title}</title>
-        <start_datetime>2026-06-01T10:00:00Z</start_datetime>
-        <end_datetime>2026-06-01T12:00:00Z</end_datetime>
-        <location>Aula B</location>
-        <session_type>workshop</session_type>
-        <status>published</status>
-        <max_attendees>50</max_attendees>
-        <current_attendees>0</current_attendees>
-        <price currency="eur">35.00</price>
-      </session>
-    </sessions>
+    <identity_uuid>{identity_uuid}</identity_uuid>
+    <session>
+      <session_id>integ-sess-{TEST_ID}</session_id>
+      <title>{session_title}</title>
+      <price currency="eur">35.00</price>
+    </session>
   </body>
 </message>"""
 
     publish(xml, "kassa.incoming")
-    wait(8, "receiver processing session_view_response")
+    wait(8, "receiver processing session_created")
 
     products = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.template", "search_read",
@@ -817,12 +807,14 @@ def test_session_view_response_creates_pos_product():
     ok = len(products) == 1
     price_ok = ok and abs(products[0]["list_price"] - 35.0) < 0.01
     report_result(
-        "session_view_response: product created",
+        "session_created: product created",
         ok and price_ok,
         f"found={len(products)}, price={products[0]['list_price'] if products else 'n/a'}",
     )
 
-    # Cleanup — archive instead of delete: open POS sessions block product deletion
+    # Cleanup
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+                      [[partner_id], {"active": False}])
     if products:
         pt_ids = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "product.template", "search",
@@ -929,44 +921,40 @@ def test_kassa_notify_product_update_callable():
 
 
 def test_session_product_in_sessions_category():
-    """Integration: product created by session_view_response is in the 'Sessions' POS category."""
+    """Integration: product created by session_created is in the 'Sessions' POS category."""
     section("TEST 18: Session Product Has Correct POS Category")
     uid, models = get_rpc()
 
     session_title = f"Category Test Session {TEST_ID}"
-    req_msg_id = str(uuid.uuid4())
+    identity_uuid = str(uuid.uuid4())
+
+    partner_id = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS, "res.partner", "create",
+        [{"name": f"Category Test Partner {TEST_ID}", "x_user_id": identity_uuid}],
+    )
 
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <message>
   <header>
     <message_id>{str(uuid.uuid4())}</message_id>
     <timestamp>2026-05-13T09:00:00Z</timestamp>
-    <source>planning</source>
-    <type>session_view_response</type>
+    <source>frontend</source>
+    <type>session_created</type>
     <version>2.0</version>
   </header>
   <body>
-    <request_message_id>{req_msg_id}</request_message_id>
-    <status>ok</status>
-    <session_count>1</session_count>
-    <sessions>
-      <session>
-        <session_id>cat-sess-{TEST_ID}</session_id>
-        <title>{session_title}</title>
-        <start_datetime>2026-06-02T10:00:00Z</start_datetime>
-        <end_datetime>2026-06-02T12:00:00Z</end_datetime>
-        <location>Aula A</location>
-        <session_type>workshop</session_type>
-        <status>published</status>
-        <max_attendees>30</max_attendees>
-        <current_attendees>0</current_attendees>
-      </session>
-    </sessions>
+    <identity_uuid>{identity_uuid}</identity_uuid>
+    <session>
+      <session_id>cat-sess-{TEST_ID}</session_id>
+      <title>{session_title}</title>
+    </session>
   </body>
 </message>"""
 
     publish(xml, "kassa.incoming")
-    wait(8, "receiver processing session_view_response for category test")
+    wait(8, "receiver processing session_created for category test")
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
+                      [[partner_id], {"active": False}])
 
     sessions_categ = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "pos.category", "search_read",
@@ -1067,7 +1055,7 @@ def main():
         test_lease_grant()
         test_lease_remote_topup()
         test_lease_topup_rejected_without_active_lease()
-        test_session_view_response_creates_pos_product()
+        test_session_created_creates_pos_product()
         test_user_sessions_response_creates_pos_product()
         test_kassa_notify_product_update_callable()
         test_session_product_in_sessions_category()
