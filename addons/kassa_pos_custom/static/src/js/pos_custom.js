@@ -22,6 +22,7 @@ import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { effect } from "@odoo/owl";
+import { _t } from "@web/core/l10n/translation";
 
 /** Bus channel published by pos.order.send_partner_bus_event. */
 const KASSA_BUS_CHANNEL = "kassa_partner_update";
@@ -311,22 +312,27 @@ patch(PaymentScreen.prototype, {
         if (paymentMethod?.name === "Badge Wallet") {
             const partner = this.currentOrder.get_partner();
             if (!partner) {
-                console.warn("[Kassa] Badge Wallet geblokkeerd: geen klant geselecteerd.");
+                this.env.services.notification.add(
+                    _t("Selecteer eerst een klant."),
+                    { type: "warning", sticky: false }
+                );
                 return;
             }
-            // Require a confirmed lease (x_lease_id non-empty) so we don't process
-            // a payment before the CRM has responded to the wallet_lease_request.
             if (!partner.x_lease_active || !partner.x_lease_id) {
-                console.warn("[Kassa] Badge Wallet geblokkeerd: wallet-lease nog niet bevestigd door CRM.");
+                this.env.services.notification.add(
+                    _t("Wallet is nog niet beschikbaar. Probeer opnieuw."),
+                    { type: "warning", sticky: false }
+                );
                 return;
             }
             const balanceCents = Math.round((partner.x_wallet_balance ?? 0) * 100);
             const dueCents = Math.round(this.currentOrder.get_due() * 100);
             if (balanceCents < dueCents) {
-                console.warn(
-                    "[Kassa] Badge Wallet geblokkeerd: onvoldoende saldo (€%s < €%s).",
-                    (partner.x_wallet_balance ?? 0).toFixed(2),
-                    this.currentOrder.get_due().toFixed(2)
+                this.env.services.notification.add(
+                    _t("Onvoldoende saldo op de wallet (€%(balance)s).", {
+                        balance: (partner.x_wallet_balance ?? 0).toFixed(2),
+                    }),
+                    { type: "danger", sticky: false }
                 );
                 return;
             }
@@ -341,6 +347,34 @@ patch(PaymentScreen.prototype, {
             console.warn("[Kassa] Could not auto-enable invoice:", err);
         }
         return result;
+    },
+
+    /**
+     * Suppress automatic invoice PDF download after order validation.
+     * The invoice is still created server-side; only the client-side download
+     * popup is skipped. A notification is shown instead.
+     */
+    async downloadInvoice(orderIds) {
+        this.env.services.notification.add(
+            _t("Factuur aangemaakt."),
+            { type: "info", sticky: false }
+        );
+    },
+
+    /**
+     * Override validate to show a payment success notification after the
+     * order is processed. Errors are still propagated normally.
+     */
+    async validate() {
+        await super.validate(...arguments);
+        try {
+            this.env.services.notification.add(
+                _t("Betaling geslaagd!"),
+                { type: "success", sticky: false }
+            );
+        } catch (err) {
+            console.warn("[Kassa] Could not show payment notification:", err);
+        }
     },
 
 });
