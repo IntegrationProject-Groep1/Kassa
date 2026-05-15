@@ -32,7 +32,7 @@ def _get_uid() -> int:
     global _uid
     if _uid is None:
         common = xmlrpc.client.ServerProxy(f"{_URL}/xmlrpc/2/common")
-        _uid = common.authenticate(_DB, _USER, _PASSWORD, {})
+        _uid = int(common.authenticate(_DB, _USER, _PASSWORD, {}))
         if not _uid:
             raise RuntimeError("Odoo authentication failed — check ODOO_USER / ODOO_PASS")
     return _uid
