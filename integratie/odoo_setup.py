@@ -388,7 +388,11 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             models, odoo_db, uid, odoo_pass, "res.currency", "search_read",
             [[["name", "=", "EUR"]]], {"fields": ["id", "active"], "limit": 1, "context": {"active_test": False}}
         )
-        company_vals: dict[str, Any] = {"tax_calculation_rounding_method": "round_per_line"}
+        # Always safe — not currency-related.
+        _rpc(
+            models, odoo_db, uid, odoo_pass, "res.company", "write",
+            [[company_id], {"tax_calculation_rounding_method": "round_per_line"}]
+        )
         if eur_currencies:
             eur_id = eur_currencies[0]["id"]
             if not eur_currencies[0].get("active"):
@@ -396,8 +400,6 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                     models, odoo_db, uid, odoo_pass, "res.currency", "write",
                     [[eur_id], {"active": True}]
                 )
-            # Only set currency if the company is not already on EUR — Odoo rejects
-            # currency changes once journal items exist.
             current_company = _rpc(
                 models, odoo_db, uid, odoo_pass, "res.company", "read",
                 [[company_id]], {"fields": ["currency_id"]}
@@ -405,11 +407,13 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             curr = current_company[0].get("currency_id") if current_company else None
             curr_id = curr[0] if isinstance(curr, (list, tuple)) and curr else curr
             if curr_id != eur_id:
-                company_vals["currency_id"] = eur_id
-        _rpc(
-            models, odoo_db, uid, odoo_pass, "res.company", "write",
-            [[company_id], company_vals]
-        )
+                try:
+                    _rpc(
+                        models, odoo_db, uid, odoo_pass, "res.company", "write",
+                        [[company_id], {"currency_id": eur_id}]
+                    )
+                except xmlrpc.client.Fault as exc:
+                    print(f"[WARN] Could not set company currency to EUR: {exc.faultString}", flush=True)
 
     return tax_map
 

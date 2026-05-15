@@ -206,7 +206,8 @@ class TestMainSetup:
             c for c in mock_models.execute_kw.call_args_list
             if c[0][4] == "write" and c[0][3] == "res.company"
         ]
-        assert len(write_calls) == 1
+        # Two writes: one for rounding method, one for currency_id
+        assert len(write_calls) == 2
 
     # ── ensure_pos_categories ────────────────────────────────────────────────
 
