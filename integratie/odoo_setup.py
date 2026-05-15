@@ -402,7 +402,9 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                 models, odoo_db, uid, odoo_pass, "res.company", "read",
                 [[company_id]], {"fields": ["currency_id"]}
             )
-            if not current_company or current_company[0].get("currency_id", [None])[0] != eur_id:
+            curr = current_company[0].get("currency_id") if current_company else None
+            curr_id = curr[0] if isinstance(curr, (list, tuple)) and curr else curr
+            if curr_id != eur_id:
                 company_vals["currency_id"] = eur_id
         _rpc(
             models, odoo_db, uid, odoo_pass, "res.company", "write",
