@@ -187,6 +187,9 @@ class TestMainSetup:
                 return 55
             if obj == "res.currency" and method == "search_read":
                 return [{"id": 1}]
+            if obj == "res.company" and method == "read":
+                # Simulate company currently on a different currency so the write proceeds
+                return [{"currency_id": [2, "USD"]}]
             if obj == "res.company" and method == "write":
                 return True
             if obj == "product.template" and method == "search":
