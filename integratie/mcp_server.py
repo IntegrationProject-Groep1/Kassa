@@ -9,7 +9,7 @@ Optional: PORT (default 8004)
 """
 import os
 import xmlrpc.client  # nosec B411
-from typing import Any
+from typing import Any, cast
 
 import defusedxml.xmlrpc
 from dotenv import load_dotenv
@@ -32,7 +32,7 @@ def _get_uid() -> int:
     global _uid
     if _uid is None:
         common = xmlrpc.client.ServerProxy(f"{_URL}/xmlrpc/2/common")
-        _uid = int(common.authenticate(_DB, _USER, _PASSWORD, {}))
+        _uid = cast(int, common.authenticate(_DB, _USER, _PASSWORD, {}))
         if not _uid:
             raise RuntimeError("Odoo authentication failed — check ODOO_USER / ODOO_PASS")
     return _uid
