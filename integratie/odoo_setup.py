@@ -396,7 +396,14 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
                     models, odoo_db, uid, odoo_pass, "res.currency", "write",
                     [[eur_id], {"active": True}]
                 )
-            company_vals["currency_id"] = eur_id
+            # Only set currency if the company is not already on EUR — Odoo rejects
+            # currency changes once journal items exist.
+            current_company = _rpc(
+                models, odoo_db, uid, odoo_pass, "res.company", "read",
+                [[company_id]], {"fields": ["currency_id"]}
+            )
+            if not current_company or current_company[0].get("currency_id", [None])[0] != eur_id:
+                company_vals["currency_id"] = eur_id
         _rpc(
             models, odoo_db, uid, odoo_pass, "res.company", "write",
             [[company_id], company_vals]
