@@ -20,9 +20,9 @@ load_dotenv()
 
 mcp = FastMCP("kassa")
 
-_URL      = os.getenv("ODOO_URL", "")
-_DB       = os.getenv("ODOO_DB", "")
-_USER     = os.getenv("ODOO_USER", "")
+_URL = os.getenv("ODOO_URL", "")
+_DB = os.getenv("ODOO_DB", "")
+_USER = os.getenv("ODOO_USER", "")
 _PASSWORD = os.getenv("ODOO_PASS", "")
 
 _uid: int | None = None
@@ -91,7 +91,8 @@ def get_recent_orders(limit: int = 20) -> dict[str, Any]:
     """
     limit = min(limit, 100)
     try:
-        orders = _odoo("pos.order", "search_read",
+        orders = _odoo(
+            "pos.order", "search_read",
             [[["state", "in", ["paid", "done", "invoiced"]]]],
             {
                 "fields": ["name", "amount_total", "date_order", "state", "partner_id"],
@@ -103,7 +104,8 @@ def get_recent_orders(limit: int = 20) -> dict[str, Any]:
         partner_ids = [o["partner_id"][0] for o in orders if o.get("partner_id")]
         partner_map: dict[int, dict] = {}
         if partner_ids:
-            partners = _odoo("res.partner", "read",
+            partners = _odoo(
+                "res.partner", "read",
                 [list(set(partner_ids))],
                 {"fields": ["id", "name", "x_user_id", "x_wallet_balance", "x_badge_id"]},
             )
@@ -143,7 +145,8 @@ def get_all_wallets() -> dict[str, Any]:
     Uses the custom x_wallet_balance field on res.partner.
     """
     try:
-        partners = _odoo("res.partner", "search_read",
+        partners = _odoo(
+            "res.partner", "search_read",
             [[["x_wallet_balance", ">", 0]]],
             {
                 "fields": [
