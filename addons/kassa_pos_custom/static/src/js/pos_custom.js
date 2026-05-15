@@ -371,7 +371,7 @@ patch(PartnerLine.prototype, {
      * wallet_lease_grant arriving from the CRM.
      */
     get kassaHasWallet() {
-        return !!this.props.partner.x_lease_active;
+        return !!(this.props.partner.x_lease_active && this.props.partner.x_lease_id);
     },
 
     /** Formatted wallet balance string, e.g. "12.50". */
