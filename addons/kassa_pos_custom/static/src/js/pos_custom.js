@@ -23,6 +23,7 @@ import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { effect } from "@odoo/owl";
 import { _t } from "@web/core/l10n/translation";
+import { sprintf } from "@web/core/utils/strings";
 
 /** Bus channel published by pos.order.send_partner_bus_event. */
 const KASSA_BUS_CHANNEL = "kassa_partner_update";
@@ -329,9 +330,7 @@ patch(PaymentScreen.prototype, {
             const dueCents = Math.round(this.currentOrder.get_due() * 100);
             if (balanceCents < dueCents) {
                 this.env.services.notification.add(
-                    _t("Onvoldoende saldo op de wallet (€%(balance)s).", {
-                        balance: (partner.x_wallet_balance ?? 0).toFixed(2),
-                    }),
+                    sprintf(_t("Onvoldoende saldo op de wallet (€%s)."), (partner.x_wallet_balance ?? 0).toFixed(2)),
                     { type: "danger", sticky: false }
                 );
                 return;
