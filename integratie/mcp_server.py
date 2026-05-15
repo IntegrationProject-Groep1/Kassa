@@ -8,12 +8,14 @@ Requires env vars: ODOO_URL, ODOO_DB, ODOO_USER, ODOO_PASS
 Optional: PORT (default 8004)
 """
 import os
-import xmlrpc.client
+import xmlrpc.client  # nosec B411
 from typing import Any
 
+import defusedxml.xmlrpc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
+defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
 
 mcp = FastMCP("kassa")
@@ -201,4 +203,4 @@ def process_refund(order_id: str, reason: str) -> dict[str, Any]:
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8004"))
     print(f"Starting Kassa MCP server on port {port}...")
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=port)  # nosec B104
