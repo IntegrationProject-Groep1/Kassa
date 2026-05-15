@@ -565,8 +565,12 @@ class TestWalletRemoteTopupPipeline:
     def test_valid_topup_passes_xsd_and_broadcasts(self, mock_conn, mock_error, mock_send, ch, method):
         uid = 1
         models = MagicMock()
-        partner = {"id": 5, "x_wallet_balance": 20.0, "x_lease_active": True}
-        models.execute_kw.side_effect = [[partner], 25.0, 1]
+        partner = {
+            "id": 5, "x_wallet_balance": 20.0, "x_lease_active": True,
+            "x_lease_id": "LSE-001", "x_pending_topup_balance": 0.0,
+            "x_outstanding_amount": 0.0, "x_payment_status": "paid", "name": "Visitor",
+        }
+        models.execute_kw.side_effect = [[partner], 25.0, 1, True]
         mock_conn.return_value = (uid, models)
 
         body = _wallet_remote_topup_xml(_UUID, 5.0)
@@ -593,8 +597,12 @@ class TestWalletRemoteTopupPipeline:
     @patch("receiver.get_odoo_connection")
     def test_duplicate_topup_is_silently_skipped(self, mock_conn, mock_error, mock_send, ch, method):
         uid, models = 1, MagicMock()
-        partner = {"id": 5, "x_wallet_balance": 20.0, "x_lease_active": True}
-        models.execute_kw.side_effect = [[partner], 25.0, 1]
+        partner = {
+            "id": 5, "x_wallet_balance": 20.0, "x_lease_active": True,
+            "x_lease_id": "LSE-001", "x_pending_topup_balance": 0.0,
+            "x_outstanding_amount": 0.0, "x_payment_status": "paid", "name": "Visitor",
+        }
+        models.execute_kw.side_effect = [[partner], 25.0, 1, True]
         mock_conn.return_value = (uid, models)
 
         mid = _make_id()

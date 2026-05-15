@@ -727,15 +727,36 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "x_lease_active"], "limit": 1},
+        {"fields": ["id", "name", "x_lease_active", "x_lease_id",
+                    "x_pending_topup_balance", "x_outstanding_amount",
+                    "x_payment_status"], "limit": 1},
     )
     if not existing:
         logger.warning("[REMOTE_TOPUP] No partner found for identity_uuid=%s", identity_uuid)
         return
 
     partner = existing[0]
+
     if not partner.get("x_lease_active"):
         logger.warning("[REMOTE_TOPUP] No active lease for %s – rejecting remote top-up", identity_uuid)
+        return
+
+    # If the badge was scanned (x_lease_active=True) but the CRM grant has not
+    # yet arrived (x_lease_id is empty), applying the topup directly would lose
+    # it: the incoming lease_grant overwrites x_wallet_balance with the CRM
+    # authoritative balance + x_pending_topup_balance.  Park here instead so
+    # process_wallet_lease_grant can merge it safely.
+    if not partner.get("x_lease_id"):
+        pending = round(float(partner.get("x_pending_topup_balance") or 0.0) + add_amount, 2)
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [[partner["id"]], {"x_pending_topup_balance": pending}],
+        )
+        logger.info(
+            "[REMOTE_TOPUP] Lease pending for %s — parked €%.2f in x_pending_topup_balance (total pending=%.2f)",
+            identity_uuid, add_amount, pending,
+        )
         return
 
     new_balance = models.execute_kw(
@@ -757,6 +778,13 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         status="active",
     )
     send_typed_message("wallet_balance_update", update_xml)
+
+    _publish_partner_bus_event(
+        uid, models, partner["id"],
+        float(partner.get("x_outstanding_amount") or 0.0),
+        partner.get("x_payment_status") or "unpaid",
+        partner.get("name") or "Unknown",
+    )
     logger.info("[REMOTE_TOPUP] ✅ Balance updated for %s: +%.2f → %.2f (reason=%s)",
                 identity_uuid, add_amount, new_balance, reason)
 
