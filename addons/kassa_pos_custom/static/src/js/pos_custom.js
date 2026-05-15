@@ -34,7 +34,10 @@ function _parseSessionTitles(raw) {
     if (!raw) return [];
     try {
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter(Boolean) : [String(parsed)].filter(Boolean);
+        if (!Array.isArray(parsed)) return [String(parsed)].filter(Boolean);
+        return parsed
+            .map((entry) => (typeof entry === "object" && entry !== null ? entry.title : String(entry)))
+            .filter(Boolean);
     } catch {
         return [raw];
     }
