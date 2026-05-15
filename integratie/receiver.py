@@ -41,14 +41,11 @@ from typing import Any, List, Dict, Optional, Tuple, cast
 from lxml import etree
 
 from config_utils import get_env, parse_rabbit_port, require_env, parse_xml_float
-import uuid as _uuid
-
 from sender import (
     send_error_to_queue, flush_buffer, now_utc, setup_exchange, EXCHANGE_NAME,
     send_typed_message,
     build_wallet_lease_request_xml, build_wallet_lease_return_xml,
     build_wallet_balance_update_xml, build_user_sessions_request_xml,
-    build_session_view_request_xml,
 )
 from monitoring import monitor
 from typing_utils import OdooModelsProxy, OdooRecord
@@ -101,7 +98,9 @@ SCHEMA_MAP = {
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
     "event_ended": os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
     "user_sessions_response": os.path.join(SCHEMA_DIR, "schema_user_sessions_response.xsd"),
-    "session_view_response":  os.path.join(SCHEMA_DIR, "schema_session_view_response.xsd"),
+    "session_created":        os.path.join(SCHEMA_DIR, "schema_session_created.xsd"),
+    "session_updated":        os.path.join(SCHEMA_DIR, "schema_session_updated.xsd"),
+    "session_deleted":        os.path.join(SCHEMA_DIR, "schema_session_deleted.xsd"),
 }
 
 _schema_cache: dict[str, etree.XMLSchema] = {}
@@ -386,8 +385,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     dob_str = (body.findtext("date_of_birth") or "").strip()
     company_id = (body.findtext("company_id") or "").strip()
 
-    payment_due_el = body.find("payment_due")
-
     if not identity_uuid:
         raise ValueError("profile_update: identity_uuid missing in <body>")
 
@@ -405,11 +402,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     }
     if company_id:
         update_vals["x_company_id"] = company_id
-    if payment_due_el is not None:
-        status = (payment_due_el.findtext("status") or "pending").strip()
-        amount = parse_xml_float(payment_due_el.find("amount"))
-        update_vals["x_payment_status"] = status
-        update_vals["x_outstanding_amount"] = amount
     if body.find("vat_number") is not None:
         update_vals["vat"] = vat_number if vat_number else False
     if company_name and not name:
@@ -418,17 +410,13 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         update_vals["x_date_of_birth"] = dob_str if dob_str else False
 
     payment_due_el = body.find("payment_due")
+    outstanding_amount: Optional[float] = None
+    payment_status: Optional[str] = None
     if payment_due_el is not None:
-        try:
-            outstanding_amount = float(payment_due_el.findtext("amount", "0").strip())
-        except ValueError:
-            outstanding_amount = 0.0
-        payment_status = payment_due_el.findtext("status", "unpaid").strip()
+        outstanding_amount = parse_xml_float(payment_due_el.find("amount"))
+        payment_status = (payment_due_el.findtext("status") or "unpaid").strip()
         update_vals["x_outstanding_amount"] = outstanding_amount
         update_vals["x_payment_status"] = payment_status
-    else:
-        outstanding_amount = None
-        payment_status = None
 
     if existing:
         partner_id = existing[0]["id"]
@@ -739,15 +727,36 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "x_lease_active"], "limit": 1},
+        {"fields": ["id", "name", "x_lease_active", "x_lease_id",
+                    "x_pending_topup_balance", "x_outstanding_amount",
+                    "x_payment_status"], "limit": 1},
     )
     if not existing:
         logger.warning("[REMOTE_TOPUP] No partner found for identity_uuid=%s", identity_uuid)
         return
 
     partner = existing[0]
+
     if not partner.get("x_lease_active"):
         logger.warning("[REMOTE_TOPUP] No active lease for %s – rejecting remote top-up", identity_uuid)
+        return
+
+    # If the badge was scanned (x_lease_active=True) but the CRM grant has not
+    # yet arrived (x_lease_id is empty), applying the topup directly would lose
+    # it: the incoming lease_grant overwrites x_wallet_balance with the CRM
+    # authoritative balance + x_pending_topup_balance.  Park here instead so
+    # process_wallet_lease_grant can merge it safely.
+    if not partner.get("x_lease_id"):
+        pending = round(float(partner.get("x_pending_topup_balance") or 0.0) + add_amount, 2)
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "write",
+            [[partner["id"]], {"x_pending_topup_balance": pending}],
+        )
+        logger.info(
+            "[REMOTE_TOPUP] Lease pending for %s — parked €%.2f in x_pending_topup_balance (total pending=%.2f)",
+            identity_uuid, add_amount, pending,
+        )
         return
 
     new_balance = models.execute_kw(
@@ -769,6 +778,13 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         status="active",
     )
     send_typed_message("wallet_balance_update", update_xml)
+
+    _publish_partner_bus_event(
+        uid, models, partner["id"],
+        float(partner.get("x_outstanding_amount") or 0.0),
+        partner.get("x_payment_status") or "unpaid",
+        partner.get("name") or "Unknown",
+    )
     logger.info("[REMOTE_TOPUP] ✅ Balance updated for %s: +%.2f → %.2f (reason=%s)",
                 identity_uuid, add_amount, new_balance, reason)
 
@@ -963,6 +979,17 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
         session_count, correlation_id,
     )
 
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info(
+            "[USER_SESSIONS_RESPONSE] Bus notification sent to %d open POS session(s)", notified
+        )
+    except Exception as exc:
+        logger.warning("[USER_SESSIONS_RESPONSE] Could not push bus notification: %s", exc)
+
 
 def process_session_view_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_view_response from Planning (startup all-sessions fetch).
@@ -1030,6 +1057,119 @@ def process_session_view_response(root: Element, uid: int, models: OdooModelsPro
         "[SESSION_VIEW_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
         " | request_message_id=%s",
         session_count, request_message_id,
+    )
+
+    # Push updated product list to all open POS sessions via the bus so the
+    # cashier's screen refreshes without a manual reload.
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info(
+            "[SESSION_VIEW_RESPONSE] Bus notification sent to %d open POS session(s)", notified
+        )
+    except Exception as exc:
+        logger.warning("[SESSION_VIEW_RESPONSE] Could not push bus notification: %s", exc)
+
+
+def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
+    """Parse x_session_title JSON; normalise plain-string entries to dict format."""
+    if not raw:
+        return []
+    try:
+        entries = json.loads(raw)
+        if not isinstance(entries, list):
+            entries = [entries]
+    except (json.JSONDecodeError, ValueError):
+        entries = [raw]
+    result = []
+    for e in entries:
+        if isinstance(e, dict):
+            result.append(e)
+        elif isinstance(e, str) and e.strip():
+            result.append({"session_id": "", "title": e.strip(), "price": None})
+    return result
+
+
+def process_session_created(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle session_created from Frontend.
+
+    A session being created has no user linked to it — it describes the session
+    itself (title, dates, price, etc.). Kassa only needs to ensure the matching
+    POS product exists so it is ready when visitors scan their badge.
+    Binding: kassa.incoming ← frontend.to.kassa.session.created
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("session_created: <body> missing")
+
+    session_id = (body.findtext("session_id") or "").strip()
+    title = (body.findtext("title") or "").strip()
+    if not session_id or not title:
+        raise ValueError("session_created: session_id or title missing")
+
+    price_el = body.find("price")
+    price: Optional[float] = None
+    if price_el is not None and price_el.text:
+        try:
+            price = float(price_el.text.strip())
+        except (ValueError, TypeError):
+            pass
+
+    _ensure_session_product(uid, models, title, price=price)
+    logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
+
+
+def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle session_updated from Frontend.
+
+    A session update has no user linked — it describes changes to the session
+    itself (new title, price, dates, etc.). Kassa updates the matching POS
+    product so the correct name/price is shown at scan time.
+    Binding: kassa.incoming ← frontend.to.kassa.session.updated
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("session_updated: <body> missing")
+
+    session_id = (body.findtext("session_id") or "").strip()
+    title = (body.findtext("title") or "").strip()
+    if not session_id or not title:
+        raise ValueError("session_updated: session_id or title missing")
+
+    price_el = body.find("price")
+    price: Optional[float] = None
+    if price_el is not None and price_el.text:
+        try:
+            price = float(price_el.text.strip())
+        except (ValueError, TypeError):
+            pass
+
+    _ensure_session_product(uid, models, title, price=price)
+    logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
+
+
+def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle session_deleted from Frontend.
+
+    A session deletion has no user linked — the session itself is gone.
+    Kassa does NOT delete the POS product: visitors who already paid or are
+    mid-transaction may still need it. Log and ack.
+    Binding: kassa.incoming ← frontend.to.kassa.session.deleted
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("session_deleted: <body> missing")
+
+    session_id = (body.findtext("session_id") or "").strip()
+    if not session_id:
+        raise ValueError("session_deleted: session_id missing")
+
+    reason = (body.findtext("reason") or "").strip()
+    logger.info(
+        "[SESSION_DELETED] Session id=%s removed from system%s — POS product kept.",
+        session_id, f" (reason: {reason})" if reason else "",
     )
 
 
@@ -1123,8 +1263,12 @@ def process_message(ch, method, properties, body):
             process_event_ended(root, uid, models)
         elif msg_type == "user_sessions_response":
             process_user_sessions_response(root, uid, models)
-        elif msg_type == "session_view_response":
-            process_session_view_response(root, uid, models)
+        elif msg_type == "session_created":
+            process_session_created(root, uid, models)
+        elif msg_type == "session_updated":
+            process_session_updated(root, uid, models)
+        elif msg_type == "session_deleted":
+            process_session_deleted(root, uid, models)
 
         if related_message_id:
             _remember_message_id(related_message_id)
@@ -1307,20 +1451,22 @@ def start_listening():
         msg = f"Startup flush failure: {str(e)[:500]}"
         monitor.log("warning", "system_error", msg)
 
-    # Send session_view_request to Planning on every (re)connect so POS always
-    # has up-to-date session products. This fires at startup and on reconnect,
-    # so sessions are available even if Planning wasn't ready at Docker start.
+    # Bind Frontend → Kassa session routing keys on kassa.exchange
     try:
-        _corr = str(_uuid.uuid4())
-        send_typed_message(
-            "session_view_request",
-            build_session_view_request_xml(correlation_id=_corr),
-            exchange="planning.exchange",
-            buffer_on_fail=False,
-        )
-        logger.info("[RECEIVER] ✅ session_view_request sent to Planning | correlation_id=%s", _corr)
+        for routing_key in (
+            "frontend.to.kassa.user_sessions_response",
+            "frontend.to.kassa.session.created",
+            "frontend.to.kassa.session.updated",
+            "frontend.to.kassa.session.deleted",
+        ):
+            channel.queue_bind(
+                exchange=EXCHANGE_NAME,
+                queue=QUEUE_NAME,
+                routing_key=routing_key,
+            )
+        logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", EXCHANGE_NAME)
     except Exception as e:
-        logger.warning("[RECEIVER] Could not send session_view_request at connect: %s", e)
+        logger.warning("[RECEIVER] Could not bind Frontend session routing keys: %s", e)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

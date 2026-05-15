@@ -629,16 +629,19 @@ def build_payment_status_xml(identity_uuid: str, status: str) -> str:
 
 
 def build_invoice_request_xml(
-    identity_uuid: str, invoice_data: dict, correlation_id: str
+    identity_uuid: str, invoice_data: dict, correlation_id: str,
+    payment_status: str = "paid", payment_method: str | None = None,
 ) -> str:
     """
     Build an invoice_request message asking the CRM to generate a formal invoice.
 
     Args:
-        identity_uuid:  CRM identity_uuid of the customer requesting the invoice.
-        invoice_data:   Dict with keys: name, email, address (dict), and
-                        optionally vat_number for B2B invoices.
-        correlation_id: message_id of the original sale this invoice covers.
+        identity_uuid:   CRM identity_uuid of the customer requesting the invoice.
+        invoice_data:    Dict with keys: name, email, address (dict), and
+                         optionally vat_number for B2B invoices.
+        correlation_id:  message_id of the original sale this invoice covers.
+        payment_status:  "paid" or "pending" — lets Facturatie self-contain the decision.
+        payment_method:  Optional method string (e.g. "on_site", "company_link").
     """
     if not correlation_id:
         raise ValueError("correlation_id is required for invoice_request")
@@ -647,6 +650,9 @@ def build_invoice_request_xml(
     _make_header(root, "invoice_request", correlation_id, source="kassa")
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = identity_uuid
+    ET.SubElement(body, "payment_status").text = payment_status
+    if payment_method:
+        ET.SubElement(body, "payment_method").text = payment_method
 
     inv = ET.SubElement(body, "invoice_data")
 
@@ -782,7 +788,7 @@ def build_refund_processed_xml(
     refund_method: str, refund_reason: str,
     original_transaction_id: str,
     identity_uuid=None, description=None, new_wallet_balance=None,
-    is_anonymous=False, email=None
+    is_anonymous=False, email=None, items=None,
 ) -> str:
     """
     Build a refund_processed message confirming a refund was issued.
@@ -801,8 +807,11 @@ def build_refund_processed_xml(
         identity_uuid:           CRM identity_uuid if the customer is known.
         description:             Optional longer description of the refund.
         new_wallet_balance:      Updated wallet balance after the refund, if the
-                                 refund method was 'badge_wallet'. Included in the XML
-                                 so the CRM can update its own balance record.
+                                 refund method was 'badge_wallet'.
+        items:                   Optional list of dicts with keys: sku, description,
+                                 quantity, unit_price, total_amount, vat_rate (opt),
+                                 session_id (opt). Used by CRM to forward a partial
+                                 credit note to Facturatie via invoice_cancelled.
     """
     root = ET.Element("message")
     _make_header(root, "refund_processed", original_payment_msg_id)
@@ -823,14 +832,30 @@ def build_refund_processed_xml(
     if description:
         ET.SubElement(refund, "description").text = description
 
-    ET.SubElement(
-        body,
-        "original_transaction_id").text = original_transaction_id
+    ET.SubElement(body, "original_transaction_id").text = original_transaction_id
 
     if new_wallet_balance is not None:
         wb = ET.SubElement(body, "new_wallet_balance")
         wb.text = f"{new_wallet_balance:.2f}"
         wb.set("currency", "eur")
+
+    if items:
+        items_el = ET.SubElement(body, "items")
+        for item in items:
+            item_el = ET.SubElement(items_el, "item")
+            ET.SubElement(item_el, "sku").text = str(item["sku"])
+            ET.SubElement(item_el, "description").text = str(item["description"])
+            ET.SubElement(item_el, "quantity").text = str(item["quantity"])
+            up = ET.SubElement(item_el, "unit_price")
+            up.text = f"{item['unit_price']:.2f}"
+            up.set("currency", "eur")
+            ta = ET.SubElement(item_el, "total_amount")
+            ta.text = f"{item['total_amount']:.2f}"
+            ta.set("currency", "eur")
+            if item.get("vat_rate") is not None:
+                ET.SubElement(item_el, "vat_rate").text = str(item["vat_rate"])
+            if item.get("session_id"):
+                ET.SubElement(item_el, "session_id").text = str(item["session_id"])
 
     return _to_xml(root)
 

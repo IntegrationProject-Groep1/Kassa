@@ -185,6 +185,8 @@ class TestMainSetup:
                 return []  # none exist → will create
             if obj == "account.tax" and method == "create":
                 return 55
+            if obj == "res.currency" and method == "search_read":
+                return [{"id": 1}]
             if obj == "res.company" and method == "write":
                 return True
             if obj == "product.template" and method == "search":

@@ -144,7 +144,7 @@ def test_process_order_marks_rabbitmq_sent(mock_sender, poller):
     order = {'id': 7, 'partner_id': None, 'amount_total': 5.0, 'lines': []}
 
     with patch.object(poller, '_process_consumption') as mock_pc:
-        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id")
+        mock_pc.return_value = (True, "12345-msg-id", "12345-pay-id", "paid", "on_site")
         poller.models.execute_kw.return_value = True
         poller.process_order(order)
 
@@ -390,7 +390,7 @@ def test_process_consumption_sets_payment_link_fields(mock_sender, poller):
         'create_date': '2026-04-01 12:00:00',
     }
 
-    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id, *_ = poller._process_consumption(
         order, None, is_anonymous=True)
 
     assert ok is True
@@ -438,7 +438,7 @@ def test_process_consumption_badge_wallet_updates_balance(mock_sender, poller):
     )
     mock_sender.send_typed_message.side_effect = [True, True, True]
 
-    ok, correlation_msg_id, payment_msg_id = poller._process_consumption(
+    ok, correlation_msg_id, payment_msg_id, *_ = poller._process_consumption(
         order, customer_info, is_anonymous=False)
 
     assert ok is True
@@ -488,7 +488,7 @@ def test_process_consumption_badge_wallet_anonymous_blocked(mock_sender, poller)
     )
     mock_sender.send_typed_message.side_effect = [True, True]
 
-    ok, _corr, payment_msg_id = poller._process_consumption(
+    ok, _corr, payment_msg_id, *_ = poller._process_consumption(
         order, customer_info=None, is_anonymous=True
     )
 
@@ -1254,3 +1254,510 @@ def test_company_wallet_payment_with_to_invoice_is_not_pay_later(mock_sender, po
     )
     assert pay_call_kwargs[1]['amount_paid'] == 50.0
     assert pay_call_kwargs[1]['payment_method'] == 'on_site'
+
+
+@patch('order_poller.sender')
+def test_company_customer_account_is_pay_later(mock_sender, poller):
+    """Company pays via Customer Account → invoice_status='pending', payment_method='company_link'.
+
+    Customer Account is the POS deferred-payment method; the money is not collected on-site.
+    """
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-b2b-ca</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-b2b-ca</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    customer_info = {
+        'id': 60, 'x_wallet_balance': 0.0, 'x_user_id': 'UUID-COMPANY-60',
+        'x_badge_id': None, 'x_lease_active': False, 'x_lease_id': None,
+        'x_pending_topup_balance': 0.0, 'is_company': True, 'parent_id': False,
+        'email': 'invoice@corp.com', 'customer_type': 'company',
+        'name': 'Corp NV', 'street': 'Zakenlaan 5',
+        'zip': '9000', 'city': 'Gent', 'country_code': 'be',
+        'vat': 'BE0987654321',
+    }
+    order = {
+        'id': 101, 'partner_id': 60, 'lines': [], 'amount_total': 200.0,
+        'payment_ids': [6001],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 11:00:00',
+        'to_invoice': False, 'account_move': None,
+        'x_invoice_message_id': None, 'x_rabbitmq_error': '',
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        # _get_special_payment_info: Customer Account payment
+        [{'payment_method_id': (2, 'Customer Account'), 'amount': 200.0}],
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+
+    poller._process_consumption(order, customer_info, is_anonymous=False)
+
+    pay_call_kwargs = mock_sender.build_payment_registered_xml.call_args
+    assert pay_call_kwargs[1]['invoice_status'] == 'pending', (
+        "Customer Account payment must produce invoice_status='pending'"
+    )
+    assert pay_call_kwargs[1]['amount_paid'] == 0.0
+    assert pay_call_kwargs[1]['payment_method'] == 'company_link'
+
+
+@patch('order_poller.sender')
+def test_private_person_to_invoice_cash_is_paid(mock_sender, poller):
+    """Private person requests invoice and pays cash → invoice_status='paid' + invoice_request sent.
+
+    Private persons must pay on-site; the invoice is just a document, not deferred payment.
+    """
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-private-inv</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-private-inv</message_id></header></message>'
+    )
+    mock_sender.build_invoice_request_xml.return_value = (
+        '<message><header><message_id>inv-private</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+    mock_sender.extract_message_id.return_value = 'inv-private'
+
+    customer_info = {
+        'id': 70, 'x_wallet_balance': 0.0, 'x_user_id': 'UUID-PRIVATE-70',
+        'x_badge_id': None, 'x_lease_active': False, 'x_lease_id': None,
+        'x_pending_topup_balance': 0.0, 'is_company': False, 'parent_id': False,
+        'email': 'jan@example.com', 'customer_type': 'private',
+        'name': 'Jan De Smet', 'street': 'Dorpstraat 12',
+        'zip': '2000', 'city': 'Antwerpen', 'country_code': 'be',
+        'vat': '',
+    }
+    order = {
+        'id': 102, 'partner_id': 70, 'lines': [], 'amount_total': 35.0,
+        'payment_ids': [7001],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 12:00:00',
+        'to_invoice': True,   # cashier activated invoice at the bar
+        'account_move': None,
+        'x_invoice_message_id': None, 'x_rabbitmq_error': '',
+        'session_id': [1, 'Consumption Bar'],
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'name': 'Consumption Bar'}],   # _get_pos_config_name
+        # _get_special_payment_info: cash (no special method)
+        [{'payment_method_id': (3, 'Cash'), 'amount': 35.0}],
+        True,   # x_payment_message_id
+        True,   # x_invoice_message_id
+        True,   # x_rabbitmq_sent
+    ]
+
+    result = poller.process_order(order)
+    assert result is True
+
+    # payment_registered: paid on-site
+    pay_call_kwargs = mock_sender.build_payment_registered_xml.call_args
+    assert pay_call_kwargs[1]['invoice_status'] == 'paid', (
+        "private person with to_invoice must be 'paid' (paid cash on-site)"
+    )
+    assert pay_call_kwargs[1]['amount_paid'] == 35.0
+    assert pay_call_kwargs[1]['payment_method'] == 'on_site'
+
+    # invoice_request must also be sent
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'invoice_request' in sent_types, (
+        "invoice_request must be sent when private person has to_invoice=True"
+    )
+
+
+@patch('order_poller.sender')
+def test_company_no_to_invoice_no_invoice_request(mock_sender, poller):
+    """Company order without to_invoice=True → no invoice_request (Odoo normally sets it automatically).
+
+    Previously the code auto-triggered invoice_request for all companies via 'or is_company'.
+    Now to_invoice=True is the single gate — this test guards against regressing to the old behavior.
+    """
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-no-inv</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-no-inv</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    customer_info = {
+        'id': 80, 'x_wallet_balance': 0.0, 'x_user_id': 'UUID-COMPANY-80',
+        'x_badge_id': None, 'x_lease_active': False, 'x_lease_id': None,
+        'x_pending_topup_balance': 0.0, 'is_company': True, 'parent_id': False,
+        'email': 'corp@example.com', 'customer_type': 'company',
+        'name': 'Corp BV', 'street': 'Handelslaan 3',
+        'zip': '2000', 'city': 'Antwerpen', 'country_code': 'be',
+        'vat': 'BE0111222333',
+    }
+    order = {
+        'id': 110, 'partner_id': 80, 'lines': [], 'amount_total': 100.0,
+        'payment_ids': [],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 13:00:00',
+        'to_invoice': False,   # NOT set — e.g. edge case or test env
+        'account_move': None,
+        'x_invoice_message_id': None, 'x_rabbitmq_error': '',
+        'session_id': [1, 'Bar Kassa'],
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'name': 'Bar Kassa'}],  # _get_pos_config_name
+        [],                        # _get_special_payment_info: no payments
+        True,                      # x_payment_message_id
+        True,                      # x_rabbitmq_sent
+    ]
+
+    poller.process_order(order)
+
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'invoice_request' not in sent_types, (
+        "invoice_request must NOT be sent when to_invoice=False, even for a company"
+    )
+
+
+@patch('order_poller.sender')
+def test_account_move_triggers_invoice_request_for_private(mock_sender, poller):
+    """account_move set (Odoo generated invoice doc) triggers invoice_request even without to_invoice flag."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-acct-move</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-acct-move</message_id></header></message>'
+    )
+    mock_sender.build_invoice_request_xml.return_value = (
+        '<message><header><message_id>inv-acct-move</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+    mock_sender.extract_message_id.return_value = 'inv-acct-move'
+
+    customer_info = {
+        'id': 90, 'x_wallet_balance': 0.0, 'x_user_id': 'UUID-PRIVATE-90',
+        'x_badge_id': None, 'x_lease_active': False, 'x_lease_id': None,
+        'x_pending_topup_balance': 0.0, 'is_company': False, 'parent_id': False,
+        'email': 'marie@example.com', 'customer_type': 'private',
+        'name': 'Marie Janssen', 'street': 'Kerkstraat 5',
+        'zip': '9000', 'city': 'Gent', 'country_code': 'be',
+        'vat': '',
+    }
+    order = {
+        'id': 111, 'partner_id': 90, 'lines': [], 'amount_total': 45.0,
+        'payment_ids': [8001],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 14:00:00',
+        'to_invoice': False,    # not explicitly set
+        'account_move': 999,    # Odoo generated invoice → triggers invoice_request
+        'x_invoice_message_id': None, 'x_rabbitmq_error': '',
+        'session_id': [1, 'Bar Kassa'],
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'name': 'Bar Kassa'}],
+        [{'payment_method_id': (3, 'Cash'), 'amount': 45.0}],
+        True,   # x_payment_message_id
+        True,   # x_invoice_message_id
+        True,   # x_rabbitmq_sent
+    ]
+
+    result = poller.process_order(order)
+    assert result is True
+
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'invoice_request' in sent_types, "account_move must trigger invoice_request"
+
+    pay_call = mock_sender.build_payment_registered_xml.call_args
+    assert pay_call[1]['invoice_status'] == 'paid'
+    assert pay_call[1]['payment_method'] == 'on_site'
+
+
+@patch('order_poller.sender')
+def test_invoice_deduplication_does_not_double_send(mock_sender, poller):
+    """x_invoice_message_id already set → invoice_request not sent a second time."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>corr-dedup</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>pay-dedup</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    customer_info = {
+        'id': 95, 'x_wallet_balance': 0.0, 'x_user_id': 'UUID-PRIVATE-95',
+        'x_badge_id': None, 'x_lease_active': False, 'x_lease_id': None,
+        'x_pending_topup_balance': 0.0, 'is_company': False, 'parent_id': False,
+        'email': 'luc@example.com', 'customer_type': 'private',
+        'name': 'Luc Pieters', 'street': 'Markt 1',
+        'zip': '3000', 'city': 'Leuven', 'country_code': 'be',
+        'vat': '',
+    }
+    order = {
+        'id': 112, 'partner_id': 95, 'lines': [], 'amount_total': 30.0,
+        'payment_ids': [],
+        'x_wallet_updated': False, 'x_payment_message_id': None,
+        'create_date': '2026-05-13 15:00:00',
+        'to_invoice': True,
+        'account_move': None,
+        'x_invoice_message_id': 'already-sent-uuid',  # already sent
+        'x_rabbitmq_error': '',
+        'session_id': [1, 'Bar Kassa'],
+    }
+
+    poller.get_customer_info = MagicMock(return_value=customer_info)
+    poller.models.execute_kw.side_effect = [
+        [{'name': 'Bar Kassa'}],
+        [],     # _get_special_payment_info
+        True,   # x_payment_message_id
+        True,   # x_rabbitmq_sent
+    ]
+
+    poller.process_order(order)
+
+    sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'invoice_request' not in sent_types, (
+        "invoice_request must not be sent again when x_invoice_message_id is already set"
+    )
+
+
+# ---------------------------------------------------------------------------
+# check_pos_sessions
+# ---------------------------------------------------------------------------
+
+class TestCheckPosSessions:
+    """Tests for OrderPoller.check_pos_sessions — triggers session_view_request on POS open."""
+
+    @patch("order_poller.sender")
+    def test_sends_request_for_newly_opened_session(self, mock_sender, poller):
+        """A newly opened pos.session triggers one session_view_request."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller.models.execute_kw.return_value = [{"id": 1, "name": "POS/001"}]
+
+        poller.check_pos_sessions()
+
+        mock_sender.send_typed_message.assert_called_once()
+        call_kwargs = mock_sender.send_typed_message.call_args
+        assert call_kwargs[0][0] == "session_view_request"
+        assert call_kwargs[1].get("exchange") == "planning.exchange"
+        assert call_kwargs[1].get("buffer_on_fail") is False
+
+    @patch("order_poller.sender")
+    def test_skips_already_seen_session(self, mock_sender, poller):
+        """Sessions already in _seen_pos_sessions are not re-sent."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller.models.execute_kw.return_value = [{"id": 7, "name": "POS/007"}]
+        poller._seen_pos_sessions.add(7)  # already processed
+
+        poller.check_pos_sessions()
+
+        mock_sender.send_typed_message.assert_not_called()
+
+    @patch("order_poller.sender")
+    def test_multiple_sessions_each_triggers_request(self, mock_sender, poller):
+        """Two open sessions both new → two session_view_requests sent."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller.models.execute_kw.return_value = [
+            {"id": 1, "name": "POS/001"},
+            {"id": 2, "name": "POS/002"},
+        ]
+
+        poller.check_pos_sessions()
+
+        assert mock_sender.send_typed_message.call_count == 2
+
+    @patch("order_poller.sender")
+    def test_session_added_to_seen_after_send(self, mock_sender, poller):
+        """Session ID is stored in _seen_pos_sessions after the request is sent."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller.models.execute_kw.return_value = [{"id": 42, "name": "POS/042"}]
+
+        poller.check_pos_sessions()
+
+        assert 42 in poller._seen_pos_sessions
+
+    @patch("order_poller.sender")
+    def test_no_open_sessions_sends_nothing(self, mock_sender, poller):
+        """Empty session list → nothing sent, no error."""
+        poller.models.execute_kw.return_value = []
+
+        poller.check_pos_sessions()
+
+        mock_sender.send_typed_message.assert_not_called()
+
+    @patch("order_poller.sender")
+    def test_second_poll_skips_already_seen(self, mock_sender, poller):
+        """Same session open across two poll cycles → request sent only once."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller.models.execute_kw.return_value = [{"id": 3, "name": "POS/003"}]
+
+        poller.check_pos_sessions()
+        poller.check_pos_sessions()
+
+        assert mock_sender.send_typed_message.call_count == 1
+
+    @patch("order_poller.sender")
+    def test_seen_and_new_session_mixed(self, mock_sender, poller):
+        """One seen session + one new → only the new one triggers a request."""
+        mock_sender.build_session_view_request_xml.return_value = "<message/>"
+        poller._seen_pos_sessions.add(10)
+        poller.models.execute_kw.return_value = [
+            {"id": 10, "name": "POS/010"},  # already seen
+            {"id": 11, "name": "POS/011"},  # new
+        ]
+
+        poller.check_pos_sessions()
+
+        assert mock_sender.send_typed_message.call_count == 1
+        assert 11 in poller._seen_pos_sessions
+
+    @patch("order_poller.sender")
+    def test_odoo_error_does_not_crash_poller(self, mock_sender, poller):
+        """An Odoo exception in check_pos_sessions is caught and does not propagate."""
+        poller.models.execute_kw.side_effect = Exception("Odoo unreachable")
+
+        poller.check_pos_sessions()  # must not raise
+
+        mock_sender.send_typed_message.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T1-1 — Story 8: Refund correlation_id must be UUID from payment_registered
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_refund_correlation_id_is_payment_message_uuid(mock_sender, poller):
+    """
+    Story 8: refund_processed must use the payment_registered UUID as correlation_id,
+    not a generated UUID or an ORDER-{id} format.
+    """
+    real_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    order = {
+        'id': 50, 'amount_total': -10.0,
+        'lines': [(99,)],
+        'payment_ids': [1], 'x_wallet_updated': False,
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'payment_method_id': (2, 'Cash'), 'amount': -10.0}],  # payments
+        [{'id': 99, 'refunded_orderline_id': (55, 'Line')}],    # refund line
+        [{'id': 55, 'order_id': (7, 'POS/007')}],               # original line
+        [{'id': 7, 'x_payment_message_id': real_uuid}],          # original order UUID
+    ]
+
+    poller._process_refund(order, 50, None, is_anonymous=True)
+
+    call_kwargs = mock_sender.build_refund_processed_xml.call_args[1]
+    assert call_kwargs['original_payment_msg_id'] == real_uuid, (
+        f"Expected UUID '{real_uuid}', got '{call_kwargs['original_payment_msg_id']}' — "
+        "refund must correlate to the original payment_registered message ID"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T1-5 — Story 21: x_outstanding_amount reset after Inschrijvingskassa payment
+# ---------------------------------------------------------------------------
+
+def test_update_partner_registration_paid_resets_outstanding(poller):
+    """_update_partner_registration_paid writes x_outstanding_amount=0.0 and x_payment_status='paid'."""
+    poller.models.execute_kw.side_effect = [
+        True,  # res.partner write
+        True,  # pos.order send_partner_bus_event
+    ]
+
+    poller._update_partner_registration_paid(partner_id=7, partner_name="Alice")
+
+    write_call = poller.models.execute_kw.call_args_list[0]
+    assert write_call[0][3] == 'res.partner'
+    assert write_call[0][4] == 'write'
+    vals = write_call[0][5][1]
+    assert vals['x_outstanding_amount'] == 0.0
+    assert vals['x_payment_status'] == 'paid'
+
+
+def test_update_partner_registration_paid_sends_bus_event_with_zero(poller):
+    """_update_partner_registration_paid sends a bus event with amount=0.0 and status='paid'."""
+    poller.models.execute_kw.side_effect = [
+        True,  # write
+        True,  # bus event
+    ]
+
+    poller._update_partner_registration_paid(partner_id=7, partner_name="Alice")
+
+    bus_call = poller.models.execute_kw.call_args_list[1]
+    assert bus_call[0][3] == 'pos.order'
+    assert bus_call[0][4] == 'send_partner_bus_event'
+    args = bus_call[0][5]
+    assert args[0] == 7       # partner_id
+    assert args[1] == 0.0     # outstanding_amount
+    assert args[2] == 'paid'  # payment_status
+
+
+# ---------------------------------------------------------------------------
+# Story 6: Bar Kassa (consumption) never auto-marks partner paid
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_bar_kassa_consumption_never_calls_update_partner_paid(mock_sender, poller):
+    """Bar Kassa consumption orders must not trigger _update_partner_registration_paid."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>test-id-111</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>test-id-222</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 60, 'amount_total': 15.0,
+        'lines': [(10,)], 'payment_ids': [1],
+    }
+    customer_info = {
+        'id': 3, 'name': 'Bob', 'x_user_id': 'usr-bob',
+        'x_wallet_balance': 50.0, 'x_outstanding_amount': 0.0,
+        'x_payment_status': 'paid', 'email': 'bob@example.com',
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'id': 10, 'product_id': (1, 'Beer'), 'qty': 1, 'price_unit': 15.0, 'tax_ids': []}],
+        [{'id': 1, 'list_price': 15.0, 'taxes_id': []}],  # product tax
+        [{'payment_method_id': (2, 'Cash'), 'amount': 15.0}],
+    ]
+
+    with patch.object(poller, '_update_partner_registration_paid') as mock_paid:
+        poller._process_consumption(order, customer_info, is_anonymous=False)
+        mock_paid.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Story 19: anonymous Badge Wallet blocked — correct error code
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_anonymous_badge_wallet_system_error_code(mock_sender, poller):
+    """Anonymous Badge Wallet payment produces error_code='badge_wallet_anonymous_blocked'."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>anon-test-id</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 70, 'amount_total': 5.0,
+        'lines': [(20,)], 'payment_ids': [2],
+    }
+    poller.models.execute_kw.side_effect = [
+        [{'id': 20, 'product_id': (1, 'Beer'), 'qty': 1, 'price_unit': 5.0, 'tax_ids': []}],
+        [{'id': 1, 'list_price': 5.0, 'taxes_id': []}],
+        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 5.0}],
+    ]
+
+    poller._process_consumption(order, customer_info=None, is_anonymous=True)
+
+    # The error is sent via send_error_to_queue, not send_typed_message
+    mock_sender.send_error_to_queue.assert_called_once()
+    call_args = mock_sender.send_error_to_queue.call_args[0]
+    assert call_args[0] == 'badge_wallet_anonymous_blocked', \
+        f"Expected error code 'badge_wallet_anonymous_blocked', got '{call_args[0]}'"
