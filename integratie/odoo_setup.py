@@ -502,6 +502,7 @@ def ensure_demo_products(
     products: list[tuple[str, str, float, int, float, dict[str, Any]]] = [
         ("Top-up EUR 10", "TOPUP-010", 10.0, topup_cat_id, 0.0, {"x_is_topup": True}),
         ("Top-up EUR 20", "TOPUP-020", 20.0, topup_cat_id, 0.0, {"x_is_topup": True}),
+        ("Top-up Algemeen", "TOPUP-ALG", 0.0, topup_cat_id, 0.0, {"x_is_topup": True}),
         ("Cola", "DRINK-001", 2.50, drinks_cat_id, 21.0, {}),
         ("Water", "DRINK-002", 1.80, drinks_cat_id, 6.0, {}),
         ("Coffee", "DRINK-003", 2.20, drinks_cat_id, 6.0, {}),
