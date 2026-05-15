@@ -11,7 +11,7 @@ const QR_PARTNER_FIELDS = [
     "email", "phone", "mobile", "barcode", "vat",
     "is_company", "parent_id", "customer_rank", "active_lang_count",
     "x_wallet_balance", "x_user_id", "x_badge_id",
-    "x_outstanding_amount", "x_payment_status", "x_lease_active", "x_session_title",
+    "x_outstanding_amount", "x_payment_status", "x_lease_active", "x_lease_id", "x_session_title",
 ];
 
 export class QrScanButton extends Component {

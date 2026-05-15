@@ -24,6 +24,7 @@ Offline resilience:
 
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
+import json
 import os
 import re
 import time
@@ -222,6 +223,7 @@ class OrderPoller:
                 'x_wallet_balance', 'x_pending_topup_balance',
                 'vat', 'street', 'city', 'zip', 'country_id',
                 'x_lease_active', 'x_lease_id', 'x_lease_transaction_count',
+                'x_session_title',
             ]
             try:
                 # Attempt to read all integration fields
@@ -400,6 +402,8 @@ class OrderPoller:
                 is_anonymous = True
 
             is_registration = False
+            _invoice_status = "paid"
+            _invoice_payment_method = "on_site"
             if order.get('amount_total', 0) < 0:
                 all_sent, payment_msg_id = self._process_refund(order, order_id, customer_info, is_anonymous)
                 consumption_msg_id = None
@@ -410,7 +414,7 @@ class OrderPoller:
                     all_sent, payment_msg_id = self._process_registration(order, customer_info)
                     consumption_msg_id = None
                 else:
-                    all_sent, consumption_msg_id, payment_msg_id = (
+                    all_sent, consumption_msg_id, payment_msg_id, _invoice_status, _invoice_payment_method = (
                         self._process_consumption(order, customer_info, is_anonymous)
                     )
 
@@ -521,7 +525,11 @@ class OrderPoller:
                     # Use consumption_msg_id as correlation_id per Flow 10 docs.
                     # This keeps invoice_request correlated to the original consumption_order.
                     corr_id = consumption_msg_id or order.get('x_payment_message_id') or str(uuid.uuid4())
-                    invoice_result = self._process_invoice_request(order, customer_info, correlation_id=corr_id)
+                    invoice_result = self._process_invoice_request(
+                        order, customer_info, correlation_id=corr_id,
+                        payment_status=_invoice_status,
+                        payment_method=_invoice_payment_method,
+                    )
                     if isinstance(invoice_result, tuple):
                         inv_sent, inv_msg_id = invoice_result
                     else:
@@ -626,7 +634,10 @@ class OrderPoller:
 
         return info
 
-    def _process_invoice_request(self, order, customer_info, correlation_id: str) -> tuple[bool, str | None]:
+    def _process_invoice_request(
+        self, order, customer_info, correlation_id: str,
+        payment_status: str = "paid", payment_method: str | None = None,
+    ) -> tuple[bool, str | None]:
         """
         Build and send the invoice_request XML message for a linked partner.
 
@@ -682,7 +693,9 @@ class OrderPoller:
         xml_str = sender.build_invoice_request_xml(
             identity_uuid=identity_uuid,
             invoice_data=invoice_data,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
+            payment_status=payment_status,
+            payment_method=payment_method,
         )
 
         # Extract message_id for de-duplication tracking
@@ -727,15 +740,25 @@ class OrderPoller:
                     'pos.order', 'action_add_wallet_amount',
                     [customer_info['id'], pay_info["wallet_amount"]]
                 )
-                self.models.execute_kw(
-                    self.odoo_db, self.odoo_uid, self.odoo_pass,
-                    'pos.order', 'write',
-                    [[order_id], {'x_wallet_updated': True}]
-                )
             except Exception as e:
                 logger.error(f"❌ Refund wallet update failed for order {order_id}: {e}")
                 ok_wallet = False
                 new_balance = customer_info.get('x_wallet_balance') or 0.0
+            else:
+                # Flag is set separately so its failure never masks a successful credit.
+                # If this write fails, the wallet was credited but the guard won't fire on
+                # restart → operator must resolve manually via the warning log.
+                try:
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'write',
+                        [[order_id], {'x_wallet_updated': True}]
+                    )
+                except Exception as flag_err:
+                    logger.warning(
+                        f"⚠️ Wallet credited for order {order_id} but x_wallet_updated flag failed: {flag_err}. "
+                        "Manual check required to prevent double credit on restart."
+                    )
 
             lease_active = customer_info.get('x_lease_active')
             wallet_xml = sender.build_wallet_balance_update_xml(
@@ -788,6 +811,61 @@ class OrderPoller:
                     f"❌ CRITICAL: Could not trace refund to original order for traceability (Order {order_id}): {e}"
                 )
 
+        # Build session_id lookup map from partner's x_session_title (already in customer_info)
+        session_title_map: dict[str, str] = {}
+        if customer_info:
+            try:
+                raw = customer_info.get('x_session_title') or ''
+                entries = json.loads(raw) if raw else []
+                if not isinstance(entries, list):
+                    entries = [entries]
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get('session_id') and entry.get('title'):
+                        session_title_map[entry['title'].lower()] = entry['session_id']
+            except Exception as e:
+                logger.warning(f"⚠️ Could not parse x_session_title for refund items: {e}")
+
+        # Fetch refund line details to include in the message
+        refund_items = []
+        if line_ids:
+            try:
+                line_details = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order.line', 'read',
+                    [line_ids, ['product_id', 'qty', 'price_unit', 'price_subtotal_incl', 'tax_ids']]
+                )
+                all_tax_ids = list(set(tid for ln in line_details for tid in (ln.get('tax_ids') or [])))
+                tax_map: dict[int, float] = {}
+                if all_tax_ids:
+                    tax_details = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'account.tax', 'read',
+                        [all_tax_ids, ['id', 'amount']]
+                    )
+                    tax_map = {t['id']: t['amount'] for t in tax_details}
+
+                for line in line_details:
+                    qty = abs(float(line['qty']))
+                    if qty == 0:
+                        continue
+                    total_incl = abs(float(line.get('price_subtotal_incl', line['qty'] * line['price_unit'])))
+                    unit_price = round(total_incl / qty, 2)
+                    vat_amounts = [tax_map.get(tid, 0) for tid in (line.get('tax_ids') or [])]
+                    vat_rate = int(max(vat_amounts)) if vat_amounts else None
+                    description = line['product_id'][1] if line.get('product_id') else ''
+                    session_id = session_title_map.get(description.lower())
+                    refund_items.append({
+                        'sku': str(line['product_id'][0]) if line.get('product_id') else '',
+                        'description': description,
+                        'quantity': int(qty),
+                        'unit_price': unit_price,
+                        'total_amount': total_incl,
+                        'vat_rate': vat_rate,
+                        'session_id': session_id,
+                    })
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch refund line details for order {order_id}: {e}")
+
         refund_xml = sender.build_refund_processed_xml(
             original_payment_msg_id=original_msg_id,
             refund_type="consumption_item",
@@ -797,13 +875,14 @@ class OrderPoller:
             original_transaction_id=str(order['id']),
             identity_uuid=customer_info.get('x_user_id') if customer_info else None,
             is_anonymous=is_anonymous,
-            email=customer_info.get('email') if customer_info else None
+            email=customer_info.get('email') if customer_info else None,
+            items=refund_items or None,
         )
         ok_refund = sender.send_typed_message('refund_processed', refund_xml, record_id=order_id)
         refund_msg_id = self._extract_message_id(refund_xml)
         return (ok_wallet and ok_refund), refund_msg_id
 
-    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None]:
+    def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None, str, str]:
         """Handle regular sales orders."""
         items = []
         self._last_consumption_has_topup = False
@@ -975,7 +1054,8 @@ class OrderPoller:
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
         payment_msg_id = self._extract_message_id(payment_xml)
 
-        return (ok_consumption and ok_payment and ok_wallet), correlation_id, payment_msg_id
+        ok = ok_consumption and ok_payment and ok_wallet
+        return ok, correlation_id, payment_msg_id, invoice_status, payment_method
 
     def _process_registration(self, order: dict, customer_info: dict) -> tuple[bool, str | None]:
         """Send registration payment messages for an Inschrijvingskassa order.

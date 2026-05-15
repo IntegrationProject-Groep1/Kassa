@@ -386,11 +386,17 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
     if company_id:
         eur_currencies = _rpc(
             models, odoo_db, uid, odoo_pass, "res.currency", "search_read",
-            [[["name", "=", "EUR"]]], {"fields": ["id"], "limit": 1}
+            [[["name", "=", "EUR"]]], {"fields": ["id", "active"], "limit": 1, "context": {"active_test": False}}
         )
         company_vals: dict[str, Any] = {"tax_calculation_rounding_method": "round_per_line"}
         if eur_currencies:
-            company_vals["currency_id"] = eur_currencies[0]["id"]
+            eur_id = eur_currencies[0]["id"]
+            if not eur_currencies[0].get("active"):
+                _rpc(
+                    models, odoo_db, uid, odoo_pass, "res.currency", "write",
+                    [[eur_id], {"active": True}]
+                )
+            company_vals["currency_id"] = eur_id
         _rpc(
             models, odoo_db, uid, odoo_pass, "res.company", "write",
             [[company_id], company_vals]

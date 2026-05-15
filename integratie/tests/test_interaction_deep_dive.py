@@ -92,7 +92,7 @@ class TestSystemicInteractions:
             original_payment_msg_id="ORIG-123",
             refund_type=ANY, refund_amount=ANY, refund_method=ANY,
             refund_reason=ANY, original_transaction_id=ANY,
-            identity_uuid=ANY, is_anonymous=ANY, email=ANY
+            identity_uuid=ANY, is_anonymous=ANY, email=ANY, items=ANY
         )
 
     @patch('order_poller.sender.send_typed_message', return_value=True)

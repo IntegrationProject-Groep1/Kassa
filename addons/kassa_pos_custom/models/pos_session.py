@@ -24,9 +24,12 @@ class PosSession(models.Model):
         extra = [
             'x_outstanding_amount',
             'x_payment_status',
+            'x_session_title',
             'x_wallet_balance',
             'x_user_id',
             'x_badge_id',
+            'x_lease_active',
+            'x_lease_id',
         ]
         fields = result.get('search_params', {}).get('fields', [])
         for f in extra:

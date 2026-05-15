@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, api
+from odoo.tools import float_compare
 
 
 class PosOrder(models.Model):
@@ -37,6 +38,21 @@ class PosOrder(models.Model):
         partner = self.env['res.partner'].browse(partner_id)
         if not partner.exists():
             raise ValueError(f"Partner {partner_id} does not exist.")
+
+        # Lock the row and check balance before deducting (prevents overdraft)
+        self.env.cr.execute(
+            "SELECT COALESCE(x_wallet_balance, 0.0) FROM res_partner WHERE id = %s FOR UPDATE",
+            (partner_id,)
+        )
+        lock_row = self.env.cr.fetchone()
+        if lock_row is None:
+            raise ValueError(f"Partner {partner_id} was deleted during balance check.")
+        current_balance = float(lock_row[0])
+        if float_compare(current_balance, float(amount_deducted), precision_digits=2) == -1:
+            raise ValueError(
+                f"Insufficient wallet balance for partner {partner_id}: "
+                f"balance=€{current_balance:.2f}, required=€{amount_deducted:.2f}"
+            )
 
         # Atomic deduction via direct SQL UPDATE
         self.env.cr.execute(

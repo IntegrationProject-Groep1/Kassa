@@ -196,6 +196,14 @@ class PartnerIdentityPoller:
             try:
                 partners = self._get_unlinked_partners()
                 if partners:
+                    error_partners = [p for p in partners if p.get("x_identity_status") == "error"]
+                    if error_partners:
+                        logger.warning(
+                            "⚠️ %d partner(s) stuck in identity error state — "
+                            "check x_rabbitmq_error field in Odoo (IDs: %s)",
+                            len(error_partners),
+                            ", ".join(str(p["id"]) for p in error_partners),
+                        )
                     logger.info("Found %d unlinked partners", len(partners))
                     for p in partners:
                         self.process_partner(p)

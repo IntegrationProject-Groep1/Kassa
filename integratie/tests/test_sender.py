@@ -216,3 +216,61 @@ def test_send_typed_message_buffers_on_xsd_error():
 
         # Verify system error was sent
         mock_err.assert_called_once()
+
+
+# ── T1-2: flush_buffer sends all buffered messages in order ──────────────────
+
+class TestFlushBufferReconnect:
+    """Story 13: flush_buffer() drains the outbox in order and clears it on success."""
+
+    @patch("sender._publish_or_raise")
+    def test_flush_buffer_sends_all_messages_in_order(self, mock_send, tmp_buffer):
+        """All buffered messages are sent in FIFO order on reconnect."""
+        sender._buffer_message("r.1", "<msg1/>", record_id=10)
+        sender._buffer_message("r.2", "<msg2/>", record_id=20)
+        sender._buffer_message("r.3", "<msg3/>", record_id=30)
+        mock_send.return_value = None  # success
+
+        sender.flush_buffer()
+
+        assert mock_send.call_count == 3
+        # flush_buffer calls _publish_or_raise with keyword args
+        routing_keys = [c.kwargs.get("routing_key") or (c[0][0] if c[0] else None)
+                        for c in mock_send.call_args_list]
+        assert routing_keys == ["r.1", "r.2", "r.3"]
+
+    @patch("sender._publish_or_raise")
+    def test_flush_buffer_clears_outbox_on_full_success(self, mock_send, tmp_buffer):
+        """After flushing all messages successfully, outbox.json is removed."""
+        sender._buffer_message("r.1", "<msg1/>", record_id=10)
+        mock_send.return_value = None
+
+        sender.flush_buffer()
+
+        assert not tmp_buffer.exists()
+
+    @patch("sender._publish_or_raise")
+    def test_flush_buffer_returns_sent_record_ids(self, mock_send, tmp_buffer):
+        """flush_buffer returns the list of (model, id) tuples for messages sent."""
+        sender._buffer_message("r.1", "<msg1/>", record_id=10)
+        sender._buffer_message("r.2", "<msg2/>", record_id=20)
+        mock_send.return_value = None
+
+        result = sender.flush_buffer()
+
+        assert ("pos.order", 10) in result
+        assert ("pos.order", 20) in result
+
+    @patch("sender._publish_or_raise")
+    def test_flush_buffer_stops_at_first_failure_preserving_remainder(self, mock_send, tmp_buffer):
+        """If a message fails mid-flush, remaining messages stay in the buffer."""
+        sender._buffer_message("r.1", "<msg1/>", record_id=10)
+        sender._buffer_message("r.2", "<msg2/>", record_id=20)
+        mock_send.side_effect = [None, Exception("Broker offline")]
+
+        result = sender.flush_buffer()
+
+        assert result == [("pos.order", 10)]
+        remaining = json.loads(tmp_buffer.read_text())
+        assert len(remaining) == 1
+        assert remaining[0]["routing_key"] == "r.2"

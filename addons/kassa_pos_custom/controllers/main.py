@@ -14,7 +14,7 @@ from odoo.http import request
 
 _logger = logging.getLogger(__name__)
 
-# Seconds to wait for Planning's user_sessions_response before giving up.
+# Seconds to wait for Frontend's user_sessions_response before giving up.
 _PLANNING_RPC_TIMEOUT = float(os.environ.get("PLANNING_RPC_TIMEOUT", "5"))
 
 
@@ -81,12 +81,14 @@ def _pika_connection():
         return pika, None
 
 
-def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
+def _fetch_sessions_from_frontend(identity_uuid: str) -> List[Dict]:
     """
-    RPC call to Planning via RabbitMQ.
-    Publishes user_sessions_request and waits up to PLANNING_RPC_TIMEOUT seconds
-    for user_sessions_response on an exclusive reply queue.
-    Returns list of {'session_id': ..., 'title': ...} dicts, or [] on timeout/error.
+    RPC call to Frontend via RabbitMQ.
+    Publishes user_sessions_request on kassa.exchange and waits up to
+    PLANNING_RPC_TIMEOUT seconds for user_sessions_response on an exclusive
+    reply queue.
+    Returns list of {'session_id': ..., 'title': ..., 'price': ...} dicts,
+    or [] on timeout/error.
     """
     pika, conn = _pika_connection()
     if not conn:
@@ -94,7 +96,7 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
 
     corr_id = str(uuid.uuid4())
     xml_body = _build_user_sessions_request_xml(identity_uuid, corr_id)
-    planning_exchange = os.environ.get("RABBIT_PLANNING_EXCHANGE", "planning.exchange")
+    exchange = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
     result: List[Dict] = []
 
     try:
@@ -125,8 +127,8 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
 
         channel.basic_consume(queue=reply_queue, on_message_callback=_on_response, auto_ack=True)
         channel.basic_publish(
-            exchange=planning_exchange,
-            routing_key="kassa.to.planning.user_sessions_request",
+            exchange=exchange,
+            routing_key="kassa.to.frontend.user_sessions_request",
             body=xml_body.encode("utf-8"),
             properties=pika.BasicProperties(
                 content_type="application/xml",
@@ -142,11 +144,11 @@ def _fetch_sessions_from_planning(identity_uuid: str) -> List[Dict]:
             conn.process_data_events(time_limit=min(0.5, remaining))
 
         _logger.info(
-            "[Kassa QR] Planning RPC: %d session(s) returned for %s",
+            "[Kassa QR] Frontend RPC: %d session(s) returned for %s",
             len(result), identity_uuid,
         )
     except Exception as exc:
-        _logger.warning("[Kassa QR] Planning RPC error: %s", exc)
+        _logger.warning("[Kassa QR] Frontend RPC error: %s", exc)
     finally:
         try:
             conn.close()
@@ -256,11 +258,14 @@ class KassaQrController(http.Controller):
         elif email and not partner.email:
             partner.write({"email": email})
 
-        # 2. Ask Planning for all sessions this visitor is registered for.
-        sessions = _fetch_sessions_from_planning(identity_uuid)
+        # 2. Ask Frontend for all sessions this visitor is registered for.
+        sessions = _fetch_sessions_from_frontend(identity_uuid)
 
         if sessions:
-            titles_json = json.dumps([s["title"] for s in sessions])
+            titles_json = json.dumps([
+                {"session_id": s.get("session_id", ""), "title": s["title"], "price": s.get("price")}
+                for s in sessions
+            ])
 
             # Compute total outstanding from session prices when Planning provides them.
             # Uses cent-based math to avoid floating-point drift across multiple sessions.
@@ -298,13 +303,15 @@ class KassaQrController(http.Controller):
             if raw:
                 try:
                     stored = json.loads(raw)
-                    sessions = (
-                        [{"session_id": "", "title": t} for t in stored]
-                        if isinstance(stored, list)
-                        else [{"session_id": "", "title": raw}]
-                    )
+                    if isinstance(stored, list):
+                        sessions = [
+                            s if isinstance(s, dict) else {"session_id": "", "title": s, "price": None}
+                            for s in stored
+                        ]
+                    else:
+                        sessions = [{"session_id": "", "title": raw, "price": None}]
                 except (json.JSONDecodeError, ValueError):
-                    sessions = [{"session_id": "", "title": raw}]
+                    sessions = [{"session_id": "", "title": raw, "price": None}]
             if not sessions:
                 _logger.info(
                     "[Kassa QR] No sessions found from Planning for %s; "
@@ -322,6 +329,14 @@ class KassaQrController(http.Controller):
             }
 
         _publish_lease_request(identity_uuid)
+
+        # Mark lease as requested so the POS wallet notification appears immediately.
+        # x_lease_id stays "" until CRM confirms; Badge Wallet payment is blocked until then.
+        partner.write({
+            "x_lease_active": True,
+            "x_lease_id": "",
+            "x_lease_transaction_count": 0,
+        })
 
         status = "not_found_and_created" if created else "lease_requested"
         return {

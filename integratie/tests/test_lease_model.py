@@ -380,13 +380,18 @@ class TestWalletLeaseGrant:
 
 class TestWalletRemoteTopup:
 
-    def _partner(self, lease_active: bool = True) -> dict:
-        return {"id": 7, "x_wallet_balance": 20.0, "x_lease_active": lease_active}
+    def _partner(self, lease_active: bool = True, lease_id: str = "LSE-001") -> dict:
+        return {
+            "id": 7, "x_wallet_balance": 20.0, "x_lease_active": lease_active,
+            "x_lease_id": lease_id if lease_active else "",
+            "x_pending_topup_balance": 0.0, "x_outstanding_amount": 0.0,
+            "x_payment_status": "paid", "name": "Test User",
+        }
 
     @patch("receiver.send_typed_message")
     def test_calls_atomic_add_wallet_amount(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1, True]
         receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
         second_call = models.execute_kw.call_args_list[1]
         assert second_call[0][3] == "pos.order"
@@ -396,7 +401,7 @@ class TestWalletRemoteTopup:
     @patch("receiver.send_typed_message")
     def test_increments_lease_tx_count_after_topup(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1, True]
         receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
         third_call = models.execute_kw.call_args_list[2]
         assert third_call[0][3] == "pos.order"
@@ -406,7 +411,7 @@ class TestWalletRemoteTopup:
     @patch("receiver.send_typed_message")
     def test_sends_balance_update_with_authority_kassa(self, mock_send, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[self._partner()], 25.0, 1]
+        models.execute_kw.side_effect = [[self._partner()], 25.0, 1, True]
         with patch("receiver.build_wallet_balance_update_xml") as mock_builder:
             mock_builder.return_value = "<xml/>"
             receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
@@ -424,6 +429,19 @@ class TestWalletRemoteTopup:
         models.execute_kw.return_value = [self._partner(lease_active=False)]
         receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
         assert models.execute_kw.call_count == 1  # only search_read, no action_add_wallet_amount
+        mock_send.assert_not_called()
+
+    @patch("receiver.send_typed_message")
+    def test_parks_topup_when_lease_pending(self, mock_send, odoo):
+        """Topup arriving after badge scan but before lease grant is parked in x_pending_topup_balance."""
+        uid, models = odoo
+        # x_lease_active=True (badge scanned) but x_lease_id="" (grant not yet received)
+        models.execute_kw.side_effect = [[self._partner(lease_active=True, lease_id="")], True]
+        receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
+        second_call = models.execute_kw.call_args_list[1]
+        assert second_call[0][3] == "res.partner"
+        assert second_call[0][4] == "write"
+        assert second_call[0][5][1] == {"x_pending_topup_balance": 5.0}
         mock_send.assert_not_called()
 
     def test_raises_on_missing_identity_uuid(self, odoo):

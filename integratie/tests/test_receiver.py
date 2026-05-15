@@ -1206,3 +1206,188 @@ class TestProcessProfileUpdatePaymentDue:
 
         all_models_calls = [c[0][3] for c in models.execute_kw.call_args_list]
         assert "bus.bus" not in all_models_calls
+
+
+# ── T1-3: LRU eviction at exactly MAX_CACHE_SIZE boundary ─────────────────────
+
+class TestLruEvictionBoundary:
+    """Story 15: Dedup cache evicts oldest entry when size exceeds MAX_CACHE_SIZE."""
+
+    def test_eviction_at_real_boundary(self):
+        import uuid as _uuid
+        original = receiver.MAX_CACHE_SIZE
+        receiver.MAX_CACHE_SIZE = 10
+        try:
+            receiver.seen_message_ids.clear()
+            first_id = str(_uuid.uuid4())
+            receiver._remember_message_id(first_id)
+            for _ in range(9):
+                receiver._remember_message_id(str(_uuid.uuid4()))
+            # Cache is full at 10; inserting one more must evict first_id
+            receiver._remember_message_id(str(_uuid.uuid4()))
+            # first_id was evicted → is_duplicate returns False (not seen)
+            assert receiver.is_duplicate(first_id, track_if_new=False) is False
+        finally:
+            receiver.MAX_CACHE_SIZE = original
+            receiver.seen_message_ids.clear()
+
+    def test_most_recent_id_still_tracked_after_eviction(self):
+        import uuid as _uuid
+        original = receiver.MAX_CACHE_SIZE
+        receiver.MAX_CACHE_SIZE = 5
+        try:
+            receiver.seen_message_ids.clear()
+            ids = [str(_uuid.uuid4()) for _ in range(5)]
+            for mid in ids:
+                receiver._remember_message_id(mid)
+            new_id = str(_uuid.uuid4())
+            receiver._remember_message_id(new_id)  # evicts ids[0]
+            # new_id should still be tracked
+            assert receiver.is_duplicate(new_id, track_if_new=False) is True
+        finally:
+            receiver.MAX_CACHE_SIZE = original
+            receiver.seen_message_ids.clear()
+
+
+# ── T1-6: Retry exhaustion → system_error + basic_nack ───────────────────────
+
+class TestRetryExhaustion:
+    """Story 20: Max retries exhausted sends system_error and nacks to DLQ."""
+
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    @patch("receiver.validate_xml")
+    def test_retry_exhaustion_sends_error_and_nacks(
+        self, mock_validate, mock_odoo, mock_send_error, ch, method
+    ):
+        mock_odoo.side_effect = ConnectionError("Odoo permanently down")
+        props = type("Props", (), {"headers": {"x-retry-count": receiver.MAX_RETRIES}})()
+
+        body = _xml_bytes("badge_scanned",
+                          "<badge_id>B1</badge_id><location>bar</location>"
+                          "<scanned_at>2026-03-28T12:00:00Z</scanned_at>")
+        receiver.process_message(ch, method, props, body)
+
+        mock_send_error.assert_called_once()
+        assert mock_send_error.call_args[0][0] == "odoo_api_error"
+        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=False)
+        ch.basic_ack.assert_not_called()
+
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    @patch("receiver.validate_xml")
+    def test_retry_increments_count_and_republishes(
+        self, mock_validate, mock_odoo, mock_send_error, ch, method
+    ):
+        mock_odoo.side_effect = ConnectionError("Temporary Odoo failure")
+        props = type("Props", (), {"headers": {"x-retry-count": 1}})()
+
+        body = _xml_bytes("badge_scanned",
+                          "<badge_id>B1</badge_id><location>bar</location>"
+                          "<scanned_at>2026-03-28T12:00:00Z</scanned_at>")
+        receiver.process_message(ch, method, props, body)
+
+        # Should republish to retry queue with incremented count
+        ch.basic_publish.assert_called_once()
+        publish_kwargs = ch.basic_publish.call_args[1]
+        assert "retry" in publish_kwargs.get("routing_key", "").lower()
+        # And ack the original
+        ch.basic_ack.assert_called_once_with(delivery_tag=42)
+        ch.basic_nack.assert_not_called()
+
+
+# ── T2-1: Parametrized XSD invalid tests for all message types ────────────────
+
+class TestInvalidXsdNacksForAllTypes:
+    """Story 14: Any message with a schema violation must nack with invalid_xml_format."""
+
+    @pytest.mark.parametrize("msg_type", [
+        "new_registration",
+        "profile_update",
+        "cancel_registration",
+        "badge_scanned",
+        "wallet_lease_grant",
+        "wallet_remote_topup",
+        "event_ended",
+        "session_created",
+        "session_updated",
+        "session_deleted",
+        "user_sessions_response",
+    ])
+    @patch("receiver.send_error_to_queue")
+    @patch("receiver.get_odoo_connection")
+    def test_invalid_body_nacks_with_invalid_xml_format(
+        self, mock_odoo, mock_send_error, msg_type, ch, method
+    ):
+        source = "iot_gateway" if msg_type == "badge_scanned" else "frontend" if msg_type in (
+            "session_created", "session_updated", "session_deleted", "user_sessions_response"
+        ) else "crm"
+
+        # Build a message with a valid envelope but empty/broken body — XSD will reject it
+        broken_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<message>"
+            "<header>"
+            "<message_id>550e8400-e29b-41d4-a716-446655440000</message_id>"
+            f"<type>{msg_type}</type>"
+            f"<source>{source}</source>"
+            "<timestamp>2026-05-14T12:00:00Z</timestamp>"
+            "<version>2.0</version>"
+            "</header>"
+            "<body><broken_field>this is invalid</broken_field></body>"
+            "</message>"
+        ).encode("utf-8")
+
+        receiver.process_message(ch, method, None, broken_body)
+
+        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=False)
+        mock_send_error.assert_called_once()
+        assert mock_send_error.call_args[0][0] == "invalid_xml_format"
+
+
+# ── Story 1/2: payment_due.status defaults to 'unpaid' ───────────────────────
+
+class TestPaymentDueStatusDefault:
+    """Stories 1 & 2: Absence of <status> in payment_due must default to 'unpaid', not 'pending'."""
+
+    def test_new_registration_defaults_to_unpaid(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[], 99, True]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440001</identity_uuid>"
+            "<email>a@b.com</email>"
+            "<contact><first_name>X</first_name><last_name>Y</last_name></contact>"
+            "<type>private</type>"
+            "<date_of_birth>2000-01-01</date_of_birth>"
+            "<session_id>s1</session_id>"
+            "<payment_due><amount currency=\"eur\">15.00</amount></payment_due>"
+            "</customer>"
+            "</body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        create_call = models.execute_kw.call_args_list[1]
+        vals = create_call[0][5][0]
+        assert vals["x_payment_status"] == "unpaid", \
+            f"Expected 'unpaid', got '{vals['x_payment_status']}'"
+
+    def test_profile_update_defaults_to_unpaid(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[{"id": 5, "name": "Bob"}], True, True]
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440003</identity_uuid>"
+            "<email>bob@example.com</email>"
+            "<contact><first_name>Bob</first_name><last_name>Builder</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><amount>20.00</amount></payment_due>"
+            "</body></message>"
+        )
+        receiver.process_profile_update(root, uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_payment_status"] == "unpaid", \
+            f"Expected 'unpaid', got '{vals['x_payment_status']}'"
