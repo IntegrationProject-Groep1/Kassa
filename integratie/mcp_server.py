@@ -324,7 +324,8 @@ def process_refund(
     """
     Issue a refund for a POS order in Odoo. WRITE OPERATION — confirm with admin before calling.
 
-    Requires a written reason. Get the order_id via get_orders_by_email or get_recent_orders first — never guess the reference.
+    Requires a written reason. Get the order_id via get_orders_by_email or get_recent_orders first —
+    never guess the reference.
     Returns success status and the refund result from Odoo.
     """
     if not reason or not reason.strip():
@@ -376,8 +377,8 @@ def topup_wallet(
         )
         if not partners:
             return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
-        partner     = partners[0]
-        partner_id  = partner["id"]
+        partner = partners[0]
+        partner_id = partner["id"]
         old_balance = float(partner.get("x_wallet_balance") or 0)
         new_balance = round(old_balance + amount, 2)
         _odoo("res.partner", "write", [[partner_id], {"x_wallet_balance": new_balance}])
