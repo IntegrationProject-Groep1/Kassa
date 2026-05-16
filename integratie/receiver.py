@@ -271,7 +271,6 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     ctype = (customer.findtext("type") or "private").strip().lower()
     vat_number = (customer.findtext("vat_number") or "").strip()
     dob_str = (customer.findtext("date_of_birth") or "").strip()
-    company_id = (customer.findtext("company_id") or "").strip()
     badge_id = (customer.findtext("badge_id") or "").strip()
     session_title = (customer.findtext("session_title") or "").strip()
 
@@ -328,8 +327,6 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         partner_vals["x_session_title"] = json.dumps(existing_titles)
     if badge_id:
         partner_vals["x_badge_id"] = badge_id
-    if company_id:
-        partner_vals["x_company_id"] = company_id
     if dob_str:
         partner_vals["x_date_of_birth"] = dob_str
     if vat_number:
@@ -383,7 +380,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
     ctype = (body.findtext("type") or "private").strip().lower()
     vat_number = (body.findtext("vat_number") or "").strip()
     dob_str = (body.findtext("date_of_birth") or "").strip()
-    company_id = (body.findtext("company_id") or "").strip()
 
     if not identity_uuid:
         raise ValueError("profile_update: identity_uuid missing in <body>")
@@ -400,8 +396,6 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
         "is_company": ctype == "company",
         "name": name or company_name or "Unknown",
     }
-    if company_id:
-        update_vals["x_company_id"] = company_id
     if body.find("vat_number") is not None:
         update_vals["vat"] = vat_number if vat_number else False
     if company_name and not name:
@@ -536,11 +530,11 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
                 correlation_id=message_id,
             )
             logger.info(
-                "[USER_SESSIONS_REQUEST] XSD validation + publish | routing_key=kassa.to.planning.user_sessions_request"
+                "[USER_SESSIONS_REQUEST] XSD validation + publish | routing_key=kassa.to.frontend.user_sessions_request"
             )
-            send_typed_message("user_sessions_request", sessions_xml, exchange="planning.exchange")
+            send_typed_message("user_sessions_request", sessions_xml, exchange="kassa.exchange")
             logger.info(
-                "[USER_SESSIONS_REQUEST] ✅ Sent to planning.exchange | identity_uuid=%s | correlation_id=%s",
+                "[USER_SESSIONS_REQUEST] ✅ Sent to kassa.exchange | identity_uuid=%s | correlation_id=%s",
                 identity_uuid, message_id,
             )
     else:
@@ -910,12 +904,12 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
 
 
 def process_user_sessions_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle user_sessions_response from Planning (RPC reply to user_sessions_request).
+    """Handle user_sessions_response from Frontend (RPC reply to user_sessions_request).
 
     For each session the visitor is registered for, ensure a POS product exists
     in the Inschrijvingskassa under the 'Sessions' category.  Price stays 0.0
     until a future story adds price-sync.
-    Binding required on planning.exchange: kassa.incoming ← planning.to.kassa.user_sessions_response
+    Binding: kassa.incoming ← kassa.exchange ← frontend.to.kassa.user_sessions_response
     """
     header = root.find("header")
     body = root.find("body")

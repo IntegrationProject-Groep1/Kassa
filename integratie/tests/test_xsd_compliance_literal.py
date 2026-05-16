@@ -275,7 +275,7 @@ class TestXSDCompliance:
         assert valid, f"XSD Error in user_sessions_request: {errors}"
 
     def test_user_sessions_response_ok_compliance(self):
-        """Planning response with one session must pass XSD."""
+        """Frontend response with one session must pass XSD."""
         corr = uuid.uuid4()
         identity = uuid.uuid4()
         speaker_uuid = uuid.uuid4()
@@ -284,7 +284,7 @@ class TestXSDCompliance:
             "<message><header>"
             f"<message_id>{uuid.uuid4()}</message_id>"
             "<timestamp>2026-05-15T09:00:01Z</timestamp>"
-            "<source>planning</source>"
+            "<source>frontend</source>"
             "<type>user_sessions_response</type>"
             "<version>2.0</version>"
             f"<correlation_id>{corr}</correlation_id>"
@@ -317,7 +317,7 @@ class TestXSDCompliance:
         assert valid, f"XSD Error in user_sessions_response (ok): {errors}"
 
     def test_user_sessions_response_not_found_compliance(self):
-        """Planning response with status=not_found and empty sessions must pass XSD."""
+        """Frontend response with status=not_found and empty sessions must pass XSD."""
         corr = uuid.uuid4()
         identity = uuid.uuid4()
         xml = (
@@ -325,7 +325,7 @@ class TestXSDCompliance:
             "<message><header>"
             f"<message_id>{uuid.uuid4()}</message_id>"
             "<timestamp>2026-05-15T09:00:01Z</timestamp>"
-            "<source>planning</source>"
+            "<source>frontend</source>"
             "<type>user_sessions_response</type>"
             "<version>2.0</version>"
             f"<correlation_id>{corr}</correlation_id>"
@@ -348,7 +348,7 @@ class TestXSDCompliance:
             "<message><header>"
             f"<message_id>{uuid.uuid4()}</message_id>"
             "<timestamp>2026-05-15T09:00:01Z</timestamp>"
-            "<source>planning</source>"
+            "<source>frontend</source>"
             "<type>user_sessions_response</type>"
             "<version>2.0</version>"
             f"<correlation_id>{corr}</correlation_id>"

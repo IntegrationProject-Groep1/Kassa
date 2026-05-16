@@ -8,11 +8,10 @@
   </xs:simpleType>
 
   <!--
-    user_sessions_request — Kassa / Frontend → Planning (RPC request)
-    Sent by Kassa when a visitor's QR code is scanned, or by Frontend to fetch a user's sessions.
-    Planning responds with user_sessions_response on the reply_to queue.
-    Routing key (Kassa):    kassa.to.planning.user_sessions_request
-    Routing key (Frontend): frontend.to.planning.user_sessions_request
+    user_sessions_request — Kassa → Frontend (RPC request)
+    Sent by Kassa when a visitor's QR code is scanned.
+    Frontend responds with user_sessions_response on the reply_to queue.
+    Routing key (Kassa): kassa.to.frontend.user_sessions_request
   -->
   <xs:element name="message">
     <xs:complexType>

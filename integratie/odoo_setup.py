@@ -267,7 +267,6 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("res.partner", "x_date_of_birth", "Date of Birth", "date", {}),
         ("res.partner", "x_session_id", "Session ID", "char", {}),
         ("res.partner", "x_session_title", "Session Title", "char", {}),
-        ("res.partner", "x_company_id", "Company ID", "char", {}),
         ("res.partner", "x_outstanding_amount", "Outstanding Amount", "float", {}),
         ("res.partner", "x_payment_status", "Payment Status", "char", {}),
         ("product.template", "x_is_topup", "Top-up Product", "boolean", {}),

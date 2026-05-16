@@ -829,7 +829,7 @@ def test_user_sessions_response_creates_pos_product():
   <header>
     <message_id>{str(uuid.uuid4())}</message_id>
     <timestamp>2026-05-13T09:00:00Z</timestamp>
-    <source>planning</source>
+    <source>frontend</source>
     <type>user_sessions_response</type>
     <version>2.0</version>
     <correlation_id>{correlation_id}</correlation_id>
