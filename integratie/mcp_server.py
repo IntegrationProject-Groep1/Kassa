@@ -228,9 +228,9 @@ def get_wallet_by_master_uuid(master_uuid: str) -> dict[str, Any]:
             "customer": p.get("name"),
             "master_uuid": p.get("x_user_id") or None,
             "badge_id": p.get("x_badge_id") or None,
-            "wallet_balance": p.get("x_wallet_balance", 0),
-            "pending_topup": p.get("x_pending_topup_balance", 0),
-            "outstanding_amount": p.get("x_outstanding_amount", 0),
+            "wallet_balance": float(p.get("x_wallet_balance") or 0.0),
+            "pending_topup": float(p.get("x_pending_topup_balance") or 0.0),
+            "outstanding_amount": float(p.get("x_outstanding_amount") or 0.0),
             "payment_status": p.get("x_payment_status") or None,
             "currency": "EUR",
             "source": "kassa_live",
@@ -272,10 +272,14 @@ def get_orders_by_email(email: str, limit: int = 50) -> dict[str, Any]:
             "master_uuid": partner.get("x_user_id") or None,
             "email": email,
             "orders": [
-                {"order_id": o["name"], "total": o["amount_total"], "date": o["date_order"], "status": o["state"]}
+                {
+                    "order_id": o["name"], "total": float(o.get("amount_total") or 0.0),
+                    "date": o["date_order"], "status": o["state"],
+                }
                 for o in orders
             ],
             "count": len(orders),
+            "truncated": len(orders) >= limit,
             "currency": "EUR",
         }
     except Exception as exc:
