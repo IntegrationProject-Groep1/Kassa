@@ -8,10 +8,10 @@
   </xs:simpleType>
 
   <!--
-    user_sessions_response — Planning → Kassa (RPC response)
-    Published by Planning in reply to a user_sessions_request.
+    user_sessions_response — Frontend → Kassa (RPC response)
+    Published by Frontend in reply to a user_sessions_request.
     The correlation_id matches the request's correlation_id.
-    Routing key: planning.to.kassa.user_sessions_response
+    Routing key: frontend.to.kassa.user_sessions_response
   -->
   <xs:element name="message">
     <xs:complexType>
@@ -25,7 +25,6 @@
               <xs:element name="source">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
-                    <xs:enumeration value="planning"/>
                     <xs:enumeration value="frontend"/>
                   </xs:restriction>
                 </xs:simpleType>

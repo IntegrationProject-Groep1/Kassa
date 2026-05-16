@@ -87,7 +87,7 @@ ROUTING_KEYS = {
     "wallet_balance_update": "kassa.frontend.wallet",
     "wallet_lease_request": "kassa.to.crm.wallet_lease_request",
     "wallet_lease_return": "kassa.to.crm.wallet_lease_return",
-    "user_sessions_request": "kassa.to.planning.user_sessions_request",
+    "user_sessions_request": "kassa.to.frontend.user_sessions_request",
     "session_view_request":  "kassa.to.planning.session.view",
     "system_error": "kassa.errors",
     "log": "logs",
@@ -741,7 +741,7 @@ def build_wallet_lease_request_xml(identity_uuid: str, badge_id: Optional[str] =
 
 
 def build_user_sessions_request_xml(identity_uuid: str, correlation_id: str) -> str:
-    """Build user_sessions_request: Kassa asks Planning for sessions of a visitor (RPC)."""
+    """Build user_sessions_request: Kassa asks Frontend for sessions of a visitor (RPC)."""
     root = ET.Element("message")
     _make_header(root, "user_sessions_request", correlation_id=correlation_id)
     body = ET.SubElement(root, "body")
