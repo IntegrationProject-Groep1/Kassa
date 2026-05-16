@@ -9,11 +9,12 @@ Optional: PORT (default 8004)
 """
 import os
 import xmlrpc.client  # nosec B411
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import defusedxml.xmlrpc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from pydantic import Field
 
 defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
@@ -50,10 +51,18 @@ def _odoo(model: str, method: str, args: list, kwargs: dict | None = None) -> An
 
 
 @mcp.tool()
-def get_sales_summary(date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+def get_sales_summary(
+    date_from: Annotated[
+        str | None,
+        Field(description="Start date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-01'. Omit for all time."),
+    ] = None,
+    date_to: Annotated[
+        str | None,
+        Field(description="End date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-31'. Omit for all time."),
+    ] = None,
+) -> dict[str, Any]:
     """
     Get a POS sales revenue summary.
-    date_from / date_to: optional ISO date strings, e.g. '2026-05-01'.
     Returns total revenue, order count, and a breakdown by day.
 
     Authoritative for on-site POS revenue during an event (real-time Odoo).
@@ -89,13 +98,14 @@ def get_sales_summary(date_from: str | None = None, date_to: str | None = None) 
 
 
 @mcp.tool()
-def get_recent_orders(limit: int = 20) -> dict[str, Any]:
+def get_recent_orders(
+    limit: Annotated[int, Field(description="Max orders to return (default 20, max 100).")] = 20,
+) -> dict[str, Any]:
     """
-    Get the most recent POS orders (default 20, max 100).
-    Includes the customer's current wallet balance and master UUID.
+    Get the most recent POS orders.
+    Includes customer name, master_uuid, wallet balance, date, total.
 
-    POS orders only (live on-site sales). Wallet balance in the response is the
-    LIVE Odoo value, not the CRM cache.
+    POS orders only (live on-site sales). Wallet balance is LIVE Odoo value, not CRM cache.
     """
     limit = min(limit, 100)
     try:
@@ -196,14 +206,22 @@ def get_all_wallets() -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_wallet_by_master_uuid(master_uuid: str) -> dict[str, Any]:
+def get_wallet_by_master_uuid(
+    master_uuid: Annotated[
+        str,
+        Field(description=(
+            "The member's Master_UUID__c from CRM "
+            "(format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). "
+            "Get it via crm__search_members or crm__list_members — never guess."
+        )),
+    ],
+) -> dict[str, Any]:
     """
-    Get the LIVE wallet balance for a member by their Master UUID (from CRM).
+    Get the LIVE wallet balance for a member by their Master UUID.
 
-    Call this whenever `crm__get_member_wallet` returns Wallet_Status__c='Leased'
+    Call this whenever crm__get_member_wallet returns Wallet_Status__c='Leased'
     — during a lease Kassa holds the source-of-truth balance, not CRM.
-    Returns the Odoo partner record with x_wallet_balance, x_user_id, x_badge_id,
-    x_outstanding_amount, x_pending_topup_balance, x_payment_status.
+    Returns: wallet_balance, pending_topup, outstanding_amount, payment_status.
     """
     if not master_uuid:
         return {"error": "master_uuid is required", "found": False}
@@ -240,7 +258,10 @@ def get_wallet_by_master_uuid(master_uuid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_orders_by_email(email: str, limit: int = 50) -> dict[str, Any]:
+def get_orders_by_email(
+    email: Annotated[str, Field(description="The customer's email address (must include @). Exact match in Odoo.")],
+    limit: Annotated[int, Field(description="Max orders to return (default 50, max 200).")] = 50,
+) -> dict[str, Any]:
     """
     Get POS orders for a member identified by their email address.
     Looks up the Odoo partner by email then returns their order history.
@@ -287,14 +308,23 @@ def get_orders_by_email(email: str, limit: int = 50) -> dict[str, Any]:
 
 
 @mcp.tool()
-def process_refund(order_id: str, reason: str) -> dict[str, Any]:
+def process_refund(
+    order_id: Annotated[
+        str,
+        Field(description=(
+            "The order name/reference from Odoo (e.g. 'POS/2026/0042'). "
+            "Get it via get_recent_orders or get_orders_by_email — never guess."
+        )),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for the refund (required). Example: 'Customer request — duplicate order'."),
+    ],
+) -> dict[str, Any]:
     """
-    Issue a refund for a POS order.
-    order_id: the order name/reference (e.g. 'POS/2026/0042').
-    reason: written reason for the refund (required).
+    Issue a refund for a POS order. WRITE OPERATION — confirm with admin before calling.
 
-    WRITE operation. Always confirm with the admin before calling
-    (per chatbot system prompt Rule 4).
+    Returns success status and refund result from Odoo.
     """
     if not reason or not reason.strip():
         return {"error": "A reason is required to process a refund.", "success": False}

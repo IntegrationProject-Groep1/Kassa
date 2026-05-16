@@ -193,32 +193,55 @@ def _publish_partner_bus_event(
 # ── Business logic per message type ───────────────────────────────────────────
 
 def _ensure_session_product(
-    uid: int, models: OdooModelsProxy, session_title: str, price: float | None = None
+    uid: int, models: OdooModelsProxy, session_title: str,
+    price: float | None = None, session_id: str | None = None,
 ) -> None:
-    """Find or create a POS-available product for the given session title (idempotent).
+    """Find or create a POS-available product for the given session (idempotent).
 
-    If *price* is provided it is always written to list_price, even when the
-    product already exists — so Planning's price stays in sync with Odoo.
+    Looks up by x_session_id first when provided — this correctly handles title
+    renames without creating a duplicate product. Falls back to name lookup for
+    products created before x_session_id was introduced.
+    If *price* is provided it is always written to list_price.
     """
-    existing = models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS,
-        "product.template", "search_read",
-        [[["name", "=", session_title], ["available_in_pos", "=", True]]],
-        {"fields": ["id", "list_price"], "limit": 1},
-    )
+    existing = None
+
+    # Primary lookup: by session_id (survives title renames)
+    if session_id:
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "product.template", "search_read",
+            [[["x_session_id", "=", session_id], ["available_in_pos", "=", True]]],
+            {"fields": ["id", "name", "list_price", "x_session_id"], "limit": 1},
+        )
+
+    # Fallback: by name (backwards compat for pre-existing products)
+    if not existing:
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "product.template", "search_read",
+            [[["name", "=", session_title], ["available_in_pos", "=", True]]],
+            {"fields": ["id", "name", "list_price", "x_session_id"], "limit": 1},
+        )
+
     if existing:
         product_id = existing[0]["id"]
+        write_vals: Dict[str, Any] = {}
+        if existing[0].get("name") != session_title:
+            write_vals["name"] = session_title
         if price is not None and existing[0].get("list_price") != price:
+            write_vals["list_price"] = price
+        # Backfill x_session_id on products created before this field existed
+        if session_id and not existing[0].get("x_session_id"):
+            write_vals["x_session_id"] = session_id
+        if write_vals:
             models.execute_kw(
                 ODOO_DB, uid, ODOO_PASS,
                 "product.template", "write",
-                [[product_id], {"list_price": price}],
+                [[product_id], write_vals],
             )
-            logger.info(
-                "[SESSION_PRODUCT] ✓ Updated price for '%s': %.2f", session_title, price
-            )
+            logger.info("[SESSION_PRODUCT] ✓ Updated product id=%s: %s", product_id, write_vals)
         else:
-            logger.debug("[SESSION_PRODUCT] Already exists (no price change): '%s'", session_title)
+            logger.debug("[SESSION_PRODUCT] Already up to date: '%s'", session_title)
         return
 
     # Look up the Sessions POS category created by odoo_setup.
@@ -236,6 +259,8 @@ def _ensure_session_product(
         "list_price": price if price is not None else 0.0,
         "available_in_pos": True,
     }
+    if session_id:
+        vals["x_session_id"] = session_id
     if categ_id:
         vals["pos_categ_ids"] = [(6, 0, [categ_id])]
 
@@ -965,7 +990,10 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
                     session_price = float(price_el.text or 0)
                 except (ValueError, TypeError):
                     pass
-            _ensure_session_product(uid, models, title, price=session_price)
+            _ensure_session_product(
+                uid, models, title, price=session_price,
+                session_id=session_id if session_id != "?" else None,
+            )
 
     logger.info(
         "[USER_SESSIONS_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
@@ -1045,7 +1073,10 @@ def process_session_view_response(root: Element, uid: int, models: OdooModelsPro
                     session_price = float(price_el.text or 0)
                 except (ValueError, TypeError):
                     pass
-            _ensure_session_product(uid, models, title, price=session_price)
+            _ensure_session_product(
+                uid, models, title, price=session_price,
+                session_id=session_id if session_id != "?" else None,
+            )
 
     logger.info(
         "[SESSION_VIEW_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
@@ -1111,7 +1142,7 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
         except (ValueError, TypeError):
             pass
 
-    _ensure_session_product(uid, models, title, price=price)
+    _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
 
 
@@ -1140,7 +1171,7 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
         except (ValueError, TypeError):
             pass
 
-    _ensure_session_product(uid, models, title, price=price)
+    _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
 
 
