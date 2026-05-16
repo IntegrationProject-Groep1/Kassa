@@ -75,12 +75,14 @@ def get_sales_summary(date_from: str | None = None, date_to: str | None = None) 
         for o in orders:
             day = o["date_order"][:10]
             by_day[day] = round(by_day.get(day, 0) + o["amount_total"], 2)
+        _limit = 5000
         return {
             "total_revenue": round(total_revenue, 2),
             "order_count": len(orders),
             "currency": "EUR",
             "period": {"from": date_from, "to": date_to},
             "by_day": [{"date": d, "revenue": r} for d, r in sorted(by_day.items())],
+            "truncated": len(orders) >= _limit,
         }
     except Exception as exc:
         return {"error": f"Odoo unavailable: {exc}", "total_revenue": 0, "order_count": 0}
@@ -181,7 +183,14 @@ def get_all_wallets() -> dict[str, Any]:
             }
             for p in partners
         ]
-        return {"wallets": wallets, "count": len(wallets), "total_balance": round(total_balance, 2), "currency": "EUR"}
+        _limit = 200
+        return {
+            "wallets": wallets,
+            "count": len(wallets),
+            "total_balance": round(total_balance, 2),
+            "currency": "EUR",
+            "truncated": len(partners) >= _limit,
+        }
     except Exception as exc:
         return {"error": f"Odoo unavailable: {exc}", "wallets": [], "count": 0}
 
@@ -228,6 +237,49 @@ def get_wallet_by_master_uuid(master_uuid: str) -> dict[str, Any]:
         }
     except Exception as exc:
         return {"error": f"Odoo unavailable: {exc}", "found": False}
+
+
+@mcp.tool()
+def get_orders_by_email(email: str, limit: int = 50) -> dict[str, Any]:
+    """
+    Get POS orders for a member identified by their email address.
+    Looks up the Odoo partner by email then returns their order history.
+    Use this when the admin asks what a specific person bought at the event.
+    """
+    if not email or "@" not in email:
+        return {"error": "A valid email address is required.", "orders": [], "count": 0}
+    limit = min(limit, 200)
+    try:
+        partners = _odoo(
+            "res.partner", "search_read",
+            [[["email", "=ilike", email]]],
+            {"fields": ["id", "name", "x_user_id"], "limit": 1},
+        )
+        if not partners:
+            return {"error": f"No Odoo partner found with email '{email}'", "orders": [], "count": 0}
+        partner = partners[0]
+        orders = _odoo(
+            "pos.order", "search_read",
+            [[["partner_id", "=", partner["id"]], ["state", "in", ["paid", "done", "invoiced"]]]],
+            {
+                "fields": ["name", "amount_total", "date_order", "state"],
+                "limit": limit,
+                "order": "date_order desc",
+            },
+        )
+        return {
+            "customer": partner.get("name"),
+            "master_uuid": partner.get("x_user_id") or None,
+            "email": email,
+            "orders": [
+                {"order_id": o["name"], "total": o["amount_total"], "date": o["date_order"], "status": o["state"]}
+                for o in orders
+            ],
+            "count": len(orders),
+            "currency": "EUR",
+        }
+    except Exception as exc:
+        return {"error": f"Odoo unavailable: {exc}", "orders": [], "count": 0}
 
 
 @mcp.tool()
