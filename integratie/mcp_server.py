@@ -310,6 +310,36 @@ def process_refund(order_id: str, reason: str) -> dict[str, Any]:
         return {"error": f"Refund failed: {exc}", "success": False}
 
 
+@mcp.tool()
+def discover_odoo_schema() -> dict[str, Any]:
+    """
+    Discover the actual field names available on Odoo pos.order and res.partner.
+    Use this to debug why Kassa queries return no results — confirms whether custom
+    wallet fields (x_wallet_balance, x_user_id, x_badge_id) exist in this Odoo instance.
+    """
+    try:
+        order_fields = _odoo("pos.order", "fields_get", [], {"attributes": ["string", "type"]})
+        partner_fields = _odoo("res.partner", "fields_get", [], {"attributes": ["string", "type"]})
+
+        # Extract just x_ custom fields and wallet-related fields for clarity
+        order_summary = {k: v for k, v in order_fields.items() if k.startswith("x_") or k in ("name", "state", "amount_total", "date_order", "partner_id")}
+        partner_summary = {k: v for k, v in partner_fields.items() if k.startswith("x_") or k in ("name", "email", "id")}
+
+        # Check a live order count
+        order_count = _odoo("pos.order", "search_count", [[]])
+        paid_count = _odoo("pos.order", "search_count", [[["state", "in", ["paid", "done", "invoiced"]]]])
+
+        return {
+            "pos_order_custom_fields": order_summary,
+            "res_partner_custom_fields": partner_summary,
+            "total_pos_orders": order_count,
+            "paid_done_invoiced_orders": paid_count,
+            "wallet_fields_found": [k for k in partner_fields if "wallet" in k.lower() or "x_user" in k.lower() or "badge" in k.lower()],
+        }
+    except Exception as exc:
+        return {"error": f"Odoo schema discovery failed: {exc}"}
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8004"))
     print(f"Starting Kassa MCP server on port {port}...")
