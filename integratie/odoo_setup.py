@@ -269,6 +269,7 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
         ("res.partner", "x_session_title", "Session Title", "char", {}),
         ("res.partner", "x_outstanding_amount", "Outstanding Amount", "float", {}),
         ("res.partner", "x_payment_status", "Payment Status", "char", {}),
+        ("product.template", "x_session_id", "Planning Session ID", "char", {"index": True}),
         ("product.template", "x_is_topup", "Top-up Product", "boolean", {}),
         ("product.template", "x_age_restricted", "Age Restricted", "boolean", {}),
         ("pos.order", "x_rabbitmq_sent", "Sent to CRM via RabbitMQ", "boolean", {}),

@@ -52,8 +52,14 @@ def _odoo(model: str, method: str, args: list, kwargs: dict | None = None) -> An
 
 @mcp.tool()
 def get_sales_summary(
-    date_from: Annotated[str | None, Field(description="Start date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-01'. Omit for all time.")] = None,
-    date_to: Annotated[str | None, Field(description="End date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-31'. Omit for all time.")] = None,
+    date_from: Annotated[
+        str | None,
+        Field(description="Start date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-01'. Omit for all time."),
+    ] = None,
+    date_to: Annotated[
+        str | None,
+        Field(description="End date filter in ISO format 'YYYY-MM-DD', e.g. '2026-05-31'. Omit for all time."),
+    ] = None,
 ) -> dict[str, Any]:
     """
     Get a POS sales revenue summary.
@@ -201,7 +207,14 @@ def get_all_wallets() -> dict[str, Any]:
 
 @mcp.tool()
 def get_wallet_by_master_uuid(
-    master_uuid: Annotated[str, Field(description="The member's Master_UUID__c from CRM (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). Get it via crm__search_members or crm__list_members — never guess.")],
+    master_uuid: Annotated[
+        str,
+        Field(description=(
+            "The member's Master_UUID__c from CRM "
+            "(format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). "
+            "Get it via crm__search_members or crm__list_members — never guess."
+        )),
+    ],
 ) -> dict[str, Any]:
     """
     Get the LIVE wallet balance for a member by their Master UUID.
@@ -296,8 +309,17 @@ def get_orders_by_email(
 
 @mcp.tool()
 def process_refund(
-    order_id: Annotated[str, Field(description="The order name/reference from Odoo (e.g. 'POS/2026/0042'). Get it via get_recent_orders or get_orders_by_email — never guess.")],
-    reason: Annotated[str, Field(description="Written reason for the refund (required). Example: 'Customer request — duplicate order'.")],
+    order_id: Annotated[
+        str,
+        Field(description=(
+            "The order name/reference from Odoo (e.g. 'POS/2026/0042'). "
+            "Get it via get_recent_orders or get_orders_by_email — never guess."
+        )),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for the refund (required). Example: 'Customer request — duplicate order'."),
+    ],
 ) -> dict[str, Any]:
     """
     Issue a refund for a POS order. WRITE OPERATION — confirm with admin before calling.
