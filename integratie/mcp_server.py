@@ -264,8 +264,8 @@ def get_orders_by_email(
 ) -> dict[str, Any]:
     """
     Get POS orders for a member identified by their email address.
-    Looks up the Odoo partner by email then returns their order history.
-    Use this when the admin asks what a specific person bought at the event.
+    Looks up the Odoo partner by email then returns their full purchase history at the event (date, total, status).
+    Use when an admin asks 'what did [person] buy at the kassa?' or needs to locate an order for a refund.
     """
     if not email or "@" not in email:
         return {"error": "A valid email address is required.", "orders": [], "count": 0}
@@ -322,9 +322,10 @@ def process_refund(
     ],
 ) -> dict[str, Any]:
     """
-    Issue a refund for a POS order. WRITE OPERATION — confirm with admin before calling.
+    Issue a refund for a POS order in Odoo. WRITE OPERATION — confirm with admin before calling.
 
-    Returns success status and refund result from Odoo.
+    Requires a written reason. Get the order_id via get_orders_by_email or get_recent_orders first — never guess the reference.
+    Returns success status and the refund result from Odoo.
     """
     if not reason or not reason.strip():
         return {"error": "A reason is required to process a refund.", "success": False}
@@ -345,39 +346,53 @@ def process_refund(
 
 
 @mcp.tool()
-def discover_odoo_schema() -> dict[str, Any]:
+def topup_wallet(
+    master_uuid: Annotated[
+        str,
+        Field(description="CRM Master_UUID__c of the member. Get it via crm__search_members — never guess."),
+    ],
+    amount: Annotated[
+        float,
+        Field(description="Amount in EUR to add to the wallet. Must be positive.", gt=0),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for the top-up (required). Example: 'Admin adjustment — sponsor credit'."),
+    ],
+) -> dict[str, Any]:
     """
-    Discover the actual field names available on Odoo pos.order and res.partner.
-    Use this to debug why Kassa queries return no results — confirms whether custom
-    wallet fields (x_wallet_balance, x_user_id, x_badge_id) exist in this Odoo instance.
+    Add funds to a member's live wallet in Odoo. WRITE OPERATION — confirm with admin before calling.
+
+    Only use this when the wallet is Leased (CRM Wallet_Status__c='Leased') — otherwise
+    the balance is owned by CRM and Odoo is not the source of truth.
     """
+    if not reason or not reason.strip():
+        return {"error": "A reason is required for a wallet top-up.", "success": False}
     try:
-        order_fields = _odoo("pos.order", "fields_get", [], {"attributes": ["string", "type"]})
-        partner_fields = _odoo("res.partner", "fields_get", [], {"attributes": ["string", "type"]})
-
-        # Extract just x_ custom fields and wallet-related fields for clarity
-        keep_order = ("name", "state", "amount_total", "date_order", "partner_id")
-        order_summary = {k: v for k, v in order_fields.items() if k.startswith("x_") or k in keep_order}
-        keep_partner = ("name", "email", "id")
-        partner_summary = {k: v for k, v in partner_fields.items() if k.startswith("x_") or k in keep_partner}
-
-        # Check a live order count
-        order_count = _odoo("pos.order", "search_count", [[]])
-        paid_count = _odoo("pos.order", "search_count", [[["state", "in", ["paid", "done", "invoiced"]]]])
-
-        wallet_fields = [
-            k for k in partner_fields
-            if "wallet" in k.lower() or "x_user" in k.lower() or "badge" in k.lower()
-        ]
+        partners = _odoo(
+            "res.partner", "search_read",
+            [[["x_user_id", "=", master_uuid]]],
+            {"fields": ["id", "name", "x_wallet_balance"], "limit": 1},
+        )
+        if not partners:
+            return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
+        partner     = partners[0]
+        partner_id  = partner["id"]
+        old_balance = float(partner.get("x_wallet_balance") or 0)
+        new_balance = round(old_balance + amount, 2)
+        _odoo("res.partner", "write", [[partner_id], {"x_wallet_balance": new_balance}])
         return {
-            "pos_order_custom_fields": order_summary,
-            "res_partner_custom_fields": partner_summary,
-            "total_pos_orders": order_count,
-            "paid_done_invoiced_orders": paid_count,
-            "wallet_fields_found": wallet_fields,
+            "success":      True,
+            "master_uuid":  master_uuid,
+            "partner_name": partner["name"],
+            "amount_added": amount,
+            "old_balance":  old_balance,
+            "new_balance":  new_balance,
+            "reason":       reason,
+            "message":      f"Added €{amount:.2f} to {partner['name']}'s wallet. New balance: €{new_balance:.2f}.",
         }
     except Exception as exc:
-        return {"error": f"Odoo schema discovery failed: {exc}"}
+        return {"error": f"Wallet top-up failed: {exc}", "success": False}
 
 
 if __name__ == "__main__":
