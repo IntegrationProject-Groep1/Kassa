@@ -373,15 +373,25 @@ def topup_wallet(
         partners = _odoo(
             "res.partner", "search_read",
             [[["x_user_id", "=", master_uuid]]],
-            {"fields": ["id", "name", "x_wallet_balance"], "limit": 1},
+            {"fields": ["id", "name", "x_wallet_balance", "x_outstanding_amount", "x_payment_status"], "limit": 1},
         )
         if not partners:
             return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
-        partner = partners[0]
+        partner    = partners[0]
         partner_id = partner["id"]
         old_balance = float(partner.get("x_wallet_balance") or 0)
-        new_balance = round(old_balance + amount, 2)
-        _odoo("res.partner", "write", [[partner_id], {"x_wallet_balance": new_balance}])
+
+        # Atomic SQL increment — no read-modify-write race
+        new_balance = _odoo("pos.order", "action_add_wallet_amount", [partner_id, amount])
+
+        # Notify all open POS sessions so the cashier sees the updated balance immediately
+        _odoo("pos.order", "send_partner_bus_event", [
+            partner_id,
+            float(partner.get("x_outstanding_amount") or 0.0),
+            partner.get("x_payment_status") or "unpaid",
+            partner["name"],
+        ])
+
         return {
             "success":      True,
             "master_uuid":  master_uuid,

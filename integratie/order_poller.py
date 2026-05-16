@@ -1025,6 +1025,20 @@ class OrderPoller:
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
                 if lease_active:
                     self._increment_lease_tx_count(customer_info)
+                # Notify open POS terminals so cashiers see the updated balance immediately
+                try:
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.order', 'send_partner_bus_event',
+                        [
+                            customer_info['id'],
+                            float(customer_info.get('x_outstanding_amount') or 0.0),
+                            customer_info.get('x_payment_status') or 'unpaid',
+                            customer_info.get('name') or '',
+                        ]
+                    )
+                except Exception as bus_err:
+                    logger.warning(f"⚠️ POS bus notification failed for order {order_id}: {bus_err}")
             except Exception as e:
                 logger.error(f"❌ Atomic wallet update failed for order {order_id}: {e}")
                 monitor.log("error", "wallet", f"Atomic wallet update failed for Order {order_id}: {str(e)[:500]}")
