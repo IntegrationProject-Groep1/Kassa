@@ -417,6 +417,8 @@ def topup_wallet(
             }
         new_balance = float(new_balance_raw)
 
+        _odoo("pos.order", "action_increment_lease_tx_count", [partner_id])
+
         # Issue 2: Publish wallet_balance_update to kassa.exchange so external systems
         # (CRM, Frontend) are informed of this admin-initiated top-up.
         # Mirrors the pattern used in receiver.py:process_wallet_remote_topup.
@@ -428,12 +430,19 @@ def topup_wallet(
         )
         sender.send_typed_message("wallet_balance_update", wallet_xml)
 
+        # Re-read partner after the balance update so the bus event reflects the
+        # current x_outstanding_amount and x_payment_status, not the pre-topup values.
+        fresh = _odoo("res.partner", "search_read",
+                      [[["id", "=", partner_id]]],
+                      {"fields": ["x_outstanding_amount", "x_payment_status", "name"], "limit": 1})
+        fresh_partner = fresh[0] if fresh else partner
+
         # Notify all open POS sessions so the cashier sees the updated balance immediately
         _odoo("pos.order", "send_partner_bus_event", [
             partner_id,
-            float(partner.get("x_outstanding_amount") or 0.0),
-            partner.get("x_payment_status") or "unpaid",
-            partner["name"],
+            float(fresh_partner.get("x_outstanding_amount") or 0.0),
+            fresh_partner.get("x_payment_status") or "unpaid",
+            fresh_partner["name"],
         ])
 
         return {
