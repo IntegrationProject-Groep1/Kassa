@@ -30,6 +30,7 @@ class PosSession(models.Model):
             'x_badge_id',
             'x_lease_active',
             'x_lease_id',
+            'vat',
         ]
         fields = result.get('search_params', {}).get('fields', [])
         for f in extra:
