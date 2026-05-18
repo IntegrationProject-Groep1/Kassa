@@ -295,13 +295,13 @@ class VatPromptDialog extends Component {
         return /^[A-Z]{2}[A-Z0-9]{6,12}$/i.test(val.trim());
     }
 
-    confirm() {
+    async confirm() {
         const vat = this.state.vatNumber.trim().toUpperCase();
         if (!this._isValidVat(vat)) {
             this.state.error = _t("Ongeldig BTW-nummer. Voorbeeld: BE0123456789");
             return;
         }
-        this.props.onConfirm(vat);
+        await this.props.onConfirm(vat);
         this.props.close();
     }
 
@@ -409,10 +409,15 @@ patch(PaymentScreen.prototype, {
                             "res.partner", [partner.id], { vat: vatNumber }
                         );
                         partner.vat = vatNumber;
+                        resolve(vatNumber);
                     } catch (err) {
                         console.error("[Kassa] Failed to save VAT to partner:", err);
+                        this.env.services.notification.add(
+                            _t("Fout bij het opslaan van het BTW-nummer. Factuur geannuleerd."),
+                            { type: "danger", sticky: false }
+                        );
+                        resolve(null);
                     }
-                    resolve(vatNumber);
                 },
                 onCancel: () => resolve(null),
             });
