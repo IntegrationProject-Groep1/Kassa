@@ -274,36 +274,31 @@ class OrderPoller:
 
             # ── Last-resort x_user_id resolution (Optie C) ────────────────────
             # If the partner has no master_uuid (x_user_id) but does have an email,
-            # ask the Identity Service for the UUID. This handles edge cases where
-            # a QR-code scan or manual Odoo partner creation bypassed the CRM
-            # new_registration flow. Should never happen in normal operation.
+            # use create_user (identity.user.create.request) which is idempotent:
+            # returns the existing UUID if the email is already registered, or
+            # provisions a new identity on the spot for manually-created Odoo users.
+            # Lookup-only (lookup_by_email) is intentionally NOT used here because
+            # it returns NOT_FOUND for new emails instead of creating an identity.
             if not info.get('x_user_id') and info.get('email'):
                 email = info['email'].strip()
                 logger.warning(
                     "⚠️ [IDENTITY FALLBACK] Partner %s has no x_user_id — "
-                    "looking up master_uuid via email '%s' (last resort)",
+                    "provisioning via create_user for email '%s' (last resort)",
                     partner_id, email
                 )
                 try:
-                    identity_result = identity_client.lookup_by_email(email)
-                    if identity_result and identity_result.get('master_uuid'):
-                        master_uuid = identity_result['master_uuid']
-                        # Write master_uuid back to Odoo so future lookups are fast
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'res.partner', 'write',
-                            [[partner_id], {'x_user_id': master_uuid}]
-                        )
-                        info['x_user_id'] = master_uuid
-                        logger.info(
-                            "✅ [IDENTITY FALLBACK] Resolved x_user_id=%s for partner %s via email",
-                            master_uuid, partner_id
-                        )
-                    else:
-                        logger.warning(
-                            "⚠️ [IDENTITY FALLBACK] Identity Service returned no UUID for email '%s'",
-                            email
-                        )
+                    master_uuid = identity_client.create_user(email, source_system="kassa")
+                    # Write master_uuid back to Odoo so future lookups are fast
+                    self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'write',
+                        [[partner_id], {'x_user_id': master_uuid}]
+                    )
+                    info['x_user_id'] = master_uuid
+                    logger.info(
+                        "✅ [IDENTITY FALLBACK] Provisioned x_user_id=%s for partner %s via email",
+                        master_uuid, partner_id
+                    )
                 except identity_client.IdentityUnavailableError as e:
                     logger.warning(
                         "⚠️ [IDENTITY FALLBACK] Identity Service unreachable for partner %s: %s"
@@ -313,11 +308,11 @@ class OrderPoller:
                     sender.send_error_to_queue(
                         "identity_service_unavailable",
                         None,
-                        f"Identity fallback lookup failed for partner {partner_id} (email={email}): {e}",
+                        f"Identity fallback create failed for partner {partner_id} (email={email}): {e}",
                     )
                 except Exception as e:
                     logger.error(
-                        "❌ [IDENTITY FALLBACK] Unexpected error resolving UUID for partner %s: %s",
+                        "❌ [IDENTITY FALLBACK] Unexpected error provisioning UUID for partner %s: %s",
                         partner_id, e
                     )
             # ──────────────────────────────────────────────────────────────────
