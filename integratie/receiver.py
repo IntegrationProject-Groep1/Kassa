@@ -171,13 +171,17 @@ def _publish_partner_bus_event(
     outstanding_amount: float, payment_status: str, name: str,
 ) -> None:
     """
-    Publish a kassa_partner_update bus event via the PosOrder XML-RPC wrapper.
+    Publish a kassa_partner_update bus event and sync the partner to every open
+    POS session so that new partners become immediately searchable.
 
-    In Odoo 17 the bus.bus._sendone method is private and cannot be called
-    directly from an external XML-RPC session.  The public wrapper
-    pos.order.send_partner_bus_event is defined in kassa_pos_custom and
-    provides the bridge.  A failure here is non-fatal — the partner data is
-    already written to Odoo, only the real-time POS update is delayed.
+    Two complementary calls:
+    1. send_partner_bus_event  — fast in-place update for already-known partners
+       (wallet balance, payment status).
+    2. kassa_notify_partner_update — sends full partner data via session._notify
+       (the native POS config channel) so the partner-list component re-renders
+       and brand-new partners appear without a session restart.
+
+    Both are non-fatal; the partner data is already persisted in Odoo.
     """
     try:
         models.execute_kw(
@@ -188,6 +192,18 @@ def _publish_partner_bus_event(
         logger.info("[BUS] ✓ Published partner update: partner_id=%s", partner_id)
     except Exception as e:
         logger.warning("[BUS] Could not publish bus event for partner_id=%s: %s", partner_id, e)
+        monitor.log("warning", "system_error", f"POS bus event failed for partner {partner_id}: {str(e)[:300]}")
+
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_partner_update",
+            [[partner_id]],
+        )
+        logger.info("[BUS] ✓ Partner synced to %s POS session(s): partner_id=%s", notified, partner_id)
+    except Exception as e:
+        logger.warning("[BUS] Could not sync partner to POS sessions for partner_id=%s: %s", partner_id, e)
+        monitor.log("warning", "system_error", f"POS session partner sync failed for partner {partner_id}: {str(e)[:300]}")
 
 
 # ── Business logic per message type ───────────────────────────────────────────
@@ -1150,6 +1166,15 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
 
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info("[SESSION_CREATED] Bus notification sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_CREATED] Could not push bus notification: %s", exc)
+
 
 def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_updated from Frontend.
@@ -1178,6 +1203,15 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
 
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
+
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info("[SESSION_UPDATED] Bus notification sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_UPDATED] Could not push bus notification: %s", exc)
 
 
 def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -1394,6 +1428,7 @@ def start_listening():
                 logger.info("[RECEIVER] Subscribed to user.events fanout via queue %s", ue_queue)
             except Exception as e:
                 logger.warning("[RECEIVER] Could not bind to user.events fanout: %s", e)
+                monitor.log("warning", "system_error", f"Could not bind to user.events fanout: {str(e)[:300]}")
         dead_letter_exchange = DLX_NAME
         if DLX_NAME != EXCHANGE_NAME:
             channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
@@ -1439,6 +1474,9 @@ def start_listening():
                 RETRY_QUEUE,
                 getattr(exc, "reply_text", ""),
             )
+            monitor.log("error", "system_error",
+                        f"RabbitMQ topology conflict (406) on exchange={EXCHANGE_NAME} "
+                        f"queue={QUEUE_NAME}: {getattr(exc, 'reply_text', '')[:300]}")
             # Try to recover: open a fresh connection/channel and skip topology setup
             try:
                 try:
@@ -1497,6 +1535,7 @@ def start_listening():
         logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", EXCHANGE_NAME)
     except Exception as e:
         logger.warning("[RECEIVER] Could not bind Frontend session routing keys: %s", e)
+        monitor.log("warning", "session", f"Could not bind Frontend session routing keys on {EXCHANGE_NAME}: {str(e)[:300]}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

@@ -312,6 +312,9 @@ class OrderPoller:
                         " — continuing without x_user_id",
                         partner_id, e
                     )
+                    monitor.log("error", "identity",
+                                f"Identity Service unreachable during fallback provisioning for partner {partner_id} "
+                                f"(email={email}): {str(e)[:300]}")
                     sender.send_error_to_queue(
                         "identity_service_unavailable",
                         None,
@@ -322,6 +325,8 @@ class OrderPoller:
                         "❌ [IDENTITY FALLBACK] Unexpected error provisioning UUID for partner %s: %s",
                         partner_id, e
                     )
+                    monitor.log("error", "identity",
+                                f"Unexpected identity provisioning failure for partner {partner_id}: {str(e)[:300]}")
             # ──────────────────────────────────────────────────────────────────
 
             # Populate cache
@@ -505,6 +510,8 @@ class OrderPoller:
                             )
                 except Exception as e:
                     logger.error(f"❌ Top-up wallet update failed for order {order_id}: {e}")
+                    monitor.log("error", "wallet",
+                                f"Top-up wallet update failed for order {order_id}: {str(e)[:300]}")
                     all_sent = False
 
             # Invoice request logic: to_invoice is the single gate for all customers.
@@ -548,6 +555,8 @@ class OrderPoller:
                             )
                         except Exception as e:
                             logger.warning(f"⚠️ Could not set x_invoice_message_id on order: {e}")
+                            monitor.log("warning", "invoice",
+                                        f"Could not persist x_invoice_message_id for order {order_id}: {str(e)[:300]}")
 
                     if inv_sent and customer_info and customer_info.get('customer_type') == 'company':
                         logger.info(f"📄 Invoice request sent for company order {order_id}")
@@ -571,6 +580,8 @@ class OrderPoller:
                     )
                 except Exception as e:
                     logger.warning(f"⚠️ Could not set x_payment_message_id on order: {e}")
+                    monitor.log("warning", "payment",
+                                f"Could not persist x_payment_message_id for order {order_id}: {str(e)[:300]}")
 
             if all_sent:
                 self.models.execute_kw(
@@ -596,6 +607,8 @@ class OrderPoller:
 
             if is_xsd_error:
                 logger.error(f"❌ Contract violation in order {order_id}: {e}")
+                monitor.log("error", "xml_validation",
+                            f"XSD contract violation blocked order {order_id}: {str(e)[:300]}")
                 try:
                     self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -609,6 +622,7 @@ class OrderPoller:
                 return False
             else:
                 logger.error(f"❌ Error processing order {order_id}: {e}")
+                monitor.log("error", "payment", f"Unexpected error processing order {order_id}: {str(e)[:300]}")
                 return False
         finally:
             self._customer_cache = {}
@@ -744,6 +758,8 @@ class OrderPoller:
                 )
             except Exception as e:
                 logger.error(f"❌ Refund wallet update failed for order {order_id}: {e}")
+                monitor.log("error", "refund",
+                            f"Refund wallet credit failed for order {order_id}: {str(e)[:300]}")
                 ok_wallet = False
                 new_balance = customer_info.get('x_wallet_balance') or 0.0
             else:
@@ -812,6 +828,8 @@ class OrderPoller:
                 logger.error(
                     f"❌ CRITICAL: Could not trace refund to original order for traceability (Order {order_id}): {e}"
                 )
+                monitor.log("error", "refund",
+                            f"Refund correlation failed for order {order_id} — CRM cannot link refund to original payment: {str(e)[:300]}")
 
         # Build session_id lookup map from partner's x_session_title (already in customer_info)
         session_title_map: dict[str, str] = {}
@@ -1211,6 +1229,8 @@ class OrderPoller:
                 logger.warning(
                     "[POS_SESSION] Could not send session_view_request for session %d: %s", sid, e
                 )
+                monitor.log("warning", "session",
+                            f"session_view_request failed for POS session {sid} (correlation_id={corr}): {str(e)[:300]}")
 
     def poll_badge_assignments(self):
         """

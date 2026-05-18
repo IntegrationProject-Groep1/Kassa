@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
 import sender
+from monitoring import monitor
 
 defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
@@ -336,6 +337,7 @@ def process_refund(
         if not ids:
             return {"error": f"Order '{order_id}' not found.", "success": False}
         result = _odoo("pos.order", "refund", [ids])
+        monitor.log("info", "refund", f"Admin initiated refund for order {order_id}: {reason[:200]}")
         return {
             "success": True,
             "order_id": order_id,
@@ -344,6 +346,7 @@ def process_refund(
             "message": f"Refund initiated for order {order_id}.",
         }
     except Exception as exc:
+        monitor.log("error", "refund", f"Admin refund failed for order {order_id}: {str(exc)[:300]}")
         return {"error": f"Refund failed: {exc}", "success": False}
 
 
@@ -445,6 +448,9 @@ def topup_wallet(
             fresh_partner["name"],
         ])
 
+        monitor.log("info", "wallet",
+                    f"Admin topped up wallet for {partner['name']} (uuid={master_uuid}): "
+                    f"+\u20ac{amount:.2f} \u2192 \u20ac{new_balance:.2f}. Reason: {reason[:200]}")
         return {
             "success":      True,
             "master_uuid":  master_uuid,
@@ -457,6 +463,7 @@ def topup_wallet(
                             f" New balance: \u20ac{new_balance:.2f}.",
         }
     except Exception as exc:
+        monitor.log("error", "wallet", f"Admin wallet top-up failed for uuid={master_uuid}: {str(exc)[:300]}")
         return {"error": f"Wallet top-up failed: {exc}", "success": False}
 
 
