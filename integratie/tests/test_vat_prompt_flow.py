@@ -20,7 +20,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from lxml import etree
@@ -132,7 +132,7 @@ class TestVatFormatValidation:
     @pytest.mark.parametrize("vat", [
         "BE0123456789",   # Belgium (12 chars)
         "BE1234567890",   # Belgium alternative first digit
-        "NL123456789B01", # Netherlands (14 chars, mixed alpha-numeric)
+        "NL123456789B01",  # Netherlands (14 chars, mixed alpha-numeric)
         "DE123456789",    # Germany (11 chars)
         "FR12345678901",  # France (13 chars)
         "FRXX999999999",  # France with letter prefix (valid EU)
@@ -456,8 +456,8 @@ class TestProcessInvoiceRequestVatEdgeCases:
 
     @pytest.mark.parametrize("vat,expected", [
         ("BE0123456789",   "BE0123456789"),   # normal
-        ("  BE0123456789", "  BE0123456789"), # leading spaces preserved (JS trims before save)
-        ("BE0123456789  ", "BE0123456789  "), # trailing spaces preserved
+        ("  BE0123456789", "  BE0123456789"),  # leading spaces preserved (JS trims before save)
+        ("BE0123456789  ", "BE0123456789  "),  # trailing spaces preserved
     ])
     def test_vat_passed_through_as_stored(self, vat, expected):
         """order_poller passes vat exactly as stored — normalisation is the JS dialog's job."""
