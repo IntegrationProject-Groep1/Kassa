@@ -466,13 +466,14 @@ class TestProcessSessionViewResponse:
         )
         root = self._make_root(sessions_xml, status="ok", count=1)
         models.execute_kw.side_effect = [
-            [],            # search_read product.template → not found
+            [],            # x_session_id search → not found
+            [],            # name search → not found
             [{"id": 10}],  # Sessions category
             42,            # create product
         ]
         receiver.process_session_view_response(root, uid, models)
 
-        create_call = models.execute_kw.call_args_list[2]
+        create_call = models.execute_kw.call_args_list[3]
         assert create_call[0][4] == "create"
         vals = create_call[0][5][0]
         assert vals["name"] == "Workshop: IoT"
@@ -509,11 +510,12 @@ class TestProcessSessionViewResponse:
         custom_req_id = "550e8400-e29b-41d4-a716-446655441234"
         root = self._make_root(sessions_xml, status="ok", count=1, req_msg_id=custom_req_id)
         models.execute_kw.side_effect = [
-            [{"id": 5, "list_price": 0.0}],  # product already exists
+            # found by x_session_id, all fields in sync → no write needed
+            [{"id": 5, "name": "Keynote", "list_price": 0.0, "x_session_id": "s1"}],
             1,  # kassa_notify_product_update → 1 session notified
         ]
         receiver.process_session_view_response(root, uid, models)
-        # 1 search (product exists) + 1 kassa_notify_product_update
+        # 1 search (found by x_session_id) + 1 kassa_notify_product_update
         assert models.execute_kw.call_count == 2
 
     def test_bus_notify_called_after_products_ensured(self, odoo):
@@ -558,14 +560,15 @@ class TestProcessSessionViewResponse:
         )
         root = self._make_root(sessions_xml, status="ok", count=1)
         models.execute_kw.side_effect = [
-            [],            # product not found
+            [],            # x_session_id search → not found
+            [],            # name search → not found
             [],            # no category
             55,            # create product
             Exception("bus unavailable"),  # notify fails
         ]
         # Must not raise
         receiver.process_session_view_response(root, uid, models)
-        assert models.execute_kw.call_count == 4
+        assert models.execute_kw.call_count == 5
 
     def test_bus_notify_not_called_when_status_not_found(self, odoo):
         """kassa_notify_product_update is never called when Planning returns not_found."""
@@ -621,14 +624,15 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         root = self._make_root(self._session_xml("Workshop A", "20.00"))
         models.execute_kw.side_effect = [
-            [],            # product not found
+            [],            # x_session_id search → not found
+            [],            # name search → not found
             [{"id": 10}],  # Sessions category
             99,            # create product
             1,             # kassa_notify_product_update
         ]
         receiver.process_user_sessions_response(root, uid, models)
 
-        create_call = models.execute_kw.call_args_list[2]
+        create_call = models.execute_kw.call_args_list[3]
         assert create_call[0][4] == "create"
         vals = create_call[0][5][0]
         assert vals["name"] == "Workshop A"
@@ -667,8 +671,9 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         root = self._make_root(self._session_xml())
         models.execute_kw.side_effect = [
-            [{"id": 7, "list_price": 20.0}],  # product already exists, same price
-            1,                                  # notify
+            # found by x_session_id with all fields in sync → no write
+            [{"id": 7, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
+            1,  # notify
         ]
         receiver.process_user_sessions_response(root, uid, models)
 
@@ -680,8 +685,9 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         root = self._make_root(self._session_xml())
         models.execute_kw.side_effect = [
-            [{"id": 7, "list_price": 20.0}],  # product exists
-            Exception("Odoo unavailable"),      # notify fails
+            # found by x_session_id with all fields in sync → no write
+            [{"id": 7, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
+            Exception("Odoo unavailable"),  # notify fails
         ]
         receiver.process_user_sessions_response(root, uid, models)  # must not raise
         assert models.execute_kw.call_count == 2
@@ -714,10 +720,10 @@ class TestProcessUserSessionsResponse:
     def test_session_price_passed_to_ensure_product(self, odoo):
         uid, models = odoo
         root = self._make_root(self._session_xml("Priced Session", "42.50"))
-        models.execute_kw.side_effect = [[], [{"id": 5}], 90, 1]
+        models.execute_kw.side_effect = [[], [], [{"id": 5}], 90, 1]
         receiver.process_user_sessions_response(root, uid, models)
 
-        create_call = models.execute_kw.call_args_list[2]
+        create_call = models.execute_kw.call_args_list[3]
         vals = create_call[0][5][0]
         assert vals["list_price"] == 42.5
 
@@ -726,7 +732,11 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         custom_corr = "660e8400-e29b-41d4-a716-446655440099"
         root = self._make_root(self._session_xml(), correlation_id=custom_corr)
-        models.execute_kw.side_effect = [[{"id": 3, "list_price": 20.0}], 1]
+        # found by x_session_id with all fields in sync → no write
+        models.execute_kw.side_effect = [
+            [{"id": 3, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
+            1,
+        ]
         receiver.process_user_sessions_response(root, uid, models)
         assert models.execute_kw.call_count == 2
 

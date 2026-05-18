@@ -946,15 +946,12 @@ def test_get_customer_info_resolves_missing_x_user_id_via_email(mock_identity, p
           'x_lease_active': False, 'x_lease_id': False, 'x_lease_transaction_count': 0}],
         True,  # res.partner write (x_user_id patch)
     ]
-    mock_identity.lookup_by_email.return_value = {
-        'master_uuid': 'RESOLVED-UUID-42',
-        'email': 'edge@example.com',
-    }
+    mock_identity.create_user.return_value = 'RESOLVED-UUID-42'
 
     result = poller.get_customer_info(42)
 
     # Identity service was called with the partner's email
-    mock_identity.lookup_by_email.assert_called_once_with('edge@example.com')
+    mock_identity.create_user.assert_called_once_with('edge@example.com', source_system='kassa')
 
     # master_uuid was written back to Odoo
     write_calls = [
@@ -985,7 +982,7 @@ def test_get_customer_info_identity_fallback_non_blocking_on_unavailable(mock_id
           'street': False, 'city': False, 'zip': False, 'country_id': False,
           'x_lease_active': False, 'x_lease_id': False, 'x_lease_transaction_count': 0}],
     ]
-    mock_identity.lookup_by_email.side_effect = IdentityUnavailableError("timeout")
+    mock_identity.create_user.side_effect = IdentityUnavailableError("timeout")
     mock_identity.IdentityUnavailableError = IdentityUnavailableError
 
     result = poller.get_customer_info(43)
@@ -1238,10 +1235,11 @@ def test_company_wallet_payment_with_to_invoice_is_not_pay_later(mock_sender, po
         # _get_special_payment_info reads payments: Badge Wallet, not Customer Account
         [{'payment_method_id': (1, 'Badge Wallet'), 'amount': 50.0}],
         75.0,   # action_process_wallet_payment new balance
-        True,   # x_wallet_updated
-        True,   # lease tx count increment
-        True,   # x_payment_message_id
-        True,   # x_rabbitmq_sent
+        True,   # action_increment_lease_tx_count (lease_active=True)
+        True,   # send_partner_bus_event (POS live balance update)
+        True,   # x_invoice_message_id write (to_invoice=True)
+        True,   # x_payment_message_id write
+        True,   # x_rabbitmq_sent write
     ]
 
     result = poller.process_order(order)

@@ -204,8 +204,9 @@ def _ensure_session_product(
     If *price* is provided it is always written to list_price.
     """
     existing = None
+    found_by_session_id = False
 
-    # Primary lookup: by session_id (survives title renames)
+    # Primary lookup: by x_session_id (survives title renames)
     if session_id:
         existing = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
@@ -213,20 +214,24 @@ def _ensure_session_product(
             [[["x_session_id", "=", session_id], ["available_in_pos", "=", True]]],
             {"fields": ["id", "name", "list_price", "x_session_id"], "limit": 1},
         )
+        if existing:
+            found_by_session_id = True
 
-    # Fallback: by name (backwards compat for pre-existing products)
+    # Fallback: by name (backwards compat for pre-existing products without x_session_id)
     if not existing:
         existing = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "product.template", "search_read",
             [[["name", "=", session_title], ["available_in_pos", "=", True]]],
-            {"fields": ["id", "name", "list_price", "x_session_id"], "limit": 1},
+            {"fields": ["id", "list_price", "x_session_id"], "limit": 1},
         )
 
     if existing:
         product_id = existing[0]["id"]
         write_vals: Dict[str, Any] = {}
-        if existing[0].get("name") != session_title:
+        # Only check for a title rename when found by x_session_id — if we found it
+        # by name the name already matches by definition.
+        if found_by_session_id and existing[0].get("name") != session_title:
             write_vals["name"] = session_title
         if price is not None and existing[0].get("list_price") != price:
             write_vals["list_price"] = price

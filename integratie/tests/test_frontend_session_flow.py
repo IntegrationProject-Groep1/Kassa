@@ -242,21 +242,23 @@ class TestProcessSessionCreated:
         uid, models = odoo
         # product not found → category found → product created
         models.execute_kw.side_effect = [
-            [],         # product.template search_read (not found)
+            [],            # x_session_id search → not found
+            [],            # name search → not found
             [{"id": 3}],  # pos.category search_read
-            1,          # product.template create
+            1,             # product.template create
         ]
         receiver.process_session_created(self._root(title="Workshop Python", session_id="s1"), uid, models)
 
-        create_call = models.execute_kw.call_args_list[2]
+        create_call = models.execute_kw.call_args_list[3]
         assert create_call[0][3] == "product.template"
         assert create_call[0][4] == "create"
         assert create_call[0][5][0]["name"] == "Workshop Python"
 
     def test_skips_create_when_product_already_exists(self, odoo):
         uid, models = odoo
+        # found by x_session_id with all fields in sync → no write, no create
         models.execute_kw.side_effect = [
-            [{"id": 7, "list_price": 25.0}],  # product already exists
+            [{"id": 7, "name": "Workshop Python", "list_price": 25.0, "x_session_id": "sess-0001"}],
         ]
         receiver.process_session_created(self._root(price=25.0), uid, models)
 
@@ -336,13 +338,14 @@ class TestProcessSessionUpdated:
     def test_creates_product_when_not_found(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [
-            [],           # product not found
+            [],           # x_session_id search → not found
+            [],           # name search → not found
             [{"id": 3}],  # category found
             1,            # product created
         ]
         receiver.process_session_updated(self._root(title="Brand New Session"), uid, models)
 
-        create_call = models.execute_kw.call_args_list[2]
+        create_call = models.execute_kw.call_args_list[3]
         assert create_call[0][3] == "product.template"
         assert create_call[0][4] == "create"
 
