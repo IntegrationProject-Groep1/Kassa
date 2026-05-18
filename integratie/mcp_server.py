@@ -439,7 +439,8 @@ def topup_wallet(
             "old_balance":  old_balance,
             "new_balance":  new_balance,
             "reason":       reason,
-            "message":      f"Added \u20ac{amount:.2f} to {partner['name']}'s wallet. New balance: \u20ac{new_balance:.2f}.",
+            "message":      f"Added \u20ac{amount:.2f} to {partner['name']}'s wallet."
+                            f" New balance: \u20ac{new_balance:.2f}.",
         }
     except Exception as exc:
         return {"error": f"Wallet top-up failed: {exc}", "success": False}
