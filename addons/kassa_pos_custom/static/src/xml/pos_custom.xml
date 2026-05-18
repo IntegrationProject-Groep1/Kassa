@@ -97,4 +97,38 @@
         </xpath>
     </t>
 
+    <!--
+        VAT prompt dialog — shown when a private customer enables invoice
+        without having a VAT number on file.
+        Cashier enters the number to proceed, or clicks "Factuur annuleren" to
+        clear the invoice flag and complete the order as a normal sale.
+    -->
+    <t t-name="kassa_pos_custom.VatPromptDialog">
+        <Dialog title="'BTW-nummer vereist'">
+            <p>
+                Klant <b t-esc="props.partnerName"/> heeft geen BTW-nummer.
+            </p>
+            <p>
+                Voer het BTW-nummer in om door te gaan, of annuleer de factuur.
+            </p>
+            <div class="mb-3">
+                <input
+                    type="text"
+                    class="form-control"
+                    placeholder="BE0123456789"
+                    t-model="state.vatNumber"
+                    t-on-keyup.enter="confirm"
+                    autofocus="autofocus"
+                />
+                <t t-if="state.error">
+                    <div class="text-danger small mt-1" t-esc="state.error"/>
+                </t>
+            </div>
+            <t t-set-slot="footer">
+                <button class="btn btn-primary" t-on-click="confirm">Bevestigen</button>
+                <button class="btn btn-secondary ms-2" t-on-click="cancel">Factuur annuleren</button>
+            </t>
+        </Dialog>
+    </t>
+
 </templates>

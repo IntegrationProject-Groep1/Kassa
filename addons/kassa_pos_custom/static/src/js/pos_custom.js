@@ -21,7 +21,8 @@ import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
-import { effect } from "@odoo/owl";
+import { Component, useState, effect } from "@odoo/owl";
+import { Dialog } from "@web/core/dialog/dialog";
 import { _t } from "@web/core/l10n/translation";
 import { sprintf } from "@web/core/utils/strings";
 
@@ -265,6 +266,51 @@ patch(PosStore.prototype, {
     },
 });
 
+// ── VatPromptDialog ───────────────────────────────────────────────────────────
+
+/**
+ * Modal dialog shown when a private customer requests an invoice but has no
+ * VAT number stored in their Odoo partner record.
+ *
+ * The cashier either enters a valid EU-format VAT number (saved to the partner
+ * via ORM before the order is finalised) or clicks "Factuur annuleren" to
+ * clear the invoice flag and proceed without one.
+ */
+class VatPromptDialog extends Component {
+    static template = "kassa_pos_custom.VatPromptDialog";
+    static components = { Dialog };
+    static props = {
+        partnerName: String,
+        onConfirm: Function,
+        onCancel: Function,
+        close: Function,
+    };
+
+    setup() {
+        this.state = useState({ vatNumber: "", error: "" });
+    }
+
+    _isValidVat(val) {
+        // Two-letter country code + 6–12 alphanumeric chars — covers all EU formats.
+        return /^[A-Z]{2}[A-Z0-9]{6,12}$/i.test(val.trim());
+    }
+
+    async confirm() {
+        const vat = this.state.vatNumber.trim().toUpperCase();
+        if (!this._isValidVat(vat)) {
+            this.state.error = _t("Ongeldig BTW-nummer. Voorbeeld: BE0123456789");
+            return;
+        }
+        await this.props.onConfirm(vat);
+        this.props.close();
+    }
+
+    cancel() {
+        this.props.onCancel();
+        this.props.close();
+    }
+}
+
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
 /**
@@ -349,6 +395,36 @@ patch(PaymentScreen.prototype, {
     },
 
     /**
+     * Show a dialog asking the cashier to enter a VAT number for a private
+     * customer who has none on file.  Resolves with the entered (and saved)
+     * VAT string, or null if the cashier cancelled.
+     */
+    async _kassaPromptVatNumber(partner) {
+        return new Promise((resolve) => {
+            this.env.services.dialog.add(VatPromptDialog, {
+                partnerName: partner.name,
+                onConfirm: async (vatNumber) => {
+                    try {
+                        await this.env.services.orm.write(
+                            "res.partner", [partner.id], { vat: vatNumber }
+                        );
+                        partner.vat = vatNumber;
+                        resolve(vatNumber);
+                    } catch (err) {
+                        console.error("[Kassa] Failed to save VAT to partner:", err);
+                        this.env.services.notification.add(
+                            _t("Fout bij het opslaan van het BTW-nummer. Factuur geannuleerd."),
+                            { type: "danger", sticky: false }
+                        );
+                        resolve(null);
+                    }
+                },
+                onCancel: () => resolve(null),
+            });
+        });
+    },
+
+    /**
      * Suppress automatic invoice PDF download after order validation.
      * The invoice is still created server-side; only the client-side download
      * popup is skipped. A notification is shown instead.
@@ -361,11 +437,29 @@ patch(PaymentScreen.prototype, {
     },
 
     /**
-     * Override validate to show a payment success notification after the
-     * order is processed. Errors are still propagated normally.
+     * Override validate to:
+     * 1. Prompt for a VAT number when a private customer requests an invoice
+     *    without one on file (Belgian legal requirement for B2B invoices).
+     * 2. Show a payment success notification after the order is processed.
      */
     async validate() {
         const order = this.currentOrder;
+        const partner = order.get_partner?.() ?? order.partner_id;
+
+        if (order.is_to_invoice() && partner && !partner.is_company && !partner.parent_id) {
+            if (!(partner.vat || "").trim()) {
+                const vatNumber = await this._kassaPromptVatNumber(partner);
+                if (vatNumber === null) {
+                    order.set_to_invoice(false);
+                    this.env.services.notification.add(
+                        _t("Factuur geannuleerd."),
+                        { type: "info", sticky: false }
+                    );
+                    return;
+                }
+            }
+        }
+
         await super.validate(...arguments);
         if (order?.finalized) {
             this.env.services.notification.add(
