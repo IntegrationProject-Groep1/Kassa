@@ -377,7 +377,7 @@ def topup_wallet(
         )
         if not partners:
             return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
-        partner    = partners[0]
+        partner = partners[0]
         partner_id = partner["id"]
         old_balance = float(partner.get("x_wallet_balance") or 0)
 
