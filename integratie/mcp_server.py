@@ -15,6 +15,7 @@ import defusedxml.xmlrpc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
+import sender
 
 defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
@@ -373,16 +374,54 @@ def topup_wallet(
         partners = _odoo(
             "res.partner", "search_read",
             [[["x_user_id", "=", master_uuid]]],
-            {"fields": ["id", "name", "x_wallet_balance", "x_outstanding_amount", "x_payment_status"], "limit": 1},
+            {
+                "fields": [
+                    "id", "name", "x_wallet_balance",
+                    "x_outstanding_amount", "x_payment_status",
+                    "x_lease_active",
+                ],
+                "limit": 1,
+            },
         )
         if not partners:
             return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
         partner = partners[0]
         partner_id = partner["id"]
+
+        # Issue 3: Enforce lease-active guard — Odoo is only the source of truth while leased.
+        # Without this check an admin top-up on an unleased wallet is silently overwritten
+        # when CRM next pushes its authoritative balance via wallet_lease_grant.
+        if not partner.get("x_lease_active"):
+            return {
+                "error": (
+                    f"Wallet for '{partner['name']}' is not currently leased "
+                    "(CRM Wallet_Status__c != 'Leased'). "
+                    "Odoo is not the source of truth for this wallet — top-up rejected "
+                    "to prevent silent balance corruption."
+                ),
+                "success": False,
+            }
+
         old_balance = float(partner.get("x_wallet_balance") or 0)
 
         # Atomic SQL increment — no read-modify-write race
-        new_balance = _odoo("pos.order", "action_add_wallet_amount", [partner_id, amount])
+        new_balance_raw = _odoo("pos.order", "action_add_wallet_amount", [partner_id, amount])
+
+        # Issue 4: action_add_wallet_amount can return False on a partial Odoo failure.
+        # Guard against TypeError in the format string — the write already succeeded,
+        # so we must not report a false failure to the admin.
+        new_balance = float(new_balance_raw or 0)
+
+        # Issue 2: Publish wallet_balance_update to kassa.exchange so external systems
+        # (CRM, Frontend) are informed of this admin-initiated top-up.
+        # Mirrors the pattern used in receiver.py:process_wallet_remote_topup.
+        wallet_xml = sender.build_wallet_balance_update_xml(
+            identity_uuid=master_uuid,
+            new_balance=new_balance,
+            authority="kassa",
+            status="active",
+        )
+        sender.send_typed_message("wallet_balance_update", wallet_xml)
 
         # Notify all open POS sessions so the cashier sees the updated balance immediately
         _odoo("pos.order", "send_partner_bus_event", [
@@ -400,7 +439,7 @@ def topup_wallet(
             "old_balance":  old_balance,
             "new_balance":  new_balance,
             "reason":       reason,
-            "message":      f"Added €{amount:.2f} to {partner['name']}'s wallet. New balance: €{new_balance:.2f}.",
+            "message":      f"Added \u20ac{amount:.2f} to {partner['name']}'s wallet. New balance: \u20ac{new_balance:.2f}.",
         }
     except Exception as exc:
         return {"error": f"Wallet top-up failed: {exc}", "success": False}

@@ -1020,16 +1020,25 @@ class OrderPoller:
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
                 if lease_active:
                     self._increment_lease_tx_count(customer_info)
-                # Notify open POS terminals so cashiers see the updated balance immediately
+                # Notify open POS terminals so cashiers see the updated balance immediately.
+                # x_outstanding_amount and x_payment_status are NOT fetched by get_customer_info()
+                # (they are absent from base_fields), so we must re-read them fresh from Odoo
+                # here to avoid broadcasting stale zeros/unpaid to the cashier UI.
                 try:
+                    fresh_partner = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'read',
+                        [customer_info['id'], ['x_outstanding_amount', 'x_payment_status', 'name']],
+                    )
+                    fp = fresh_partner[0] if fresh_partner else {}
                     self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'pos.order', 'send_partner_bus_event',
                         [
                             customer_info['id'],
-                            float(customer_info.get('x_outstanding_amount') or 0.0),
-                            customer_info.get('x_payment_status') or 'unpaid',
-                            customer_info.get('name') or '',
+                            float(fp.get('x_outstanding_amount') or 0.0),
+                            fp.get('x_payment_status') or 'unpaid',
+                            fp.get('name') or customer_info.get('name') or '',
                         ]
                     )
                 except Exception as bus_err:
