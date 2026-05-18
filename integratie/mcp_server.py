@@ -407,10 +407,15 @@ def topup_wallet(
         # Atomic SQL increment — no read-modify-write race
         new_balance_raw = _odoo("pos.order", "action_add_wallet_amount", [partner_id, amount])
 
-        # Issue 4: action_add_wallet_amount can return False on a partial Odoo failure.
-        # Guard against TypeError in the format string — the write already succeeded,
-        # so we must not report a false failure to the admin.
-        new_balance = float(new_balance_raw or 0)
+        # action_add_wallet_amount returns False when the Odoo write fails.
+        # Falling back to 0 would broadcast a zero balance to CRM/Frontend,
+        # effectively wiping the wallet on all external systems — abort instead.
+        if new_balance_raw is False:
+            return {
+                "error": "Wallet top-up failed in Odoo (action_add_wallet_amount returned False).",
+                "success": False,
+            }
+        new_balance = float(new_balance_raw)
 
         # Issue 2: Publish wallet_balance_update to kassa.exchange so external systems
         # (CRM, Frontend) are informed of this admin-initiated top-up.

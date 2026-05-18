@@ -288,17 +288,24 @@ class OrderPoller:
                 )
                 try:
                     master_uuid = identity_client.create_user(email, source_system="kassa")
-                    # Write master_uuid back to Odoo so future lookups are fast
-                    self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'write',
-                        [[partner_id], {'x_user_id': master_uuid}]
-                    )
-                    info['x_user_id'] = master_uuid
-                    logger.info(
-                        "✅ [IDENTITY FALLBACK] Provisioned x_user_id=%s for partner %s via email",
-                        master_uuid, partner_id
-                    )
+                    if master_uuid:
+                        # Write master_uuid back to Odoo so future lookups are fast
+                        self.models.execute_kw(
+                            self.odoo_db, self.odoo_uid, self.odoo_pass,
+                            'res.partner', 'write',
+                            [[partner_id], {'x_user_id': master_uuid}]
+                        )
+                        info['x_user_id'] = master_uuid
+                        logger.info(
+                            "✅ [IDENTITY FALLBACK] Provisioned x_user_id=%s for partner %s via email",
+                            master_uuid, partner_id
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ [IDENTITY FALLBACK] Identity Service returned no UUID for"
+                            " email '%s' (partner %s) — skipping Odoo write-back",
+                            email, partner_id
+                        )
                 except identity_client.IdentityUnavailableError as e:
                     logger.warning(
                         "⚠️ [IDENTITY FALLBACK] Identity Service unreachable for partner %s: %s"
@@ -1028,7 +1035,7 @@ class OrderPoller:
                     fresh_partner = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'res.partner', 'read',
-                        [customer_info['id'], ['x_outstanding_amount', 'x_payment_status', 'name']],
+                        [[customer_info['id']], ['x_outstanding_amount', 'x_payment_status', 'name']],
                     )
                     fp = fresh_partner[0] if fresh_partner else {}
                     self.models.execute_kw(
