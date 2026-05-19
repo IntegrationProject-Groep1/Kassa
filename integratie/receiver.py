@@ -169,18 +169,14 @@ def _publish_partner_bus_event(
     uid: int, models, partner_id: int,
     outstanding_amount: float, payment_status: str, name: str,
 ) -> None:
-    """
-    Publish a kassa_partner_update bus event and sync the partner to every open
-    POS session so that new partners become immediately searchable.
+    """Publish a kassa_partner_update bus event so the POS frontend updates immediately.
 
-    Two complementary calls:
-    1. send_partner_bus_event  — fast in-place update for already-known partners
-       (wallet balance, payment status).
-    2. kassa_notify_partner_update — sends full partner data via session._notify
-       (the native POS config channel) so the partner-list component re-renders
-       and brand-new partners appear without a session restart.
+    The POS JS subscribes to the kassa_partner_update channel and on receipt
+    fetches the full partner record (including all Kassa custom fields) and
+    upserts it into the local partner list — covering both updates to existing
+    partners and brand-new partners appearing mid-session.
 
-    Both are non-fatal; the partner data is already persisted in Odoo.
+    Non-fatal: partner data is already persisted in Odoo before this is called.
     """
     try:
         models.execute_kw(
@@ -191,19 +187,8 @@ def _publish_partner_bus_event(
         logger.info("[BUS] ✓ Published partner update: partner_id=%s", partner_id)
     except Exception as e:
         logger.warning("[BUS] Could not publish bus event for partner_id=%s: %s", partner_id, e)
-        monitor.log("warning", "system_error", f"POS bus event failed for partner {partner_id}: {str(e)[:300]}")
-
-    try:
-        notified = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "pos.session", "kassa_notify_partner_update",
-            [[partner_id]],
-        )
-        logger.info("[BUS] ✓ Partner synced to %s POS session(s): partner_id=%s", notified, partner_id)
-    except Exception as e:
-        logger.warning("[BUS] Could not sync partner to POS sessions for partner_id=%s: %s", partner_id, e)
         monitor.log("warning", "system_error",
-                    f"POS session partner sync failed for partner {partner_id}: {str(e)[:300]}")
+                    f"POS bus event failed for partner {partner_id}: {str(e)[:300]}")
 
 
 # ── Business logic per message type ───────────────────────────────────────────

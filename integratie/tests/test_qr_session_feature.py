@@ -809,21 +809,19 @@ class TestMultiSessionFlow:
             [],      # product.template not found
             [],      # pos.category not found
             61,      # create product "Session A"
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
             # Second registration for same partner:
             [{"id": 100, "name": "Alice", "x_user_id": _UUID, "x_session_title": '["Session A"]'}],
             True,    # write
             [],      # product.template for "Session B" not found
             [],      # category not found
             62,      # create product "Session B"
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
         ]
         receiver.process_new_registration(self._reg_root("Session A"), uid, models)
         receiver.process_new_registration(self._reg_root("Session B"), uid, models)
 
-        second_write = models.execute_kw.call_args_list[8]
+        second_write = models.execute_kw.call_args_list[7]
         vals = second_write[0][5][1]
         titles = json.loads(vals["x_session_title"])
         assert "Session A" in titles
@@ -837,15 +835,13 @@ class TestMultiSessionFlow:
             [],      # product "Sess A" not found
             [],      # no category
             70,      # create product "Sess A"
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
             [{"id": 100, "name": "Alice", "x_user_id": _UUID, "x_session_title": '["Sess A"]'}],
             True,    # write
             [],      # product "Sess B" not found
             [],      # no category
             71,      # create product "Sess B"
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
         ]
         receiver.process_new_registration(self._reg_root("Sess A"), uid, models)
         receiver.process_new_registration(self._reg_root("Sess B"), uid, models)
@@ -865,19 +861,17 @@ class TestMultiSessionFlow:
             [],      # product "Workshop" not found
             [],      # no category
             72,      # create product
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
             # Second registration for same session:
             [{"id": 100, "name": "Alice", "x_user_id": _UUID, "x_session_title": '["Workshop"]'}],
             True,    # write
             [{"id": 72}],  # product already exists → no create
-            True,    # bus event (pos.order)
-            True,    # bus event (pos.session)
+            True,    # bus event
         ]
         receiver.process_new_registration(self._reg_root("Workshop"), uid, models)
         receiver.process_new_registration(self._reg_root("Workshop"), uid, models)
 
-        second_write = models.execute_kw.call_args_list[8]
+        second_write = models.execute_kw.call_args_list[7]
         vals = second_write[0][5][1]
         titles = json.loads(vals["x_session_title"])
         assert titles.count("Workshop") == 1

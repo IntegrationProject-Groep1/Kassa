@@ -74,25 +74,25 @@ def pos_session(odoo):
     """
     Provides an open POS session for the test module.
 
-    - Reuses an already-open session if one exists (common in local dev).
+    - Reuses any already-open session if one exists (common in local dev).
     - Opens a new session against the first available POS config if not.
     - Cleans up the session in teardown only if we opened it ourselves.
     """
     uid, models = odoo
 
-    configs = _rpc(models, uid, 'pos.config', 'search_read', [[]], {'fields': ['id', 'name'], 'limit': 1})
-    if not configs:
-        pytest.skip("No POS config found — odoo_setup.py may not have run yet")
-    config_id = configs[0]['id']
-
     existing = _rpc(
         models, uid, 'pos.session', 'search_read',
-        [[['config_id', '=', config_id], ['state', '=', 'opened']]],
+        [[['state', '=', 'opened']]],
         {'fields': ['id'], 'limit': 1},
     )
     if existing:
         yield existing[0]['id']
         return
+
+    configs = _rpc(models, uid, 'pos.config', 'search_read', [[]], {'fields': ['id', 'name'], 'limit': 1})
+    if not configs:
+        pytest.skip("No POS config found — odoo_setup.py may not have run yet")
+    config_id = configs[0]['id']
 
     session_id = _rpc(models, uid, 'pos.session', 'create', [{'config_id': config_id}])
     _rpc(models, uid, 'pos.session', 'action_pos_session_open', [[session_id]])
@@ -173,9 +173,8 @@ class TestCustomFields:
 
 
 # ── Bus method existence tests ─────────────────────────────────────────────────
-# These tests confirm the two Odoo methods called by _publish_partner_bus_event
-# exist with the right signature. Without a live stack these can never be caught
-# by unit tests. One wrong method name → silent failure in production.
+# Confirms pos.order.send_partner_bus_event exists with the right signature.
+# Without a live stack this is invisible to unit tests.
 
 class TestBusMethodsExist:
     def test_send_partner_bus_event_exists_and_returns_true(self, partner):
@@ -189,50 +188,26 @@ class TestBusMethodsExist:
             "method may be missing or have the wrong signature"
         )
 
-    def test_kassa_notify_partner_update_exists_and_returns_int(self, partner):
+    def test_send_partner_bus_event_with_zero_amount(self, partner):
         uid, models, pid, _ = partner
         result = _rpc(
-            models, uid, 'pos.session', 'kassa_notify_partner_update',
-            [[pid]],
+            models, uid, 'pos.order', 'send_partner_bus_event',
+            [pid, 0.0, 'paid', 'Zero Amount Test'],
         )
-        assert isinstance(result, int), (
-            f"kassa_notify_partner_update should return int (session count), got {type(result)}"
-        )
-
-    def test_kassa_notify_partner_update_accepts_multiple_ids(self, odoo):
-        uid, models = odoo
-        result = _rpc(models, uid, 'pos.session', 'kassa_notify_partner_update', [[1, 2, 3]])
-        assert isinstance(result, int)
-        assert result >= 0
-
-    def test_kassa_notify_partner_update_returns_zero_for_empty_ids(self, odoo):
-        uid, models = odoo
-        result = _rpc(models, uid, 'pos.session', 'kassa_notify_partner_update', [[]])
-        assert result == 0
+        assert result is True
 
 
 # ── Open session bus dispatch tests ───────────────────────────────────────────
-# These are the most valuable tests: they prove that with a real open POS session
-# the bus event actually reaches it. This is what unit tests can never verify.
+# These prove that with a real open POS session the bus event fires correctly.
+# The fixture opens a session if none is open, reuses it if one already exists.
 
 class TestBusDispatchWithOpenSession:
-    def test_notify_reaches_at_least_one_open_session(self, partner, pos_session):
-        """
-        The critical assertion: kassa_notify_partner_update must return >= 1
-        when a session is open. A return of 0 means the partner update was
-        dispatched but no POS session received it — the cashier UI is stale.
-        """
-        uid, models, pid, _ = partner
-        notified = _rpc(
-            models, uid, 'pos.session', 'kassa_notify_partner_update',
-            [[pid]],
-        )
-        assert notified >= 1, (
-            f"Expected >= 1 open session to be notified, got {notified}. "
-            "Partner updates are NOT reaching the POS — the cashier UI will be stale."
-        )
-
     def test_send_partner_bus_event_fires_with_open_session(self, partner, pos_session):
+        """
+        send_partner_bus_event must succeed and return True with an open session.
+        This is the single call _publish_partner_bus_event makes — if this works,
+        the POS JS receives the event and fetches the updated partner.
+        """
         uid, models, pid, _ = partner
         result = _rpc(
             models, uid, 'pos.order', 'send_partner_bus_event',
@@ -240,30 +215,17 @@ class TestBusDispatchWithOpenSession:
         )
         assert result is True
 
-    def test_full_dual_bus_dispatch_matches_publish_partner_bus_event(self, partner, pos_session):
+    def test_bus_dispatch_matches_publish_partner_bus_event(self, partner, pos_session):
         """
-        Fires both calls in the exact same order and with the same argument
-        shapes as receiver._publish_partner_bus_event. Both must succeed and
-        the session count must be >= 1.
-
-        This is the integration equivalent of test_calls_pos_order_send_partner_bus_event
-        and test_calls_pos_session_kassa_notify_partner_update combined.
+        Fires the call with the exact same arg shape as receiver._publish_partner_bus_event.
+        This is the integration equivalent of the unit test suite for that function.
         """
         uid, models, pid, _ = partner
-
-        # Call 1 — matches receiver.py line: pos.order.send_partner_bus_event
-        bus_ok = _rpc(
+        result = _rpc(
             models, uid, 'pos.order', 'send_partner_bus_event',
-            [pid, 15.0, 'unpaid', 'Dual Dispatch Test'],
+            [pid, 15.0, 'unpaid', 'Dispatch Test'],
         )
-        assert bus_ok is True
-
-        # Call 2 — matches receiver.py line: pos.session.kassa_notify_partner_update
-        notified = _rpc(
-            models, uid, 'pos.session', 'kassa_notify_partner_update',
-            [[pid]],
-        )
-        assert notified >= 1
+        assert result is True
 
     def test_new_partner_findable_by_x_user_id_immediately(self, partner, pos_session):
         """
@@ -280,15 +242,13 @@ class TestBusDispatchWithOpenSession:
         assert found, "Partner not findable by x_user_id — QR scan lookup is broken"
         assert found[0]['id'] == pid
 
-    def test_session_loader_includes_x_outstanding_amount(self, odoo, pos_session):
+    def test_session_loader_includes_kassa_fields(self, odoo, pos_session):
         """
-        _loader_params_res_partner must include x_outstanding_amount so the
-        outstanding-amount badge is visible on session open without an extra
-        RPC. If this field is missing the badge is always blank at session start.
+        All Kassa custom fields must be readable — they are included in the
+        session loader so they arrive in the POS frontend on open. If any field
+        is missing the badge/session data is invisible at session start.
         """
         uid, models = odoo
-        # Verify indirectly: read a partner with that field via the object layer.
-        # execute_kw raises an Odoo error if the field doesn't exist on the model.
         data = _rpc(
             models, uid, 'res.partner', 'search_read',
             [[['id', '>', 0]]],
@@ -298,10 +258,10 @@ class TestBusDispatchWithOpenSession:
         )
         assert isinstance(data, list)
 
-    def test_partner_update_persists_after_bus_dispatch(self, partner, pos_session):
+    def test_partner_data_persists_after_bus_dispatch(self, partner, pos_session):
         """
-        Write new values, fire the bus, then re-read. Confirms the data in Odoo
-        is the source of truth that the bus event references.
+        Write values, fire the bus event, then re-read. Confirms the data the
+        POS JS fetches after receiving the bus event is correct.
         """
         uid, models, pid, _ = partner
         _rpc(models, uid, 'res.partner', 'write', [[pid], {
@@ -312,7 +272,6 @@ class TestBusDispatchWithOpenSession:
 
         _rpc(models, uid, 'pos.order', 'send_partner_bus_event',
              [pid, 99.99, 'unpaid', 'Persist Test'])
-        _rpc(models, uid, 'pos.session', 'kassa_notify_partner_update', [[pid]])
 
         data = _rpc(models, uid, 'res.partner', 'read', [[pid]], {
             'fields': ['x_outstanding_amount', 'x_payment_status', 'x_session_title'],
