@@ -15,7 +15,6 @@ import defusedxml.xmlrpc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
-import sender
 from monitoring import monitor
 
 defusedxml.xmlrpc.monkey_patch()
@@ -421,6 +420,8 @@ def topup_wallet(
         new_balance = float(new_balance_raw)
 
         _odoo("pos.order", "action_increment_lease_tx_count", [partner_id])
+
+        import sender  # lazy: requires RABBIT_* env vars only when this tool is called
 
         # Issue 2: Publish wallet_balance_update to kassa.exchange so external systems
         # (CRM, Frontend) are informed of this admin-initiated top-up.
