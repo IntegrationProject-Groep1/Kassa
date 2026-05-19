@@ -30,7 +30,6 @@ with FIFO eviction.
 import json
 import os
 import logging
-import threading
 import pika
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
@@ -203,7 +202,8 @@ def _publish_partner_bus_event(
         logger.info("[BUS] ✓ Partner synced to %s POS session(s): partner_id=%s", notified, partner_id)
     except Exception as e:
         logger.warning("[BUS] Could not sync partner to POS sessions for partner_id=%s: %s", partner_id, e)
-        monitor.log("warning", "system_error", f"POS session partner sync failed for partner {partner_id}: {str(e)[:300]}")
+        monitor.log("warning", "system_error",
+                    f"POS session partner sync failed for partner {partner_id}: {str(e)[:300]}")
 
 
 # ── Business logic per message type ───────────────────────────────────────────
@@ -829,16 +829,12 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
                 identity_uuid, add_amount, new_balance, reason)
 
 
-_EVENT_ENDED_DELAY_RAW = os.environ.get("EVENT_ENDED_LEASE_RETURN_DELAY")
-_EVENT_ENDED_DELAY = int(_EVENT_ENDED_DELAY_RAW) if _EVENT_ENDED_DELAY_RAW else (3 * 60 * 60)
-_event_ended_timer: threading.Timer | None = None
-_event_ended_timer_lock = threading.Lock()
 _pika_conn: pika.BlockingConnection | None = None
 
 
 def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
     """Return all active leases to CRM. Runs in the main pika IO thread via add_callback_threadsafe."""
-    logger.info("[EVENT_ENDED] Debounce timer fired — returning all active leases")
+    logger.info("[EVENT_ENDED] Returning all active leases")
 
     active_partners: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -880,36 +876,13 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
 
 
 def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Session ended. Debounce: only return all active leases after no new
-    event_ended is received for EVENT_ENDED_LEASE_RETURN_DELAY seconds (default 3h).
-    This handles the case where event_ended is sent after each speaker session,
-    not just at the end of the full event.
-    """
-    global _event_ended_timer
-
+    """Event ended — immediately return all active leases to CRM."""
     body = root.find("body")
     if body is None:
         raise ValueError("event_ended: <body> missing")
     session_id = (body.findtext("session_id") or "").strip()
-    logger.info(
-        "[EVENT_ENDED] Received (session_id=%s) — (re)starting %dh lease-return timer",
-        session_id, _EVENT_ENDED_DELAY // 3600,
-    )
-
-    with _event_ended_timer_lock:
-        if _event_ended_timer is not None:
-            _event_ended_timer.cancel()
-        # Schedule via add_callback_threadsafe so the actual Odoo/RabbitMQ work
-        # runs in the main pika IO thread — BlockingConnection is not thread-safe.
-
-        def _fire():
-            if _pika_conn and not _pika_conn.is_closed:
-                _pika_conn.add_callback_threadsafe(lambda: _do_return_all_leases(uid, models))
-            else:
-                logger.error("[EVENT_ENDED] Cannot schedule lease return: pika connection unavailable")
-        _event_ended_timer = threading.Timer(_EVENT_ENDED_DELAY, _fire)
-        _event_ended_timer.daemon = True
-        _event_ended_timer.start()
+    logger.info("[EVENT_ENDED] Received (session_id=%s) — returning all active leases", session_id)
+    _do_return_all_leases(uid, models)
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -1535,7 +1508,8 @@ def start_listening():
         logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", EXCHANGE_NAME)
     except Exception as e:
         logger.warning("[RECEIVER] Could not bind Frontend session routing keys: %s", e)
-        monitor.log("warning", "session", f"Could not bind Frontend session routing keys on {EXCHANGE_NAME}: {str(e)[:300]}")
+        monitor.log("warning", "session",
+                    f"Could not bind Frontend session routing keys on {EXCHANGE_NAME}: {str(e)[:300]}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
