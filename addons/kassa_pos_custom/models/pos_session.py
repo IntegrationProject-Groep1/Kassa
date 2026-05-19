@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import models
+from odoo import api, models
 
 _logger = logging.getLogger(__name__)
 
@@ -79,4 +79,48 @@ class PosSession(models.Model):
                         "[KASSA] Could not notify POS session %s: %s", session.name, exc
                     )
 
+        return notified
+
+    @api.model
+    def kassa_notify_partner_update(self, partner_ids):
+        """Push updated partner data to every open POS session via the config channel.
+
+        Called via XML-RPC by the integration service after a partner is created
+        or updated so the POS frontend picks up the new partner data without
+        requiring a manual session reload.
+
+        Uses the same fields the session loader sends on open, so the partner
+        appears immediately in the partner-list with all Kassa custom fields
+        (outstanding amount, session title, wallet balance, etc.).
+
+        Returns the number of sessions notified.
+        """
+        open_sessions = self.env['pos.session'].search([('state', '=', 'opened')])
+        if not open_sessions:
+            return 0
+
+        params = open_sessions[0]._loader_params_res_partner()
+        fields = params.get('search_params', {}).get('fields', [])
+
+        partners = self.env['res.partner'].search_read(
+            [('id', 'in', partner_ids)],
+            fields=fields,
+        )
+        if not partners:
+            return 0
+
+        notified = 0
+        for session in open_sessions:
+            try:
+                session._notify('SYNC_PARTNER_WRITE', {'res.partner': partners})
+                notified += 1
+                _logger.info(
+                    "[KASSA] Pushed SYNC_PARTNER_WRITE to POS session %s (partner_ids=%s)",
+                    session.name, partner_ids,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "[KASSA] Could not push partner to POS session %s: %s",
+                    session.name, exc,
+                )
         return notified
