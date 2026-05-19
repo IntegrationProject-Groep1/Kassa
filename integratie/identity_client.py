@@ -23,7 +23,10 @@ import pika
 from defusedxml import ElementTree as DET
 from lxml import etree
 
-from sender import RABBIT_HOST, RABBIT_USER, RABBIT_PASS, RABBIT_PORT, RABBIT_VHOST
+from config_utils import require_env, parse_rabbit_port
+
+RABBIT_PORT = parse_rabbit_port()
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +122,10 @@ def connect_to_rabbitmq():
 
     Exposed at module level so tests can monkeypatch `identity_client.connect_to_rabbitmq`.
     """
-    credentials = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    env = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
+    credentials = pika.PlainCredentials(env["RABBIT_USER"], env["RABBIT_PASS"])
     params = pika.ConnectionParameters(
-        host=RABBIT_HOST,
+        host=env["RABBIT_HOST"],
         port=RABBIT_PORT,
         virtual_host=RABBIT_VHOST,
         credentials=credentials,

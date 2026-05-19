@@ -62,12 +62,8 @@ class XSDValidationError(Exception):
 logger = logging.getLogger(__name__)
 
 
-# Configuration
-_rabbit_env = require_env("RABBIT_HOST", "RABBIT_USER", "RABBIT_PASS")
-RABBIT_HOST = _rabbit_env["RABBIT_HOST"]
-RABBIT_USER = _rabbit_env["RABBIT_USER"]
-RABBIT_PASS = _rabbit_env["RABBIT_PASS"]
-
+# Configuration — RABBIT_HOST/USER/PASS are validated lazily in _get_connection(),
+# so the module can be imported without them (only write-path tools need RabbitMQ).
 RABBIT_PORT = parse_rabbit_port()
 RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
 EXCHANGE_NAME = os.environ.get("RABBIT_EXCHANGE", "kassa.exchange")
