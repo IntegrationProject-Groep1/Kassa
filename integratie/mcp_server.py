@@ -15,7 +15,6 @@ import defusedxml.xmlrpc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
-import sender
 from monitoring import monitor
 
 defusedxml.xmlrpc.monkey_patch()
@@ -371,6 +370,7 @@ def topup_wallet(
     Only use this when the wallet is Leased (CRM Wallet_Status__c='Leased') — otherwise
     the balance is owned by CRM and Odoo is not the source of truth.
     """
+    import sender  # lazy: requires RABBIT_* env vars — fail before any Odoo writes
     if not reason or not reason.strip():
         return {"error": "A reason is required for a wallet top-up.", "success": False}
     try:
