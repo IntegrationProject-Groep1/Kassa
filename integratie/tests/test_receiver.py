@@ -1057,6 +1057,8 @@ class TestProcessMessage:
 # ── _publish_partner_bus_event ─────────────────────────────────────────────────
 
 class TestPublishPartnerBusEvent:
+    # ── call structure ────────────────────────────────────────────────────────
+
     def test_calls_pos_order_send_partner_bus_event(self, odoo):
         uid, models = odoo
         models.execute_kw.return_value = True
@@ -1071,11 +1073,196 @@ class TestPublishPartnerBusEvent:
         assert args[2] == "unpaid"    # payment_status
         assert args[3] == "Alice"     # name
 
+    def test_calls_pos_session_kassa_notify_partner_update(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 42, 25.0, "unpaid", "Alice")
+
+        call = models.execute_kw.call_args_list[1]
+        assert call[0][3] == "pos.session"
+        assert call[0][4] == "kassa_notify_partner_update"
+        # partner_id is passed as a list so Odoo treats it as a recordset
+        assert call[0][5] == [[42]]
+
+    def test_exactly_two_calls_when_both_succeed(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 7, 0.0, "paid", "Bob")
+
+        assert models.execute_kw.call_count == 2
+
+    def test_pos_order_called_before_pos_session(self, odoo):
+        uid, models = odoo
+        call_order = []
+        def track(db, uid, pwd, model, method, *a, **kw):
+            call_order.append(model)
+            return True
+        models.execute_kw.side_effect = track
+        receiver._publish_partner_bus_event(uid, models, 1, 10.0, "unpaid", "X")
+
+        assert call_order == ["pos.order", "pos.session"]
+
+    def test_correct_partner_id_forwarded_to_both_calls(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 99, 5.0, "paid", "Y")
+
+        pos_order_args = models.execute_kw.call_args_list[0][0][5]
+        pos_session_args = models.execute_kw.call_args_list[1][0][5]
+        assert pos_order_args[0] == 99
+        assert pos_session_args == [[99]]
+
+    def test_zero_amount_forwarded_correctly(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 5, 0.0, "paid", "Free")
+
+        args = models.execute_kw.call_args_list[0][0][5]
+        assert args[1] == 0.0
+
+    def test_paid_status_forwarded_correctly(self, odoo):
+        uid, models = odoo
+        models.execute_kw.return_value = True
+        receiver._publish_partner_bus_event(uid, models, 5, 50.0, "paid", "Settled")
+
+        args = models.execute_kw.call_args_list[0][0][5]
+        assert args[2] == "paid"
+
+    # ── resilience: independent try/except blocks ─────────────────────────────
+
     def test_does_not_raise_on_error(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = Exception("bus down")
         # Must not raise — best-effort publish
         receiver._publish_partner_bus_event(uid, models, 1, 0.0, "paid", "Bob")
+
+    def test_pos_session_still_called_when_pos_order_raises(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [Exception("pos.order down"), True]
+        receiver._publish_partner_bus_event(uid, models, 3, 10.0, "unpaid", "Crash")
+
+        assert models.execute_kw.call_count == 2
+        session_call = models.execute_kw.call_args_list[1]
+        assert session_call[0][3] == "pos.session"
+
+    def test_pos_order_still_called_once_when_pos_session_raises(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [True, Exception("session bus down")]
+        receiver._publish_partner_bus_event(uid, models, 8, 20.0, "unpaid", "Partial")
+
+        assert models.execute_kw.call_count == 2
+        order_call = models.execute_kw.call_args_list[0]
+        assert order_call[0][3] == "pos.order"
+
+    def test_both_calls_attempted_when_both_raise(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            Exception("order bus down"),
+            Exception("session bus down"),
+        ]
+        # Neither exception propagates
+        receiver._publish_partner_bus_event(uid, models, 10, 0.0, "paid", "Ghost")
+
+        assert models.execute_kw.call_count == 2
+
+    # ── integration: bus events fired from process_new_registration ───────────
+
+    def test_bus_fired_after_partner_created(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],    # partner not found
+            77,    # create → partner_id = 77
+            True,  # pos.order bus
+            True,  # pos.session bus
+        ]
+        root = ET.fromstring(
+            "<message><header/><body><customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>new@test.com</email>"
+            "<contact><first_name>New</first_name><last_name>Guy</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><status>unpaid</status><amount>0.00</amount></payment_due>"
+            "</customer></body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+        assert bus_call[0][5][0] == 77   # partner_id from create
+
+    def test_bus_fired_after_partner_updated(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 55, "name": "Alice", "x_user_id": "550e8400-e29b-41d4-a716-446655440099",
+              "x_session_title": "[]"}],
+            True,  # write
+            True,  # pos.order bus
+            True,  # pos.session bus
+        ]
+        root = ET.fromstring(
+            "<message><header/><body><customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440099</identity_uuid>"
+            "<email>alice@test.com</email>"
+            "<contact><first_name>Alice</first_name><last_name>Smith</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><status>unpaid</status><amount>15.00</amount></payment_due>"
+            "</customer></body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        bus_call = models.execute_kw.call_args_list[2]
+        assert bus_call[0][3] == "pos.order"
+        assert bus_call[0][4] == "send_partner_bus_event"
+        assert bus_call[0][5][0] == 55   # partner_id from existing
+
+    def test_session_notify_carries_correct_partner_id_after_create(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [],   # not found
+            88,   # create → 88
+            True, # pos.order
+            True, # pos.session
+        ]
+        root = ET.fromstring(
+            "<message><header/><body><customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440088</identity_uuid>"
+            "<email>x@x.com</email>"
+            "<contact><first_name>X</first_name><last_name>Y</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><status>unpaid</status><amount>0.00</amount></payment_due>"
+            "</customer></body></message>"
+        )
+        receiver.process_new_registration(root, uid, models)
+
+        session_call = models.execute_kw.call_args_list[3]
+        assert session_call[0][3] == "pos.session"
+        assert session_call[0][5] == [[88]]
+
+    def test_bus_not_blocked_by_write_failure(self, odoo):
+        """If the Odoo write fails, process_new_registration should propagate the
+        error before reaching the bus — this verifies the bus is not called when
+        the preceding write raises, keeping state consistent."""
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 5, "name": "Err", "x_user_id": "550e8400-e29b-41d4-a716-446655440005",
+              "x_session_title": None}],
+            Exception("Odoo write failed"),
+        ]
+        root = ET.fromstring(
+            "<message><header/><body><customer>"
+            "<identity_uuid>550e8400-e29b-41d4-a716-446655440005</identity_uuid>"
+            "<email>err@test.com</email>"
+            "<contact><first_name>Err</first_name><last_name>Test</last_name></contact>"
+            "<type>private</type>"
+            "<payment_due><status>unpaid</status><amount>5.00</amount></payment_due>"
+            "</customer></body></message>"
+        )
+        with pytest.raises(Exception, match="Odoo write failed"):
+            receiver.process_new_registration(root, uid, models)
+
+        # Only 2 calls: search_read + write(failed) — no bus calls
+        assert models.execute_kw.call_count == 2
 
 
 # ── process_new_registration — payment fields ──────────────────────────────────
