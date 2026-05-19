@@ -82,7 +82,7 @@ def pos_session(odoo):
 
     existing = _rpc(
         models, uid, 'pos.session', 'search_read',
-        [[['state', '=', 'opened']]],
+        [[['state', '!=', 'closed']]],
         {'fields': ['id'], 'limit': 1},
     )
     if existing:
