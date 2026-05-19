@@ -87,7 +87,7 @@ def pos_session(odoo):
 
     existing = _rpc(
         models, uid, 'pos.session', 'search_read',
-        [[[['config_id', '=', config_id], ['state', '=', 'opened']]]],
+        [[['config_id', '=', config_id], ['state', '=', 'opened']]],
         {'fields': ['id'], 'limit': 1},
     )
     if existing:
@@ -156,7 +156,7 @@ class TestCustomFields:
         uid, models, pid, test_uuid = partner
         found = _rpc(
             models, uid, 'res.partner', 'search_read',
-            [[[['x_user_id', '=', test_uuid]]]],
+            [[['x_user_id', '=', test_uuid]]],
             {'fields': ['id'], 'limit': 1},
         )
         assert found and found[0]['id'] == pid
@@ -274,7 +274,7 @@ class TestBusDispatchWithOpenSession:
         uid, models, pid, test_uuid = partner
         found = _rpc(
             models, uid, 'res.partner', 'search_read',
-            [[[['x_user_id', '=', test_uuid]]]],
+            [[['x_user_id', '=', test_uuid]]],
             {'fields': ['id', 'x_outstanding_amount'], 'limit': 1},
         )
         assert found, "Partner not findable by x_user_id — QR scan lookup is broken"
@@ -291,7 +291,7 @@ class TestBusDispatchWithOpenSession:
         # execute_kw raises an Odoo error if the field doesn't exist on the model.
         data = _rpc(
             models, uid, 'res.partner', 'search_read',
-            [[[['id', '>', 0]]]],
+            [[['id', '>', 0]]],
             {'fields': ['x_outstanding_amount', 'x_payment_status', 'x_session_title',
                         'x_user_id', 'x_badge_id', 'x_lease_active', 'x_lease_id'],
              'limit': 1},
