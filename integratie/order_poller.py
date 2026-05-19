@@ -829,7 +829,8 @@ class OrderPoller:
                     f"❌ CRITICAL: Could not trace refund to original order for traceability (Order {order_id}): {e}"
                 )
                 monitor.log("error", "refund",
-                            f"Refund correlation failed for order {order_id} — CRM cannot link refund to original payment: {str(e)[:300]}")
+                            f"Refund correlation failed for order {order_id}"
+                            f" — CRM cannot link refund to original payment: {str(e)[:300]}")
 
         # Build session_id lookup map from partner's x_session_title (already in customer_info)
         session_title_map: dict[str, str] = {}
@@ -1230,7 +1231,8 @@ class OrderPoller:
                     "[POS_SESSION] Could not send session_view_request for session %d: %s", sid, e
                 )
                 monitor.log("warning", "session",
-                            f"session_view_request failed for POS session {sid} (correlation_id={corr}): {str(e)[:300]}")
+                            f"session_view_request failed for POS session {sid}"
+                            f" (correlation_id={corr}): {str(e)[:300]}")
 
     def poll_badge_assignments(self):
         """
