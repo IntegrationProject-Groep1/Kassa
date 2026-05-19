@@ -1062,7 +1062,7 @@ class TestPublishPartnerBusEvent:
         models.execute_kw.return_value = True
         receiver._publish_partner_bus_event(uid, models, 42, 25.0, "unpaid", "Alice")
 
-        call = models.execute_kw.call_args
+        call = models.execute_kw.call_args_list[0]
         assert call[0][3] == "pos.order"
         assert call[0][4] == "send_partner_bus_event"
         args = call[0][5]
