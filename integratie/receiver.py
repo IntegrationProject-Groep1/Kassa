@@ -30,7 +30,6 @@ with FIFO eviction.
 import json
 import os
 import logging
-import threading
 import pika
 import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
@@ -170,14 +169,14 @@ def _publish_partner_bus_event(
     uid: int, models, partner_id: int,
     outstanding_amount: float, payment_status: str, name: str,
 ) -> None:
-    """
-    Publish a kassa_partner_update bus event via the PosOrder XML-RPC wrapper.
+    """Publish a kassa_partner_update bus event so the POS frontend updates immediately.
 
-    In Odoo 17 the bus.bus._sendone method is private and cannot be called
-    directly from an external XML-RPC session.  The public wrapper
-    pos.order.send_partner_bus_event is defined in kassa_pos_custom and
-    provides the bridge.  A failure here is non-fatal — the partner data is
-    already written to Odoo, only the real-time POS update is delayed.
+    The POS JS subscribes to the kassa_partner_update channel and on receipt
+    fetches the full partner record (including all Kassa custom fields) and
+    upserts it into the local partner list — covering both updates to existing
+    partners and brand-new partners appearing mid-session.
+
+    Non-fatal: partner data is already persisted in Odoo before this is called.
     """
     try:
         models.execute_kw(
@@ -188,6 +187,8 @@ def _publish_partner_bus_event(
         logger.info("[BUS] ✓ Published partner update: partner_id=%s", partner_id)
     except Exception as e:
         logger.warning("[BUS] Could not publish bus event for partner_id=%s: %s", partner_id, e)
+        monitor.log("warning", "system_error",
+                    f"POS bus event failed for partner {partner_id}: {str(e)[:300]}")
 
 
 # ── Business logic per message type ───────────────────────────────────────────
@@ -813,16 +814,12 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
                 identity_uuid, add_amount, new_balance, reason)
 
 
-_EVENT_ENDED_DELAY_RAW = os.environ.get("EVENT_ENDED_LEASE_RETURN_DELAY")
-_EVENT_ENDED_DELAY = int(_EVENT_ENDED_DELAY_RAW) if _EVENT_ENDED_DELAY_RAW else (3 * 60 * 60)
-_event_ended_timer: threading.Timer | None = None
-_event_ended_timer_lock = threading.Lock()
 _pika_conn: pika.BlockingConnection | None = None
 
 
 def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
     """Return all active leases to CRM. Runs in the main pika IO thread via add_callback_threadsafe."""
-    logger.info("[EVENT_ENDED] Debounce timer fired — returning all active leases")
+    logger.info("[EVENT_ENDED] Returning all active leases")
 
     active_partners: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -864,36 +861,13 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
 
 
 def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Session ended. Debounce: only return all active leases after no new
-    event_ended is received for EVENT_ENDED_LEASE_RETURN_DELAY seconds (default 3h).
-    This handles the case where event_ended is sent after each speaker session,
-    not just at the end of the full event.
-    """
-    global _event_ended_timer
-
+    """Event ended — immediately return all active leases to CRM."""
     body = root.find("body")
     if body is None:
         raise ValueError("event_ended: <body> missing")
     session_id = (body.findtext("session_id") or "").strip()
-    logger.info(
-        "[EVENT_ENDED] Received (session_id=%s) — (re)starting %dh lease-return timer",
-        session_id, _EVENT_ENDED_DELAY // 3600,
-    )
-
-    with _event_ended_timer_lock:
-        if _event_ended_timer is not None:
-            _event_ended_timer.cancel()
-        # Schedule via add_callback_threadsafe so the actual Odoo/RabbitMQ work
-        # runs in the main pika IO thread — BlockingConnection is not thread-safe.
-
-        def _fire():
-            if _pika_conn and not _pika_conn.is_closed:
-                _pika_conn.add_callback_threadsafe(lambda: _do_return_all_leases(uid, models))
-            else:
-                logger.error("[EVENT_ENDED] Cannot schedule lease return: pika connection unavailable")
-        _event_ended_timer = threading.Timer(_EVENT_ENDED_DELAY, _fire)
-        _event_ended_timer.daemon = True
-        _event_ended_timer.start()
+    logger.info("[EVENT_ENDED] Received (session_id=%s) — returning all active leases", session_id)
+    _do_return_all_leases(uid, models)
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -1150,6 +1124,15 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
 
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info("[SESSION_CREATED] Bus notification sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_CREATED] Could not push bus notification: %s", exc)
+
 
 def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_updated from Frontend.
@@ -1178,6 +1161,15 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
 
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
+
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info("[SESSION_UPDATED] Bus notification sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_UPDATED] Could not push bus notification: %s", exc)
 
 
 def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -1394,6 +1386,7 @@ def start_listening():
                 logger.info("[RECEIVER] Subscribed to user.events fanout via queue %s", ue_queue)
             except Exception as e:
                 logger.warning("[RECEIVER] Could not bind to user.events fanout: %s", e)
+                monitor.log("warning", "system_error", f"Could not bind to user.events fanout: {str(e)[:300]}")
         dead_letter_exchange = DLX_NAME
         if DLX_NAME != EXCHANGE_NAME:
             channel.exchange_declare(exchange=DLX_NAME, exchange_type="direct", durable=True)
@@ -1439,6 +1432,9 @@ def start_listening():
                 RETRY_QUEUE,
                 getattr(exc, "reply_text", ""),
             )
+            monitor.log("error", "system_error",
+                        f"RabbitMQ topology conflict (406) on exchange={EXCHANGE_NAME} "
+                        f"queue={QUEUE_NAME}: {getattr(exc, 'reply_text', '')[:300]}")
             # Try to recover: open a fresh connection/channel and skip topology setup
             try:
                 try:
@@ -1497,6 +1493,8 @@ def start_listening():
         logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", EXCHANGE_NAME)
     except Exception as e:
         logger.warning("[RECEIVER] Could not bind Frontend session routing keys: %s", e)
+        monitor.log("warning", "session",
+                    f"Could not bind Frontend session routing keys on {EXCHANGE_NAME}: {str(e)[:300]}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)

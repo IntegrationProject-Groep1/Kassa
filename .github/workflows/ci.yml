@@ -78,13 +78,17 @@ jobs:
           docker compose logs
           exit 1
 
-      - name: Run Integration Tests
+      - name: Run Integration Tests (bus + custom fields)
         run: docker exec kassa_integratie python tools/run_integration_tests.py
 
       - name: Run Identity RPC Integration Tests
         run: |
           docker exec kassa_integratie pip install pytest --quiet
           docker exec kassa_integratie python -m pytest tests/test_identity_rpc_integration.py -v
+
+      - name: Run Bus Integration Tests
+        run: |
+          docker exec kassa_integratie python -m pytest tests/test_bus_integration.py -v --tb=short
 
       - name: Cleanup
         if: always()
