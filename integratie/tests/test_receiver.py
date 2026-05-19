@@ -1094,6 +1094,7 @@ class TestPublishPartnerBusEvent:
     def test_pos_order_called_before_pos_session(self, odoo):
         uid, models = odoo
         call_order = []
+
         def track(db, uid, pwd, model, method, *a, **kw):
             call_order.append(model)
             return True
@@ -1221,8 +1222,8 @@ class TestPublishPartnerBusEvent:
         models.execute_kw.side_effect = [
             [],   # not found
             88,   # create → 88
-            True, # pos.order
-            True, # pos.session
+            True,  # pos.order
+            True,  # pos.session
         ]
         root = ET.fromstring(
             "<message><header/><body><customer>"
