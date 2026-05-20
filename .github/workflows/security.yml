@@ -39,7 +39,8 @@ jobs:
       - name: Run pip-audit (Dependency Vulnerability Check)
         run: |
           # Scan requirements.txt for known vulnerable packages
-          pip-audit -r integratie/requirements.txt
+          # PYSEC-2025-183: transitive PyJWT vulnerability via fastmcp — no fix available yet
+          pip-audit -r integratie/requirements.txt --ignore-vuln PYSEC-2025-183
 
   secrets:
     name: Secret Scanning
