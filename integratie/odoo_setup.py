@@ -243,11 +243,10 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
                  "button_immediate_install", [[module_id]])
         else:
-            # Always upgrade so new JS/XML/controller files are picked up
-            # when the pod restarts with fresh code from the init container.
-            print(f"Upgrading addon '{addon_name}' to register new assets...", flush=True)
-            _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
-                 "button_immediate_upgrade", [[module_id]])
+            # Odoo already handles upgrades via --update=kassa_pos_custom on startup.
+            # Calling button_immediate_upgrade here triggers a registry reload that
+            # wipes all active sessions, causing login loops for logged-in users.
+            print(f"Addon '{addon_name}' already installed — skipping upgrade (handled by --update flag).", flush=True)
     return True
 
 
