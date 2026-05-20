@@ -552,7 +552,8 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
             )
             logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
             monitor.log("info", "badge",
-                        f"badge_scanned: wallet_lease_request sent | identity_uuid={identity_uuid} | location={location}")
+                        f"badge_scanned: wallet_lease_request sent | identity_uuid={identity_uuid}"
+                        f" | location={location}")
         else:
             logger.info("[BADGE_SCANNED] check_in: lease already active for %s, skipping", identity_uuid)
         if location == "session":
@@ -821,7 +822,8 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
     logger.info("[REMOTE_TOPUP] ✅ Balance updated for %s: +%.2f → %.2f (reason=%s)",
                 identity_uuid, add_amount, new_balance, reason)
     monitor.log("info", "wallet",
-                f"wallet_remote_topup processed | identity_uuid={identity_uuid} | +{add_amount:.2f} → {new_balance:.2f}")
+                f"wallet_remote_topup processed | identity_uuid={identity_uuid}"
+                f" | +{add_amount:.2f} → {new_balance:.2f}")
 
 
 _pika_conn: pika.BlockingConnection | None = None
@@ -994,7 +996,8 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
         session_count, correlation_id,
     )
     monitor.log("info", "session",
-                f"user_sessions_response processed | {session_count} session(s) ensured | correlation_id={correlation_id}")
+                f"user_sessions_response processed | {session_count} session(s) ensured"
+                f" | correlation_id={correlation_id}")
 
     try:
         notified = models.execute_kw(
@@ -1213,8 +1216,9 @@ def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) ->
         "[SESSION_DELETED] Session id=%s removed from system%s — POS product kept.",
         session_id, f" (reason: {reason})" if reason else "",
     )
+    reason_suffix = f" | reason={reason}" if reason else ""
     monitor.log("info", "session",
-                f"session_deleted received | session_id={session_id} | POS product kept{f' | reason={reason}' if reason else ''}")
+                f"session_deleted received | session_id={session_id} | POS product kept{reason_suffix}")
 
 
 # ── Central message processing ─────────────────────────────────────────────────
