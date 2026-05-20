@@ -238,7 +238,9 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             [[module_id]], {"fields": ["state"]}
         )
         state = module_state[0].get("state") if module_state else None
-        if state != "installed":
+        if state == "installed":
+            print(f"Addon '{addon_name}' is already installed — skipping upgrade.", flush=True)
+        elif state in ("to upgrade", "to install", "uninstalled"):
             print(f"Installing addon '{addon_name}'...", flush=True)
             _rpc(models, odoo_db, uid, odoo_pass, "ir.module.module",
                  "button_immediate_install", [[module_id]])
@@ -246,7 +248,7 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
             # Odoo already handles upgrades via --update=kassa_pos_custom on startup.
             # Calling button_immediate_upgrade here triggers a registry reload that
             # wipes all active sessions, causing login loops for logged-in users.
-            print(f"Addon '{addon_name}' already installed — skipping upgrade (handled by --update flag).", flush=True)
+            print(f"Addon '{addon_name}' is in state '{state}' — skipping.", flush=True)
     return True
 
 
