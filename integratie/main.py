@@ -28,7 +28,6 @@ from odoo_setup import (
     setup_database,
     ensure_pos_installed,
     ensure_kassa_addons,
-    ensure_custom_fields,
     ensure_tax_settings,
     ensure_pos_categories,
     ensure_payment_methods,
@@ -136,9 +135,6 @@ def main():
 
     # Step 3b: Auto-install/upgrade Kassa custom addons
     ensure_kassa_addons(odoo_url, odoo_db, odoo_user, odoo_pass)
-
-    # Step 4: Ensure custom Odoo fields exist (x_user_id, x_badge_id, etc.)
-    ensure_custom_fields(odoo_url, odoo_db, odoo_user, odoo_pass)
 
     # Step 5: Configure tax settings globally
     tax_map = ensure_tax_settings(odoo_url, odoo_db, odoo_user, odoo_pass)

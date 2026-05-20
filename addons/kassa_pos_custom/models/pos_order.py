@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import models, api
+from odoo import fields, models, api
 from odoo.tools import float_compare
 
 
@@ -19,6 +19,12 @@ class PosOrder(models.Model):
     """
 
     _inherit = 'pos.order'
+
+    x_rabbitmq_sent = fields.Boolean(string="Sent to CRM via RabbitMQ")
+    x_wallet_updated = fields.Boolean(string="Wallet Balance Adjusted")
+    x_payment_message_id = fields.Char(string="CRM Payment Correlation ID")
+    x_invoice_message_id = fields.Char(string="Invoice Request Message ID")
+    x_rabbitmq_error = fields.Text(string="RabbitMQ Integration Error")
 
     @api.model
     def action_process_wallet_payment(self, order_id, partner_id, amount_deducted):
