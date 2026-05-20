@@ -1025,6 +1025,81 @@ def test_get_customer_info_recursion_guard(poller):
     assert info['parent_id'] == (2, 'B')
 
 
+def test_get_customer_info_inherits_vat_from_parent_company(poller):
+    """Company employee with no VAT should inherit the parent company's VAT."""
+    def mock_execute_kw(*args, **kwargs):
+        model = args[3]
+        params = args[5]
+        if model == 'res.partner':
+            pid = params[0]
+            if pid == 10:
+                # Employee: no VAT, parent_id points to company 20
+                return [{'id': 10, 'name': 'Jan Janssen', 'email': 'jan@acme.be',
+                         'is_company': False, 'parent_id': (20, 'Acme NV'),
+                         'x_badge_id': None, 'x_user_id': 'uuid-jan',
+                         'x_wallet_balance': 0.0, 'vat': '',
+                         'street': False, 'city': False, 'zip': False, 'country_id': False,
+                         'x_lease_active': False, 'x_lease_id': False,
+                         'x_lease_transaction_count': 0, 'x_session_title': '[]',
+                         'x_pending_topup_balance': 0.0}]
+            if pid == 20:
+                # Parent company with VAT
+                return [{'id': 20, 'name': 'Acme NV', 'email': 'info@acme.be',
+                         'is_company': True, 'parent_id': False,
+                         'x_badge_id': None, 'x_user_id': 'uuid-acme',
+                         'x_wallet_balance': 0.0, 'vat': 'BE0123456789',
+                         'street': 'Kerkstraat 1', 'city': 'Gent', 'zip': '9000',
+                         'country_id': (21, 'Belgium'),
+                         'x_lease_active': False, 'x_lease_id': False,
+                         'x_lease_transaction_count': 0, 'x_session_title': '[]',
+                         'x_pending_topup_balance': 0.0}]
+        if model == 'res.country':
+            return [{'code': 'be'}]
+        return []
+
+    poller.models.execute_kw.side_effect = mock_execute_kw
+
+    info = poller.get_customer_info(10)
+
+    assert info['customer_type'] == 'company'
+    assert info['vat'] == 'BE0123456789'
+
+
+def test_get_customer_info_own_vat_not_overridden_by_parent(poller):
+    """If the employee already has their own VAT, the parent's VAT must NOT override it."""
+    def mock_execute_kw(*args, **kwargs):
+        model = args[3]
+        params = args[5]
+        if model == 'res.partner':
+            pid = params[0]
+            if pid == 11:
+                return [{'id': 11, 'name': 'Piet Pieters', 'email': 'piet@acme.be',
+                         'is_company': False, 'parent_id': (20, 'Acme NV'),
+                         'x_badge_id': None, 'x_user_id': 'uuid-piet',
+                         'x_wallet_balance': 0.0, 'vat': 'BE9999999999',
+                         'street': False, 'city': False, 'zip': False, 'country_id': False,
+                         'x_lease_active': False, 'x_lease_id': False,
+                         'x_lease_transaction_count': 0, 'x_session_title': '[]',
+                         'x_pending_topup_balance': 0.0}]
+            if pid == 20:
+                return [{'id': 20, 'name': 'Acme NV', 'email': 'info@acme.be',
+                         'is_company': True, 'parent_id': False,
+                         'x_badge_id': None, 'x_user_id': 'uuid-acme',
+                         'x_wallet_balance': 0.0, 'vat': 'BE0123456789',
+                         'street': False, 'city': False, 'zip': False, 'country_id': False,
+                         'x_lease_active': False, 'x_lease_id': False,
+                         'x_lease_transaction_count': 0, 'x_session_title': '[]',
+                         'x_pending_topup_balance': 0.0}]
+        return []
+
+    poller.models.execute_kw.side_effect = mock_execute_kw
+
+    info = poller.get_customer_info(11)
+
+    assert info['customer_type'] == 'company'
+    assert info['vat'] == 'BE9999999999'  # own VAT preserved, parent's not used
+
+
 # ---------------------------------------------------------------------------
 # _get_pos_config_name
 # ---------------------------------------------------------------------------
