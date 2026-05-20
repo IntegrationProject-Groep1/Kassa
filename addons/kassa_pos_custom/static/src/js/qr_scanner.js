@@ -193,7 +193,7 @@ export class QrScanButton extends Component {
                     order.partner_id = posPartner || partner;
                 }
 
-                if (partner.parent_id) {
+                if (partner.is_company || partner.parent_id) {
                     try {
                         if (order.set_to_invoice) {
                             order.set_to_invoice(true);
@@ -201,7 +201,7 @@ export class QrScanButton extends Component {
                             order.to_invoice = true;
                         }
                     } catch (err) {
-                        console.warn("[Kassa] Could not auto-enable invoice for company member:", err);
+                        console.warn("[Kassa] Could not auto-enable invoice for company partner:", err);
                     }
                 }
             }
