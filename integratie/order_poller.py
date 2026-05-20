@@ -271,6 +271,9 @@ class OrderPoller:
                     # Use parent's country if child has none
                     if not info.get('country_code') and parent_data.get('country_code'):
                         info['country_code'] = parent_data['country_code']
+                    # Use parent's VAT if child has none (company VAT lives on the parent record)
+                    if not (info.get('vat') or "").strip() and (parent_data.get('vat') or "").strip():
+                        info['vat'] = parent_data['vat']
 
             # ── Last-resort x_user_id resolution (Optie C) ────────────────────
             # If the partner has no master_uuid (x_user_id) but does have an email,
