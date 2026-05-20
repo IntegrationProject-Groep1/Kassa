@@ -224,6 +224,32 @@ def _ensure_session_products(env, session_titles: List[str]) -> None:
 
 class KassaQrController(http.Controller):
 
+    @http.route('/web/service-worker.js', type='http', auth='none', csrf=False)
+    def service_worker(self, **kwargs):
+        # Replace Odoo's default service worker with a no-op that clears all
+        # existing caches on activation. The default SW caches 303 redirects
+        # from /web → /web/login whenever a session is invalidated, causing
+        # persistent login loops that survive hard refreshes.
+        js = (
+            "self.addEventListener('install', () => self.skipWaiting());\n"
+            "self.addEventListener('activate', event => {\n"
+            "  event.waitUntil(\n"
+            "    caches.keys()\n"
+            "      .then(keys => Promise.all(keys.map(k => caches.delete(k))))\n"
+            "      .then(() => self.clients.claim())\n"
+            "  );\n"
+            "});\n"
+        )
+        return request.make_response(
+            js,
+            headers=[
+                ('Content-Type', 'application/javascript'),
+                ('Cache-Control', 'no-cache, no-store, must-revalidate'),
+                ('Pragma', 'no-cache'),
+                ('Expires', '0'),
+            ],
+        )
+
     @http.route("/kassa/qr_scan", type="json", auth="user", methods=["POST"], csrf=False,
                 groups="point_of_sale.group_pos_user")
     def qr_scan(self, identity_uuid=None, email=None, **kwargs):
