@@ -213,7 +213,7 @@ export class QrScanButton extends Component {
                 result.status === "lease_requested" || result.status === "not_found_and_created"
                     ? " — saldo wordt opgehaald bij CRM"
                     : result.status === "already_active"
-                    ? ` — saldo: €${balance.toFixed(2)}`
+                    ? ` — saldo: ${this.pos.format_currency(balance)}`
                     : "";
 
             const sessionTitles = (result.sessions || []).map((s) => s.title).filter(Boolean);

@@ -53,8 +53,8 @@
     -->
     <t t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('payment-buttons')]" position="inside">
-            <t t-if="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0) > 0">
-                <t t-set="kassaBalance" t-value="currentOrder.partner_id.x_wallet_balance || 0"/>
+            <t t-set="kassaBalance" t-value="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0)"/>
+            <t t-if="kassaBalance > 0">
                 <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification mt-1 p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>
@@ -73,8 +73,8 @@
     -->
     <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
         <xpath expr="//ActionpadWidget" position="before">
-            <t t-if="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0) > 0">
-                <t t-set="kassaBalance" t-value="currentOrder.partner_id.x_wallet_balance || 0"/>
+            <t t-set="kassaBalance" t-value="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0)"/>
+            <t t-if="kassaBalance > 0">
                 <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>

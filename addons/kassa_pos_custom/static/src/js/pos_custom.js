@@ -494,11 +494,7 @@ patch(PartnerLine.prototype, {
         return _parseSessionTitles(this.props.partner.x_session_title);
     },
 
-    /**
-     * True only when the CRM has confirmed the wallet lease (x_lease_id non-empty).
-     * Prevents showing a stale €0.00 balance during the gap between QR scan and
-     * wallet_lease_grant arriving from the CRM.
-     */
+    /** True when the partner has a positive wallet balance. */
     get kassaHasWallet() {
         return (this.props.partner.x_wallet_balance || 0) > 0;
     },
