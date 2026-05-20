@@ -208,11 +208,12 @@ export class QrScanButton extends Component {
 
             this.state.open = false;
 
+            const balance = partner.x_wallet_balance || 0;
             const leaseNote =
                 result.status === "lease_requested" || result.status === "not_found_and_created"
                     ? " — saldo wordt opgehaald bij CRM"
                     : result.status === "already_active"
-                    ? " — actief saldo beschikbaar"
+                    ? ` — saldo: €${balance.toFixed(2)}`
                     : "";
 
             const sessionTitles = (result.sessions || []).map((s) => s.title).filter(Boolean);
