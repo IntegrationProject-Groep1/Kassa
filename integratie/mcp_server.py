@@ -339,6 +339,12 @@ def get_orders_by_date_range(
         ["date_order", "<=", f"{date_to} 23:59:59"],
     ]
     try:
+        # Aggregate the true period total server-side before applying the row limit,
+        # so total_revenue is always accurate even when results are truncated.
+        stats = _odoo("pos.order", "read_group", [domain, ["amount_total"], []], {})
+        total_revenue = round(stats[0].get("amount_total") or 0, 2) if stats else 0.0
+        total_count = stats[0].get("__count", 0) if stats else 0
+
         orders = _odoo("pos.order", "search_read", [domain], {
             "fields": ["name", "amount_total", "date_order", "state", "partner_id"],
             "limit": limit,
@@ -363,10 +369,10 @@ def get_orders_by_date_range(
                 "master_uuid": partner.get("x_user_id") or None,
             })
 
-        total_revenue = round(sum(r["total"] for r in result), 2)
         return {
             "orders":        result,
             "count":         len(result),
+            "total_count":   total_count,
             "total_revenue": total_revenue,
             "currency":      "EUR",
             "period":        {"from": date_from, "to": date_to},
@@ -393,31 +399,34 @@ def get_top_spenders(
     if date_to:
         domain.append(["date_order", "<=", f"{date_to} 23:59:59"])
     try:
-        orders = _odoo("pos.order", "search_read", [domain], {
-            "fields": ["amount_total", "partner_id"],
-            "limit": 5000,
-        })
-        totals: dict[int, dict] = {}
-        for o in orders:
-            if not o.get("partner_id"):
+        # Use read_group for server-side aggregation — avoids the 5000-row cap
+        # and lets Odoo do the sorting, so results are always correct regardless
+        # of total order volume.
+        groups = _odoo("pos.order", "read_group",
+                       [domain, ["amount_total"], ["partner_id"]],
+                       {"orderby": "amount_total desc", "limit": limit})
+
+        partner_ids = [g["partner_id"][0] for g in groups if g.get("partner_id")]
+        partner_map: dict[int, dict] = {}
+        if partner_ids:
+            partners = _odoo("res.partner", "read", [partner_ids],
+                             {"fields": ["id", "x_user_id", "x_badge_id"]})
+            partner_map = {p["id"]: p for p in partners}
+
+        ranked = []
+        for g in groups:
+            if not g.get("partner_id"):
                 continue
-            pid = o["partner_id"][0]
-            if pid not in totals:
-                totals[pid] = {"partner_id": pid, "name": o["partner_id"][1], "total": 0.0, "order_count": 0}
-            totals[pid]["total"] += float(o.get("amount_total") or 0)
-            totals[pid]["order_count"] += 1
-
-        if totals:
-            partner_ids = list(totals.keys())
-            partners = _odoo("res.partner", "read", [partner_ids], {"fields": ["id", "x_user_id", "x_badge_id"]})
-            for p in partners:
-                if p["id"] in totals:
-                    totals[p["id"]]["master_uuid"] = p.get("x_user_id") or None
-                    totals[p["id"]]["badge_id"] = p.get("x_badge_id") or None
-
-        ranked = sorted(totals.values(), key=lambda r: r["total"], reverse=True)[:limit]
-        for r in ranked:
-            r["total"] = round(r["total"], 2)
+            pid, name = g["partner_id"]
+            extra = partner_map.get(pid, {})
+            ranked.append({
+                "partner_id":  pid,
+                "name":        name,
+                "total":       round(float(g.get("amount_total") or 0), 2),
+                "order_count": g.get("__count") or 0,
+                "master_uuid": extra.get("x_user_id") or None,
+                "badge_id":    extra.get("x_badge_id") or None,
+            })
 
         return {
             "top_spenders": ranked,
