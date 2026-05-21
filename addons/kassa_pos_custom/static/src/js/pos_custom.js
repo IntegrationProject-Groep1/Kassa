@@ -426,9 +426,14 @@ patch(PaymentScreen.prototype, {
 
     /**
      * Suppress automatic invoice PDF download after order validation.
-     * The invoice is still created server-side; only the client-side download
-     * popup is skipped. A notification is shown instead.
+     * _finalizeValidation gates the download on this method; returning false
+     * skips the this.report.doAction("account.account_invoices") call entirely.
+     * The invoice is still created server-side.
      */
+    shouldDownloadInvoice() {
+        return false;
+    },
+
     async downloadInvoice(orderIds) {
         this.env.services.notification.add(
             _t("Factuur aangemaakt."),
