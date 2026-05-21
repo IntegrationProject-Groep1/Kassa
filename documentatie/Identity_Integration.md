@@ -71,3 +71,33 @@ When a customer is created directly in Odoo/POS (e.g., by a kassamedewerker) wit
 - **Status Tracking:**
   - `res.partner.x_identity_status`: tracks the linking progress (`pending`, `linked`, `error`).
   - `res.partner.x_identity_last_sync`: timestamp of the last attempt.
+
+## PartnerIdentityPoller — Runtime Component
+
+`partner_identity_poller.py` runs as a **separate daemon thread** in the integration service, started by `main.py` alongside the receiver and order_poller threads.
+
+**Class:** `PartnerIdentityPoller`
+
+**Polling interval:** instelbaar via `IDENTITY_POLL_INTERVAL` environment variable (default: 10 seconden).
+
+**Per cycle:**
+1. Zoek partners met `email != False`, `x_user_id = False` en `x_identity_status != linked` (max 100 per cyclus).
+2. Skip partners in `error`-state die korter dan `IDENTITY_ERROR_RETRY_AFTER` seconden (default: 3600) geleden gefaald hebben.
+3. Valideer e-mailadres format via regex.
+4. Check of een andere Odoo-partner met hetzelfde e-mailadres al een `x_user_id` heeft — zo ja: hergebruik.
+5. Zo niet: roep `identity.user.create.request` aan.
+6. Bij `EMAIL_ALREADY_EXISTS` (of `IdentityEmailAlreadyExists` exception): val terug op `identity.user.lookup.email.request`.
+7. Sla `x_user_id` + `x_identity_status = linked` op in Odoo.
+8. Bij `IdentityUnavailableError`: status = `pending` (silent retry volgende cyclus).
+9. Bij andere fouten: status = `error`, details in `x_rabbitmq_error`.
+
+**Identity Fallback in OrderPoller:**
+Als een partner tijdens het verwerken van een order nog geen `x_user_id` heeft maar wel een e-mailadres, doet `order_poller.py` een last-resort `create_user` call via `identity_client.create_user()`. Dit is idempotent: het geeft de bestaande UUID terug als het e-mailadres al geregistreerd is. Na succes wordt de UUID teruggeschreven naar `res.partner.x_user_id`.
+
+**Routing keys (configurable via env):**
+
+| Variabele | Default routing key |
+| --- | --- |
+| `IDENTITY_ROUTING_KEY_CREATE` | `identity.user.create.request` |
+| `IDENTITY_ROUTING_KEY_LOOKUP_EMAIL` | `identity.user.lookup.email.request` |
+| `IDENTITY_ROUTING_KEY_LOOKUP_UUID` | `identity.user.lookup.uuid.request` |
