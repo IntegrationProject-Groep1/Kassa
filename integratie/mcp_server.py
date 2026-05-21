@@ -31,6 +31,13 @@ _uid: int | None = None
 
 
 def _get_uid() -> int:
+    """Return the cached Odoo UID, authenticating if not yet done.
+
+    Odoo XML-RPC is stateless — each execute_kw call requires the UID. We cache
+    it after the first authenticate() call so MCP tool calls don't re-authenticate
+    on every invocation. The UID is stable for the lifetime of the process unless
+    Odoo revokes the session (handled by _odoo clearing _uid on Access Denied).
+    """
     global _uid
     if _uid is None:
         common = xmlrpc.client.ServerProxy(f"{_URL}/xmlrpc/2/common")
@@ -41,6 +48,12 @@ def _get_uid() -> int:
 
 
 def _odoo(model: str, method: str, args: list, kwargs: dict | None = None) -> Any:
+    """Execute an Odoo XML-RPC call and return the raw result.
+
+    Central wrapper so all MCP tools share a single connection configuration.
+    Clears the cached UID on Access Denied so the next call re-authenticates —
+    Odoo may invalidate sessions after a restart or password change.
+    """
     global _uid
     models = xmlrpc.client.ServerProxy(f"{_URL}/xmlrpc/2/object")
     try:

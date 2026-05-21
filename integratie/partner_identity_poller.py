@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 class PartnerIdentityPoller:
     def __init__(self):
+        """Set up Odoo credentials from environment; Odoo connection is established via connect_odoo().
+
+        Polling interval is read at runtime from IDENTITY_POLL_INTERVAL env var (default 10 s)
+        and passed to poll() by main.py. This class does not hold an interval itself so it can
+        be re-used with different cadences in tests.
+        """
         env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
         self.odoo_url = env["ODOO_URL"]
         self.odoo_db = env["ODOO_DB"]
@@ -107,6 +113,20 @@ class PartnerIdentityPoller:
             return None
 
     def process_partner(self, partner: Dict[str, Any]):
+        """Resolve and store the Identity master_uuid for a single unlinked partner.
+
+        Resolution order:
+        1. Validate the email address format (error-state partners are skipped during
+           their cooldown window to avoid hammering the Identity Service on repeated failures).
+        2. Check if another Odoo partner with the same email already has an x_user_id —
+           if so, reuse it without making an RPC call (deduplication within Odoo).
+        3. Call identity.user.create.request.  Because create is idempotent, this is safe
+           to retry.  On EMAIL_ALREADY_EXISTS the service falls back to lookup_by_email.
+        4. Write the returned master_uuid to res.partner.x_user_id via _update_partner().
+
+        A locally generated UUID is never used as fallback — per contract, the Identity
+        Service is the only source of truth for master UUIDs.
+        """
         partner_id = partner["id"]
         raw_email = partner.get("email") or ""
         email = raw_email.strip() if isinstance(raw_email, str) else ""
@@ -171,6 +191,16 @@ class PartnerIdentityPoller:
             self._update_partner(partner_id, None, "error", str(e))
 
     def _update_partner(self, partner_id: int, x_user_id: Optional[str], status: str, error_msg: Optional[str] = None):
+        """Persist identity link result to Odoo.
+
+        Always writes x_identity_status and x_identity_last_sync together so ops can
+        audit when each partner was last processed, regardless of outcome. The timestamp
+        is also how the error-cooldown logic in process_partner measures elapsed time.
+
+        x_rabbitmq_error is reused for identity error messages to avoid creating a
+        separate custom field — the field semantics are compatible (both track last
+        integration failure reason).
+        """
         vals = {
             "x_identity_status": status,
             "x_identity_last_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -191,6 +221,16 @@ class PartnerIdentityPoller:
             logger.error("❌ Failed to update partner %s in Odoo: %s", partner_id, e)
 
     def poll(self, interval: int = 10):
+        """Main polling loop: find unlinked partners and call process_partner() for each.
+
+        Capped at 100 partners per cycle to prevent one very large backlog from
+        blocking the loop for too long. Partners that cannot be processed (Identity
+        Service unavailable, invalid email) are left in pending/error state and
+        re-evaluated on the next cycle subject to the error-cooldown rule.
+
+        The loop is intentionally resilient: an unexpected exception logs the error
+        and sleeps before retrying, rather than crashing the thread.
+        """
         logger.info("Partner Identity Poller started (interval: %ds)", interval)
         while True:
             try:

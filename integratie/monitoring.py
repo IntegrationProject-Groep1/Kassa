@@ -37,6 +37,12 @@ class MonitoringManager:
     _lock = threading.Lock()
 
     def __new__(cls):
+        """Enforce singleton: only one MonitoringManager exists per process.
+
+        Opening a new pika connection for every log call would be expensive and
+        would exhaust RabbitMQ connection limits under high traffic. The singleton
+        reuses a single channel for all log messages.
+        """
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super(MonitoringManager, cls).__new__(cls)

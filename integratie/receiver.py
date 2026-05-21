@@ -278,7 +278,19 @@ def _ensure_session_product(
 
 
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a new_registration message (Flow 1)."""
+    """Create or update the Odoo partner for a newly registered attendee (Flow 1).
+
+    Upsert strategy:
+    1. Search res.partner by x_user_id (identity_uuid) — the canonical key.
+    2. If not found, fall back to email to handle partners created before UUID linking.
+    3. If still not found, create a new res.partner record.
+
+    company vs. private: the <type> field drives is_company; company partners also
+    receive the VAT number (required by CRM per §11.1).
+
+    x_invoice_on_qr_scan is auto-enabled for company partners because they nearly
+    always need a fiscal invoice — this reduces manual steps at the checkout kiosk.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("new_registration: <body> missing")
@@ -394,7 +406,15 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
 
 
 def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a profile_update message (Flow 3)."""
+    """Apply a partial profile update from CRM to an existing Odoo partner (Flow 3).
+
+    Only fields present in the XML payload are updated — absent elements are not
+    overwritten with empty values. This is intentional: CRM sends profile_update
+    only for the fields that changed, not the full partner record.
+
+    x_session_title is stored as a JSON-encoded list because a partner may be
+    registered for multiple sessions and Odoo custom fields do not support arrays.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("profile_update: <body> missing")
@@ -474,7 +494,22 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
 
 
 def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a badge_scanned message (Flow 2). Drives lease lifecycle on entrance or kassa scan."""
+    """Look up an attendee by badge/QR and trigger the wallet lease lifecycle (Flow 2).
+
+    Two scan variants are accepted (XSD allows either, not both):
+    - Physical badge: <body><badge_id>…</badge_id>  — looked up via x_badge_id
+    - QR code:        <body><identity_uuid>…</identity_uuid> — looked up via x_user_id
+
+    Location-driven behaviour:
+    - entrance / bar / main_bar / session → start wallet lease if not already active
+      (sends wallet_lease_request to CRM; CRM responds with wallet_lease_grant)
+    - session → additionally sends user_sessions_request to Frontend so the POS screen
+      can display the sessions the attendee is registered for
+    - checkout → not in this function; lease return is triggered by event_ended
+
+    If neither badge_id nor identity_uuid is in the body, a system_error is sent and
+    the message is rejected. Requiring at least one identifier keeps the flow deterministic.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("badge_scanned: <body> missing")
@@ -636,7 +671,19 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
 
 
 def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """CRM confirms balance authority transferred to Kassa. Reconcile balance and store lease_id."""
+    """CRM confirms balance authority for a leased wallet (Flow 6A).
+
+    When Kassa sends wallet_lease_request, CRM transfers the wallet balance to Kassa
+    and responds with wallet_lease_grant. From this point until wallet_lease_return,
+    Kassa is the source of truth for this partner's wallet balance.
+
+    Pending-topup merge: if the attendee topped up their wallet online between the
+    moment of badge scan and the moment CRM sends wallet_lease_grant, the top-up
+    arrives as wallet_remote_topup before the grant is processed. Because there is no
+    active lease yet at that point, the topup is buffered in x_pending_topup_balance.
+    This function adds that buffer to the granted balance, then zeroes the buffer.
+    Without this merge the attendee would see a lower balance than they paid for.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("wallet_lease_grant: <body> missing")
@@ -745,7 +792,19 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
 
 
 def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """CRM pushes an online top-up to the active lease. Updates balance and broadcasts wallet_balance_update."""
+    """Apply a remotely purchased top-up to the partner's wallet (Flow 6B).
+
+    Two-path logic based on whether a lease is currently active:
+    - Active lease (x_lease_active=True): add amount directly to x_wallet_balance
+      and immediately send wallet_balance_update to Frontend so the POS screen reflects
+      the new balance in real time.
+    - No active lease: the attendee has topped up but has not yet scanned their badge.
+      Buffer the amount in x_pending_topup_balance. When wallet_lease_grant arrives
+      later, process_wallet_lease_grant() merges the buffer into the granted balance.
+
+    This split prevents balance corruption: writing to x_wallet_balance before the
+    lease is granted would make Kassa claim authority over a balance CRM still owns.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("wallet_remote_topup: <body> missing")
@@ -761,6 +820,13 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         add_amount = float(add_amount_text)
     except ValueError:
         raise ValueError(f"wallet_remote_topup: invalid add_amount '{add_amount_text}'")
+
+    if add_amount <= 0:
+        logger.warning(
+            "[REMOTE_TOPUP] Non-positive add_amount=%.2f for %s — ignoring",
+            add_amount, identity_uuid,
+        )
+        return
 
     logger.info("[REMOTE_TOPUP] Received for identity_uuid=%s | add_amount=%.2f | reason=%s",
                 identity_uuid, add_amount, reason or "<none>")
@@ -801,11 +867,11 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
         )
         return
 
-    new_balance = models.execute_kw(
+    new_balance = float(models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "pos.order", "action_add_wallet_amount",
         [partner["id"], add_amount],
-    )
+    ) or 0.0)
 
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -885,7 +951,16 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
 
 
 def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Event ended — immediately return all active leases to CRM."""
+    """Festival over — return every active wallet lease to CRM in one sweep (Flow 6C).
+
+    Delegates to _do_return_all_leases(), which finds all partners with x_lease_active=True
+    and sends a wallet_lease_return message for each. This is a fan-out: one event_ended
+    triggers N outbound messages (one per leased partner).
+
+    All leases are attempted even if some fail — partial failure is preferable to
+    abandoning the sweep, because CRM needs every lease returned to close the event
+    accounts correctly.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("event_ended: <body> missing")
@@ -895,7 +970,12 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
 
 
 def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle a cancel_registration message (Flow 4)."""
+    """Zero out payment obligation for a cancelled attendee (Flow 4).
+
+    The Odoo partner record is NOT deleted or deactivated — history must be preserved
+    for audit and for any consumptions the attendee made before cancelling.
+    Only x_outstanding_amount is set to 0 and x_payment_status to 'cancelled'.
+    """
     body = root.find("body")
     if body is None:
         raise ValueError("cancel_registration: <body> missing")

@@ -90,6 +90,26 @@ def _run_receiver() -> None:
 
 
 def main():
+    """
+    Entry point for the Kassa Integration Service.
+
+    Startup sequence:
+      1. Wait for Odoo web server to be reachable (up to 300 s).
+      2. Auto-create the Odoo database if it does not exist.
+      3. Install point_of_sale module if not already installed.
+      4. Install/upgrade custom Kassa addons.
+      5. Configure taxes, POS categories, payment methods, demo products, POS profiles.
+      6. Start receiver thread — listens on kassa.incoming RabbitMQ queue.
+      7. Start order_poller thread — polls Odoo every POLL_INTERVAL seconds.
+      8. Start partner_identity_poller thread — links unlinked partners via Identity Service.
+      9. Write /tmp/service_ready marker so Docker HEALTHCHECK reports healthy.
+      10. Block the main thread with a 60 s sleep loop (KeyboardInterrupt exits cleanly).
+
+    All three worker threads are started as daemon threads so they die automatically
+    when the main thread exits (e.g. on container shutdown via SIGTERM/SIGKILL).
+    Without daemon=True, a blocked pika connection would keep the process alive
+    indefinitely after the main thread has exited.
+    """
     # Configure root logging first — before any module emits log lines.
     # All loggers (receiver, order_poller, sender, …) inherit this configuration.
     logging.basicConfig(
@@ -201,7 +221,9 @@ def main():
     identity_poller_thread.start()
     print("✅ Partner Identity Poller thread started", flush=True)
 
-    # Create marker file for healthcheck to indicate the service is fully ready
+    # Write /tmp/service_ready only after all threads are confirmed started.
+    # Docker HEALTHCHECK reads this file; writing it before threads are running
+    # would cause the container to report healthy before it can actually serve traffic.
     try:
         with open("/tmp/service_ready", "w") as f:  # nosec B108
             f.write("ready")
