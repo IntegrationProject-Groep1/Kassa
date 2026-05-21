@@ -943,3 +943,249 @@ _Als kassamedewerker wil ik dat een bezoeker die zich via het tweede scherm aan 
 - [ ] Na succesvolle betaling via Inschrijvingskassa: `order_poller.py` zet `x_outstanding_amount = 0` en `x_payment_status = paid` op het `res.partner` record in Odoo
 - [ ] Werkt ook bij `profile_update` met gewijzigd bedrag of status
 - [ ] Vereist `kassa_pos_custom` addon (gedeeld met Story 9, 17 en 19)
+
+## **EPIC 7: SESSIE & PLANNING INTEGRATIE**
+
+## **Story 22: Sessie-inhoud automatisch bijhouden in de kassa**
+
+> _MVP status: MVP_
+
+_Als kassamedewerker wil ik dat sessies en lezingen die via het planningssysteem worden aangemaakt of gewijzigd direct als afrekenbaar product zichtbaar zijn in de Inschrijvingskassa, zodat ik op het event de correcte sessietickets kan selecteren zonder iets handmatig te moeten invoeren._
+
+**ACCEPTATIECRITERIA:**
+
+- Wanneer Frontend een `session_created` bericht stuurt, maakt de kassa automatisch een POS-product aan met de sessietitel en prijs (indien opgegeven). Het product is onmiddellijk beschikbaar in de Inschrijvingskassa.
+- Wanneer Frontend een `session_updated` bericht stuurt, wordt het bestaande POS-product bijgewerkt (titel en/of prijs). `x_session_id` wordt als primaire sleutel gebruikt — een hernoeming maakt geen duplicaat aan.
+- Wanneer Frontend een `session_deleted` bericht stuurt, wordt het POS-product **bewaard** (voor lopende transacties) en enkel gelogd. Er wordt geen product verwijderd.
+- Na elke aanpassing ontvangt de actieve POS-sessie automatisch een bus-notificatie zodat het nieuwe product onmiddellijk zichtbaar is — zonder sessie-herstart.
+- Wanneer een badge gescand wordt, stuurt de kassa een `user_sessions_request` naar Frontend om de ingeschreven sessies van de bezoeker op te halen. Bij ontvangst van `user_sessions_response` worden de bijhorende POS-producten aangemaakt of bijgewerkt.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat Frontend een `session_created` bericht stuurt met `session_id` en `title`
+
+**Wanneer** `receiver.py` het bericht verwerkt
+
+**Dan** is een POS-product met die titel beschikbaar in de Inschrijvingskassa
+
+**En** wordt een bus-notificatie verstuurd naar de actieve POS-sessies
+
+**Gegeven** dat Frontend een `session_updated` bericht stuurt met dezelfde `session_id` maar een gewijzigde titel of prijs
+
+**Wanneer** `receiver.py` het bericht verwerkt
+
+**Dan** wordt het bestaande POS-product bijgewerkt — er wordt geen duplicaat aangemaakt
+
+**En** wordt een bus-notificatie verstuurd
+
+**Gegeven** dat Frontend een `session_deleted` bericht stuurt
+
+**Wanneer** `receiver.py` het bericht verwerkt
+
+**Dan** blijft het POS-product bewaard en wordt enkel gelogd
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. `receiver.py` luistert op `session_created`, `session_updated` en `session_deleted` routing keys vanuit Frontend.
+2. `_ensure_session_product()` zoekt primair op `x_session_id` (overleeft hernoemen), met name-lookup als fallback voor bestaande producten zonder `x_session_id`.
+3. Bij create/update: schrijf naam en prijs naar het POS-product; roep `kassa_notify_product_update` aan via Odoo bus zodat open POS-sessies het product direct zien.
+4. Bij delete: log en ack — geen product verwijderen.
+5. Na een succesvolle badge-scan: stuur `user_sessions_request` naar Frontend met `identity_uuid`; verwerk de `user_sessions_response` door `_ensure_session_product()` aan te roepen voor elke sessie in de respons.
+
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` verwerkt `session_created`, `session_updated` en `session_deleted` correct
+- [ ] `_ensure_session_product()` maakt nieuw product aan of update bestaand op basis van `x_session_id`; naam-fallback actief voor oudere producten
+- [ ] Bus-notificatie (`kassa_notify_product_update`) verstuurd na create/update zodat de POS-sessie het product onmiddellijk toont
+- [ ] `session_deleted`: POS-product bewaard, enkel gelogd
+- [ ] `user_sessions_request` verstuurd na badge-scan met `identity_uuid`
+- [ ] `user_sessions_response`: sessie-producten aangemaakt/bijgewerkt in Inschrijvingskassa
+
+## **Story 23: Sessiescatalogus opvragen bij POS-opstart (Frontend integratie)**
+
+> _MVP status: MVP_
+
+_Als kassamedewerker wil ik dat bij het openen van een POS-sessie automatisch de volledige sessiescatalogus van Frontend wordt opgehaald, zodat alle beschikbare sessieproducten met de juiste prijzen direct beschikbaar zijn bij de eerste scan._
+
+**ACCEPTATIECRITERIA:**
+
+- Zodra `order_poller.py` een nieuw geopende POS-sessie detecteert (staat `opened`), verstuurt hij één `session_view_request` naar Frontend.
+- Frontend antwoordt met een `session_view_response` die de volledige sessiescatalogus bevat. `receiver.py` verwerkt deze respons en zorgt dat alle sessieproducten aanwezig zijn in Odoo POS.
+- Een herstart van de integratieservice triggert bij de volgende pollingcyclus automatisch een nieuwe `session_view_request` voor alle nog openstaande POS-sessies.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat een medewerker een nieuwe POS-sessie opstart in Odoo
+
+**Wanneer** `order_poller.py` deze sessie voor de eerste keer detecteert tijdens een pollingcyclus
+
+**Dan** wordt er één `session_view_request` verstuurd naar Frontend
+
+**En** wordt de sessie-ID in de interne cache opgeslagen zodat geen dubbele aanvragen worden verstuurd
+
+**Gegeven** dat Frontend antwoordt met een `session_view_response`
+
+**Wanneer** `receiver.py` de respons verwerkt
+
+**Dan** zijn alle sessies uit de catalogus beschikbaar als POS-product in Odoo
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. `order_poller.check_pos_sessions()` polt elke cyclus op `pos.session` met staat `opened`.
+2. Nieuwe sessie-ID's (niet in `_seen_pos_sessions`) triggeren een `session_view_request` XML naar Frontend.
+3. De sessie-ID wordt toegevoegd aan `_seen_pos_sessions` (in-memory, reset bij herstart).
+4. `receiver.py` verwerkt de binnenkomende `session_view_response` en roept `_ensure_session_product()` aan voor elke sessie.
+
+**DEFINITION OF DONE:**
+
+- [ ] `order_poller.check_pos_sessions()` detecteert nieuwe POS-sessies en verstuurt `session_view_request` naar Frontend
+- [ ] Reeds geziene sessie-ID's worden niet opnieuw aangevraagd binnen dezelfde process-lifetime
+- [ ] `receiver.py` verwerkt `session_view_response` en maakt sessieproducten aan in Odoo POS
+- [ ] Herstart van de service triggert automatisch nieuwe aanvraag voor open sessies
+
+## **EPIC 8: UITGEBREIDE WALLET & FACTURATIE FLOWS**
+
+## **Story 24: Online saldo bijstorten via het CRM (Wallet Remote Topup)**
+
+> _MVP status: MVP_
+
+_Als bezoeker wil ik mijn badge-saldo online kunnen ophogen (via de website of een externe betaallink), zodat het extra tegoed direct beschikbaar is aan de bar zonder dat ik opnieuw een topup-product hoef te kopen._
+
+**ACCEPTATIECRITERIA:**
+
+- Als het CRM een `wallet_remote_topup` bericht stuurt voor een bezoeker met een actieve wallet-lease, wordt het opgegeven bedrag direct opgeteld bij `x_wallet_balance` in Odoo.
+- Een `wallet_balance_update` XML wordt verstuurd naar Frontend zodat het nieuwe saldo onmiddellijk zichtbaar is op het scherm.
+- Is de lease actief maar de `wallet_lease_grant` nog niet ontvangen (race-condition), dan wordt het bedrag geparkeerd in `x_pending_topup_balance` en samengevoegd zodra de lease-grant binnenkomt.
+- Is er geen actieve lease (de bezoeker is nog niet ingescand), dan wordt de topup genegeerd en gelogd — er wordt geen saldo overschreven.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat een bezoeker een actieve wallet-lease heeft (`x_lease_active=True`) en de lease-grant is bevestigd (`x_lease_id` ingevuld)
+
+**Wanneer** CRM een `wallet_remote_topup` bericht stuurt met een positief `add_amount`
+
+**Dan** wordt `x_wallet_balance` in Odoo verhoogd met het opgegeven bedrag
+
+**En** wordt een `wallet_balance_update` verstuurd naar Frontend
+
+**Gegeven** dat de lease actief is maar de lease-grant nog niet bevestigd is (`x_lease_id` leeg)
+
+**Wanneer** CRM een `wallet_remote_topup` bericht stuurt
+
+**Dan** wordt het bedrag geparkeerd in `x_pending_topup_balance`
+
+**En** wordt het samengevoegd bij ontvangst van `wallet_lease_grant`
+
+**Gegeven** dat de bezoeker geen actieve lease heeft (`x_lease_active=False`)
+
+**Wanneer** CRM een `wallet_remote_topup` bericht stuurt
+
+**Dan** wordt de topup genegeerd en gelogd — geen saldowijziging
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. `receiver.py` verwerkt `wallet_remote_topup` na XSD-validatie en idempotentie-check.
+2. Zoek de partner op via `x_user_id`; controleer `x_lease_active` en `x_lease_id`.
+3. Actieve lease met lease-grant bevestigd: roep `action_add_wallet_amount()` aan in Odoo en stuur `wallet_balance_update` naar `kassa.frontend.wallet`.
+4. Actieve lease maar grant nog niet ontvangen: voeg `add_amount` toe aan `x_pending_topup_balance`.
+5. Geen actieve lease: log en ack — geen saldowijziging.
+
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` verwerkt `wallet_remote_topup` met XSD-validatie
+- [ ] Actieve lease + grant bevestigd: `x_wallet_balance` verhoogd én `wallet_balance_update` verstuurd
+- [ ] Race-condition: `add_amount` geparkeerd in `x_pending_topup_balance`; samengevoegd bij `wallet_lease_grant`
+- [ ] Geen actieve lease: topup genegeerd, geen saldowijziging, gelogd
+- [ ] Non-positief `add_amount` wordt stilletjes genegeerd
+- [ ] Uitgaande XML valide tegen `schema_wallet_balance_update.xsd`
+
+## **Story 25: Automatisch factuurverzoek voor bedrijfsklanten (B2B Auto-Invoice)**
+
+> _MVP status: MVP_
+
+_Als B2B-klant wil ik dat mijn aankopen aan de bar automatisch als factuurverzoek doorgestuurd worden naar het CRM, zodat ik niet telkens zelf aan de kassamedewerker hoef te vragen om een factuur._
+
+**ACCEPTATIECRITERIA:**
+
+- Voor bedrijfsklanten (`is_company=True` of klant heeft een bedrijf als ouder) activeert Odoo automatisch `to_invoice=True` bij het valideren van een POS-order.
+- `order_poller.py` detecteert orders met `to_invoice=True` of een gekoppelde `account_move` en stuurt automatisch een `invoice_request` bericht — ook zonder expliciete aanvraag van de kassamedewerker.
+- De `invoice_request` bevat de naam, het gesplitste adres (straatnaam en huisnummer apart), het land en het BTW-nummer van de klant.
+- Is voor dezelfde order al een `invoice_request` verstuurd (`x_invoice_message_id` ingevuld), dan wordt er geen dubbele aanvraag gedaan.
+- Anonieme orders en inschrijvingsbetalingen triggeren geen `invoice_request`.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat een POS-order in Odoo staat met `to_invoice=True`, een gekoppelde bedrijfsklant en `x_rabbitmq_sent=False`
+
+**Wanneer** `order_poller.py` deze order detecteert
+
+**Dan** wordt automatisch een `invoice_request` XML verstuurd naar `kassa.payments.invoice`
+
+**En** wordt `x_invoice_message_id` opgeslagen op de order ter deduplicatie
+
+**En** wordt `x_rabbitmq_sent=True` gezet na succesvolle verzending van alle berichten
+
+**Gegeven** dat voor dezelfde order al een `invoice_request` werd verstuurd (`x_invoice_message_id` ingevuld)
+
+**Wanneer** `order_poller.py` de order opnieuw detecteert
+
+**Dan** wordt er geen tweede `invoice_request` aangemaakt
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. In `order_poller.process_order()`: controleer `to_invoice` en `account_move`; sla op als `should_invoice`.
+2. Als `should_invoice=True` en order niet anoniem en geen inschrijving: controleer `x_invoice_message_id` op duplicaten.
+3. Bouw `invoice_request` XML op met klantgegevens: naam, gesplitst adres via `split_street_and_number()`, land (ISO-code), BTW-nummer. Valideer tegen `schema_invoice_request.xsd`.
+4. Verstuur naar routing key `kassa.payments.invoice` en sla de `message_id` op in `x_invoice_message_id`.
+
+**DEFINITION OF DONE:**
+
+- [ ] `order_poller.py` verstuurt automatisch `invoice_request` bij `to_invoice=True` of `account_move` aanwezig — ook zonder expliciete aanvraag
+- [ ] Adres correct gesplitst via `split_street_and_number()` in straatnaam en huisnummer
+- [ ] Deduplicatie actief via `x_invoice_message_id` — geen dubbele aanvraag per order
+- [ ] Anonieme orders en inschrijvingsbetalingen triggeren geen `invoice_request`
+- [ ] Uitgaande XML valide tegen `schema_invoice_request.xsd`
+- [ ] `x_invoice_message_id` opgeslagen op de order na succesvolle verzending
+
+## **Story 26: BTW-nummer verplicht voor bedrijven**
+
+> _MVP status: MVP_
+
+_Als kassamedewerker wil ik dat het systeem bedrijfsinschrijvingen zonder BTW-nummer weigert en factuurverzoeken voor bedrijven zonder BTW-nummer blokkeert, zodat we nooit een onvolledig factuurverzoek naar het CRM sturen._
+
+**ACCEPTATIECRITERIA:**
+
+- Bij een inkomend `new_registration` bericht van het type `company`: als `vat_number` ontbreekt, wordt het bericht geweigerd met een `system_error` (code `invalid_xml_format`) naar `kassa.errors` en een `basic_nack(requeue=False)` naar de DLQ.
+- Bij een `invoice_request` voor een klant van het type `company`: als het BTW-nummer leeg is in Odoo, wordt de `invoice_request` **niet** verstuurd. De order wordt gemarkeerd met een `x_rabbitmq_error` zodat de oorzaak traceerbaar is.
+- Private klanten zijn niet onderworpen aan de BTW-verplichting.
+
+**BDD (GEGEVEN/WANNEER/DAN):**
+
+**Gegeven** dat een `new_registration` bericht binnenkomt met `<type>company</type>` en zonder `<vat_number>`
+
+**Wanneer** `receiver.py` het bericht valideert
+
+**Dan** wordt een `system_error` met code `invalid_xml_format` verstuurd naar `kassa.errors`
+
+**En** krijgt het bericht een `basic_nack(requeue=False)` naar de DLQ
+
+**Gegeven** dat `order_poller.py` een `invoice_request` wil aanmaken voor een bedrijfsklant zonder BTW-nummer in Odoo
+
+**Wanneer** de BTW-check uitgevoerd wordt
+
+**Dan** wordt de `invoice_request` niet verstuurd
+
+**En** wordt de order gemarkeerd met `x_rabbitmq_error` zodat de oorzaak traceerbaar is
+
+**TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
+
+1. In `receiver.py` `process_new_registration()`: controleer bij `type=company` of `vat_number` aanwezig is. Ontbreekt het? Gooi een `ValueError` — de centrale foutafhandeling stuurt `system_error` en `basic_nack(requeue=False)`.
+2. In `order_poller.py` `process_order()`: controleer bij `customer_type=company` of het `vat`-veld ingevuld is vóór het bouwen van de `invoice_request`. Zo niet: sla `x_rabbitmq_error` op op de order en sla de `invoice_request` over.
+3. Private klanten (`is_company=False`, geen bedrijfsouder): BTW-check is niet van toepassing.
+
+**DEFINITION OF DONE:**
+
+- [ ] `receiver.py` weigert `new_registration` van type `company` zonder `vat_number` met `system_error` + `basic_nack(requeue=False)`
+- [ ] `order_poller.py` blokkeert `invoice_request` voor bedrijfsklant zonder BTW-nummer in Odoo
+- [ ] Geblokkeerde `invoice_request`: `x_rabbitmq_error` gezet op de order voor traceerbaarheid
+- [ ] Private klanten zijn niet onderworpen aan de BTW-verplichting
