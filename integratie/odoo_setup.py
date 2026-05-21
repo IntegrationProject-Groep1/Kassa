@@ -1,5 +1,16 @@
-# odoo_setup.py - Odoo bootstrap helpers for the Kassa integration service
-# Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
+"""
+odoo_setup.py — Odoo bootstrap helpers for the Kassa integration service.
+Team Kassa (Odoo POS) | Integratieproject Desideriushogeschool 2026
+
+All functions here run once at startup (called from main.py) and are idempotent:
+re-running them against an already-configured Odoo database is safe and produces
+no duplicates. This is intentional — it allows container restarts without manual
+database cleanup.
+
+Configuration via XML-RPC (not Odoo modules) is a deliberate choice: it keeps
+the CI pipeline fast and avoids the complexity of maintaining a full Odoo module
+just to set a few fields.
+"""
 
 from __future__ import annotations
 
@@ -16,10 +27,16 @@ defusedxml.xmlrpc.monkey_patch()
 
 
 def _rpc(models: OdooModelsProxy, *args: Any, **kwargs: Any) -> Any:
+    """Thin wrapper around execute_kw that centralises the call site for easier mocking in tests."""
     return models.execute_kw(*args, **kwargs)
 
 
 def _extract_company_id(user_info: list[dict[str, Any]] | None) -> int | None:
+    """Extract the integer company ID from a res.users read result.
+
+    Odoo returns company_id as a [id, name] list when fetched via read(), or as a
+    bare integer in some contexts. This handles both forms defensively.
+    """
     if not user_info:
         return None
     company = user_info[0].get("company_id")
@@ -31,12 +48,29 @@ def _extract_company_id(user_info: list[dict[str, Any]] | None) -> int | None:
 
 
 def _common_and_models(odoo_url: str) -> tuple[Any, Any]:
+    """Return (common, models) XML-RPC proxies for the given Odoo URL.
+
+    Odoo XML-RPC uses a two-phase authentication model:
+    - `common.authenticate(db, user, pass, {})` → returns uid (int)
+    - `models.execute_kw(db, uid, pass, model, method, args)` → data operations
+
+    Both proxies are stateless; there is no persistent session to maintain.
+    """
     common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
     models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object", allow_none=True)
     return common, models
 
 
 def wait_for_odoo(url: str, timeout: int = 300) -> bool:
+    """Poll the Odoo web server until it responds or timeout expires.
+
+    Any HTTP response (including 500) is treated as "reachable" — Odoo returns
+    500 when the web server is up but no database exists yet, which is expected
+    on first boot. A connection error or timeout means Odoo is not up yet.
+
+    Default timeout is 300 s because a cold Odoo startup with module install and
+    database initialisation on constrained CI nodes can take 2-4 minutes.
+    """
     print(f"Waiting for Odoo at {url}...", flush=True)
     attempts = max(1, timeout // 5)
 

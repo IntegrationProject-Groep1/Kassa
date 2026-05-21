@@ -29,25 +29,33 @@ docker-compose up -d
 
 ## Architecture
 
-Kassa is an event-driven middleware that bridges **Odoo POS** with external systems (Salesforce CRM, Drupal, IoT badge scanners, Elastic) via **RabbitMQ** as a central message broker.
+Kassa is an event-driven middleware that bridges **Odoo POS** with external systems (Salesforce CRM, Drupal, IoT badge scanners, Planning, Elastic) via **RabbitMQ** as a central message broker.
 
 ```
-CRM / IoT / Drupal ──> RabbitMQ (kassa.exchange) ──> Python integration service ──> Odoo POS (XML-RPC)
-                                                           |
-                                              outbox.json (offline buffer)
+CRM / IoT / Frontend / Planning ──> RabbitMQ (kassa.exchange) ──> Python integration service ──> Odoo POS (XML-RPC)
+                                                                           |
+                                                              outbox.json (offline buffer, path: OUTBOX_DIR)
 ```
 
-All code lives under `integratie/`. The three runtime components are:
+All code lives under `integratie/`. The **three** runtime threads started by `main.py` are:
 
-**`receiver.py`** — RabbitMQ consumer on `kassa.incoming`. Handles 8 incoming message types (new_registration, profile_update, badge_scanned, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event). Validates against XSD schemas, detects duplicates (OrderedDict, max 10k), retries on Odoo errors (max 3) → Dead Letter Queue on failure.
+**`receiver.py`** — RabbitMQ consumer on `kassa.incoming`. Handles **12 incoming message types**:
+- `new_registration`, `profile_update`, `badge_scanned`, `cancel_registration` (CRM/IoT)
+- `wallet_lease_grant`, `wallet_remote_topup`, `event_ended` (CRM wallet lifecycle)
+- `user_event` (fanout, informational only)
+- `user_sessions_response`, `session_created`, `session_updated`, `session_deleted` (Frontend session management)
 
-**`sender.py`** — RabbitMQ publisher to `kassa.exchange`. Publishes 9 outbound message types. Writes to `outbox/outbox.json` (Docker volume, max 500) when broker is unreachable. All outgoing messages are XSD-validated before publish.
+Also binds routing keys for `session_view_response` from Planning. Validates against XSD schemas, detects duplicates (OrderedDict, max 10k), retries on Odoo errors (max 3, via RETRY_QUEUE with 5s TTL) → Dead Letter Queue on failure.
 
-**`order_poller.py`** — Background thread that polls Odoo every `POLL_INTERVAL` seconds for `pos.order` records in `paid`/`done` state. Detects consumption vs. refund, splits Badge Wallet vs. Cash/Invoice payments. Flushes outbox every 30 seconds. LRU cache (max 10k) prevents reprocessing.
+**`sender.py`** — RabbitMQ publisher to `kassa.exchange`. Publishes outbound message types including consumption_order, payment_registered, refund_processed, invoice_request, badge_assigned, payment_status, wallet_balance_update, wallet_lease_request, wallet_lease_return, user_sessions_request, session_view_request. Writes to `outbox.json` (Docker volume, max 500, path configurable via `OUTBOX_DIR`) when broker is unreachable. All outgoing messages are XSD-validated before publish.
 
-**`odoo_setup.py`** — Runs once at startup. Waits for Odoo, auto-creates DB, installs POS + custom addons, creates custom fields (`x_user_id`, `x_badge_id`, `x_wallet_balance`, `x_session_title`), configures payment methods and POS profile.
+**`order_poller.py`** — Background thread that polls Odoo every `POLL_INTERVAL` seconds (default: **5**) for `pos.order` records in `paid`/`done`/`invoiced` state. Detects consumption vs. refund vs. registration, splits Badge Wallet vs. Cash/Invoice/Customer Account payments. Also polls for badge assignments (`poll_badge_assignments`) and detects new POS sessions to trigger `session_view_request` to Planning (`check_pos_sessions`). Flushes outbox every 30 seconds. LRU cache (max 10k) prevents reprocessing.
 
-**Supporting modules:** `config_utils.py` (env parsing), `typing_utils.py` (Odoo type hints), `monitoring.py` (session logging), `identity_client.py` (identity service HTTP client), `pos_profiles.py` (POS config).
+**`partner_identity_poller.py`** — Background thread (interval: `IDENTITY_POLL_INTERVAL`, default: 10s) that finds Odoo partners with an email but no `x_user_id` and links them via the Identity Service RPC. Sets `x_identity_status` to `pending`/`linked`/`error`.
+
+**`odoo_setup.py`** — Runs once at startup. Waits for Odoo, auto-creates DB, installs POS + custom addons, creates custom fields, configures payment methods and POS profiles.
+
+**Supporting modules:** `config_utils.py` (env parsing), `typing_utils.py` (Odoo type hints), `monitoring.py` (session logging), `identity_client.py` (identity service RPC client), `pos_profiles.py` (POS config), `mcp_server.py` (MCP server for tooling integration).
 
 ## Key Design Rules
 
@@ -57,6 +65,16 @@ All code lives under `integratie/`. The three runtime components are:
 - **Duplicate detection is in-memory** — restart clears dedup state; this is acceptable per design.
 - **Odoo access is via XML-RPC only** (`xmlrpc.client`) — never direct DB access.
 - Invalid/malformed messages go to `kassa.errors` routing key and are nack'd with `requeue=False`.
+- **badge_scanned supports two variants**: `badge_id` (physical badge) or `identity_uuid` (QR code). The receiver handles both.
+- **Wallet lease lifecycle**: badge/QR scan triggers `wallet_lease_request` → CRM responds with `wallet_lease_grant` → Kassa owns the balance → `wallet_lease_return` at event end or checkout.
+
+## Custom Fields
+
+Key custom fields on `res.partner`: `x_user_id` (master_uuid), `x_badge_id`, `x_wallet_balance`, `x_session_title` (JSON array), `x_outstanding_amount`, `x_payment_status`, `x_date_of_birth`, `x_lease_active`, `x_lease_id`, `x_lease_transaction_count`, `x_pending_topup_balance`, `x_identity_status`, `x_identity_last_sync`, `x_badge_sent`.
+
+Key custom fields on `pos.order`: `x_rabbitmq_sent`, `x_rabbitmq_error`, `x_wallet_updated`, `x_payment_message_id`, `x_invoice_message_id`.
+
+Key custom fields on `product.template`: `x_session_id`. On `product.product`: `x_is_topup`.
 
 ## XSD Contract
 
@@ -73,4 +91,4 @@ Tests must pass locally before pushing. `conftest.py` sets dummy env vars so tes
 
 ## Environment
 
-Copy `.env.example` → `.env`. Key vars: `ODOO_URL`, `RABBIT_HOST`, `RABBIT_EXCHANGE=kassa.exchange`, `RABBIT_INCOMING_QUEUE=kassa.incoming`, `POLL_INTERVAL` (seconds), `SUBSCRIBE_USER_EVENTS` (bool). Full var list in `.env.example`.
+Copy `.env.example` → `.env`. Key vars: `ODOO_URL`, `RABBIT_HOST`, `RABBIT_EXCHANGE=kassa.exchange`, `RABBIT_INCOMING_QUEUE=kassa.incoming`, `POLL_INTERVAL` (seconds, default 5), `IDENTITY_POLL_INTERVAL` (seconds, default 10), `SUBSCRIBE_USER_EVENTS` (bool). Full var list in `.env.example` and `documentatie/Tech_Stack_Kassa.md`.

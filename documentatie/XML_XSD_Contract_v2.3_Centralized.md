@@ -24,6 +24,8 @@
 | Richting | Berichttype | Van/Naar | Sectie |
 |----------|---|---|---|
 | **ONTVANGT** | `new_registration`, `profile_update`, `cancel_registration` | ← CRM | [10. CRM → Kassa](#10-crm--kassa) |
+| **ONTVANGT** | `user_registered` | ← Frontend (push, dual-publish) | [5.5](#55-user_registered) |
+| **ONTVANGT** | `user_unregistered` | ← Frontend (push, dual-publish) | [5.5b](#55b-user_unregistered) |
 | **ONTVANGT** | `badge_scanned` | ← IoT (Raspberry Pi) of Kassa (QR) | [6.3](#63-badge_scanned) |
 | **ONTVANGT** | `event_ended` | ← Frontend | [11.7](#117-event_ended-frontend--kassa) |
 | **VERZENDT** | `consumption_order` | → CRM | [6.1](#61-consumption_order) |
@@ -76,7 +78,8 @@
 | **VERZENDT** | `user_created` | → CRM | [5.2](#52-user_created) |
 | **VERZENDT** | `user_updated` | → CRM | [5.3](#53-user_updated) |
 | **VERZENDT** | `user_deleted` | → CRM | [5.4](#54-user_deleted) |
-| **VERZENDT** | `user_registered` | → CRM | [5.5](#55-user_registered) |
+| **VERZENDT** | `user_registered` | → CRM + Kassa (dual-publish) | [5.5](#55-user_registered) |
+| **VERZENDT** | `user_unregistered` | → CRM + Kassa (dual-publish) | [5.5b](#55b-user_unregistered) |
 | **VERZENDT** | `user_checkin` | → CRM | [19.1](#191-user_checkin) |
 | **VERZENDT** | `company_member_removed` | → CRM | [5.8](#58-company_member_removed) |
 | **VERZENDT** | `company_registration` | → CRM | [5.9](#59-company_registration-frontend--crm) |
@@ -1194,12 +1197,13 @@ Wanneer een nieuw gebruikersaccount wordt aangemaakt zonder directe sessie-insch
 
 ### 5.5 `user_registered`
 
-Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat sessie-details en initiële betaalstatus.  
+Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat sessie-details, optionele prijs en initiële betaalstatus.  
 > **Naamwijziging:** was `user.registered` → nu `user_registered` (snake_case, v2.0 standaard).  
-> **Queue-correctie:** was `frontend.user.registered` → nu `crm.incoming`.
+> **Queue-correctie:** was `frontend.user.registered` → nu `crm.incoming`.  
+> **v2.3 toevoeging:** Frontend publiceert dit bericht voortaan **dual**: naar `crm.incoming` (direct exchange, bestaand) én naar `kassa.exchange` (routing key: `kassa.incoming.user_registered`). Kassa slaat de sessieprijs onmiddellijk op in Odoo zodat de kassa ook werkt wanneer de Frontend RPC tijdelijk niet bereikbaar is.
 
-**Queue:** `crm.incoming`  
-**Richting:** Frontend → CRM
+**Queues:** `crm.incoming` (CRM) + `kassa.exchange` routing key `kassa.incoming.user_registered` (Kassa)  
+**Richting:** Frontend → CRM + Kassa
 
 #### XSD
 
@@ -1233,14 +1237,14 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
             <xs:complexType><xs:sequence>
               <!-- identity_uuid: de master_uuid van de Identity Service -->
               <xs:element name="identity_uuid" type="UUIDType"/>
-              <xs:element name="email"         type="xs:string"/>
-              <xs:element name="contact">
+              <xs:element name="email"         type="xs:string" minOccurs="0"/>
+              <xs:element name="contact" minOccurs="0">
                 <xs:complexType><xs:sequence>
-                  <xs:element name="first_name" type="xs:string"/>
-                  <xs:element name="last_name"  type="xs:string"/>
+                  <xs:element name="first_name" type="xs:string" minOccurs="0"/>
+                  <xs:element name="last_name"  type="xs:string" minOccurs="0"/>
                 </xs:sequence></xs:complexType>
               </xs:element>
-              <xs:element name="type">
+              <xs:element name="type" minOccurs="0">
                 <xs:simpleType><xs:restriction base="xs:string">
                   <xs:enumeration value="private"/>
                   <xs:enumeration value="company"/>
@@ -1252,11 +1256,20 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
               <xs:element name="session_id"    type="xs:string"/>
             </xs:sequence></xs:complexType>
           </xs:element>
-          <xs:element name="session_title"   type="xs:string" minOccurs="0"/>
-          <xs:element name="payment_status">
+          <xs:element name="session_title" type="xs:string" minOccurs="0"/>
+          <!-- price: inschrijvingskosten voor deze sessie (optioneel, aanbevolen) -->
+          <xs:element name="price" minOccurs="0">
+            <xs:complexType><xs:simpleContent>
+              <xs:extension base="xs:decimal">
+                <xs:attribute name="currency" type="xs:string" fixed="eur" use="required"/>
+              </xs:extension>
+            </xs:simpleContent></xs:complexType>
+          </xs:element>
+          <xs:element name="payment_status" minOccurs="0">
             <xs:simpleType><xs:restriction base="xs:string">
               <xs:enumeration value="pending"/>
               <xs:enumeration value="paid"/>
+              <xs:enumeration value="unpaid"/>
             </xs:restriction></xs:simpleType>
           </xs:element>
         </xs:sequence></xs:complexType>
@@ -1266,7 +1279,7 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
 </xs:schema>
 ```
 
-#### Voorbeeld XML (particulier)
+#### Voorbeeld XML (particulier, met prijs)
 
 ```xml
 <message>
@@ -1276,7 +1289,6 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
     <source>frontend</source>
     <type>user_registered</type>
     <version>2.0</version>
-    <correlation_id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</correlation_id>
   </header>
   <body>
     <customer>
@@ -1289,6 +1301,8 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
       <type>private</type>
       <session_id>sess-2026-mainstage-01</session_id>
     </customer>
+    <session_title>Mainstage Opening</session_title>
+    <price currency="eur">25.00</price>
     <payment_status>pending</payment_status>
   </body>
 </message>
@@ -1304,7 +1318,6 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
     <source>frontend</source>
     <type>user_registered</type>
     <version>2.0</version>
-    <correlation_id>b2c3d4e5-f6a7-8901-bcde-f01234567891</correlation_id>
   </header>
   <body>
     <customer>
@@ -1319,7 +1332,77 @@ Wanneer een gebruiker zich inschrijft voor een specifieke festivalsessie. Bevat 
       <vat_number>BE0123456789</vat_number>
       <session_id>sess-2026-workshop-04</session_id>
     </customer>
+    <session_title>Workshop Productie</session_title>
+    <price currency="eur">40.00</price>
     <payment_status>pending</payment_status>
+  </body>
+</message>
+```
+
+---
+
+### 5.5b `user_unregistered`
+
+Wanneer een gebruiker zich **uitschrijft** uit een specifieke festivalsessie. Dit is een **sessie-niveau** uitschrijving — onderscheid van `user_deleted` (§5.4) dat een volledig accountverwijdering is.
+
+> **v2.3 nieuw bericht.** Frontend publiceert dual: naar `crm.incoming` (CRM) én `kassa.exchange` (routing key: `kassa.incoming.user_unregistered`). Kassa verwijdert de sessie-entry en herberekent het openstaand bedrag.
+
+**Queues:** `crm.incoming` (CRM) + `kassa.exchange` routing key `kassa.incoming.user_unregistered` (Kassa)  
+**Richting:** Frontend → CRM + Kassa
+
+#### XSD
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:simpleType name="UUIDType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="message">
+    <xs:complexType><xs:sequence>
+      <xs:element name="header">
+        <xs:complexType><xs:sequence>
+          <xs:element name="message_id"     type="UUIDType"/>
+          <xs:element name="timestamp"      type="xs:dateTime"/>
+          <xs:element name="source"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="frontend"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="type"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="user_unregistered"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="version"><xs:simpleType><xs:restriction base="xs:string">
+            <xs:enumeration value="2.0"/></xs:restriction></xs:simpleType></xs:element>
+          <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+      <xs:element name="body">
+        <xs:complexType><xs:sequence>
+          <xs:element name="identity_uuid" type="UUIDType"/>
+          <xs:element name="session_id"    type="xs:string"/>
+          <xs:element name="session_title" type="xs:string" minOccurs="0"/>
+        </xs:sequence></xs:complexType>
+      </xs:element>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>
+```
+
+#### Voorbeeld XML
+
+```xml
+<message>
+  <header>
+    <message_id>c4d5e6f7-a8b9-0123-cdef-012345678902</message_id>
+    <timestamp>2026-05-02T09:15:00Z</timestamp>
+    <source>frontend</source>
+    <type>user_unregistered</type>
+    <version>2.0</version>
+  </header>
+  <body>
+    <identity_uuid>e8b27c1d-4f2a-4b3e-9c5f-123456789abc</identity_uuid>
+    <session_id>sess-2026-mainstage-01</session_id>
+    <session_title>Mainstage Opening</session_title>
   </body>
 </message>
 ```
@@ -4722,6 +4805,7 @@ Facturatie stuurt na elke succesvolle factuuraanmaak een `invoice_available` ber
                   <xs:enumeration value="cancelled"/>
                 </xs:restriction></xs:simpleType>
               </xs:element>
+              <xs:element name="invoice_date" type="xs:dateTime"/>
               <xs:element name="pdf_base64" type="xs:base64Binary"/>
             </xs:sequence>
           </xs:complexType>
@@ -4748,6 +4832,7 @@ Facturatie stuurt na elke succesvolle factuuraanmaak een `invoice_available` ber
     <identity_uuid>550e8400-e29b-41d4-a716-446655440000</identity_uuid>
     <invoice_id>142</invoice_id>
     <status>unpaid</status>
+    <invoice_date>2026-05-06T10:30:00Z</invoice_date>
     <pdf_base64>JVBERi0xLjcKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZy...</pdf_base64>
   </body>
 </message>

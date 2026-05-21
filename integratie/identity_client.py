@@ -281,6 +281,17 @@ def create_user(email: str, source_system: str = "frontend") -> str:
 
 
 def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
+    """Look up an existing Identity user by email address.
+
+    Called in two situations:
+    1. PartnerIdentityPoller receives IdentityEmailAlreadyExists from create_user —
+       the email is registered but the UUID is not yet in Odoo, so we fetch it here.
+    2. OrderPoller last-resort fallback when a partner has an email but no x_user_id
+       and create_user raises EMAIL_ALREADY_EXISTS.
+
+    Uses flat XML format (no <message><header><body> envelope) per Identity Service contract.
+    Returns the user payload dict on success, or None if the identity was not found.
+    """
     xml = _build_lookup_email_xml(email)
     _validate_request_xml(xml)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_EMAIL, xml)
@@ -295,6 +306,13 @@ def lookup_by_email(email: str) -> Optional[Dict[str, Optional[str]]]:
 
 
 def lookup_by_uuid(master_uuid: str) -> Optional[Dict[str, Optional[str]]]:
+    """Look up an existing Identity user by their master UUID.
+
+    Not used in the primary Kassa flows (receiver and order_poller go by email),
+    but provided for completeness and potential future use (e.g. admin tooling or
+    cross-service debugging that starts from a known UUID).
+    Returns the user payload dict on success, or None if not found.
+    """
     xml = _build_lookup_uuid_xml(master_uuid)
     _validate_request_xml(xml)
     resp_xml = _rpc_call(IDENTITY_ROUTING_KEY_LOOKUP_UUID, xml)

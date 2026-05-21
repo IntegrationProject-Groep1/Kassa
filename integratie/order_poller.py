@@ -105,7 +105,15 @@ def split_street_and_number(street_str: Optional[str]) -> tuple[str, str]:
 
 class OrderPoller:
     def __init__(self):
-        """Read Odoo credentials from the environment and prepare internal state."""
+        """Read Odoo credentials from environment and prepare internal state.
+
+        processed_orders is an in-memory OrderedDict (max MAX_CACHE_SIZE = 10,000 entries).
+        It tracks every order ID that has been published to RabbitMQ in this process
+        lifetime. A service restart clears it — this is acceptable per design because:
+        - Orders already processed have x_rabbitmq_sent=True in Odoo (the real guard).
+        - The cache is just a fast path to skip the Odoo flag check on hot orders.
+        - Keeping dedup state in-memory avoids a database dependency.
+        """
         env = require_env("ODOO_URL", "ODOO_DB", "ODOO_USER", "ODOO_PASS")
         self.odoo_url = env["ODOO_URL"]
         self.odoo_db = env["ODOO_DB"]
@@ -196,7 +204,21 @@ class OrderPoller:
             return []
 
     def get_customer_info(self, partner_id, country_map=None, visited=None):
-        """Fetch customer data from Odoo, including parent company info if needed."""
+        """Fetch partner data from Odoo and resolve missing x_user_id via Identity Service.
+
+        Fallback chain for x_user_id:
+        1. Use the stored x_user_id on the partner (happy path).
+        2. If absent but an email exists, call identity_client.create_user() as a
+           last resort (idempotent — returns existing UUID for known emails).
+        3. If Identity is unavailable, return None → caller treats order as anonymous.
+
+        Company partners (is_company=True) trigger a recursive call for the parent
+        address. The `visited` set guards against circular parent references that
+        Odoo technically allows.
+
+        Returns None for anonymous orders — callers handle these differently
+        (still published to CRM as is_anonymous=true for stock accounting purposes).
+        """
         if not partner_id:
             return None
 
@@ -391,7 +413,22 @@ class OrderPoller:
             return None
 
     def process_order(self, order, country_map=None):
-        """Process a single POS order and send as consumption_order."""
+        """Route a completed POS order to the correct processing branch.
+
+        Detection logic:
+        - Negative amount_total → refund: delegates to _process_refund().
+        - Positive amount_total, POS config = Inschrijvingskassa → registration:
+          delegates to _process_registration().
+        - Positive amount_total, any other config → consumption:
+          delegates to _process_consumption().
+
+        Each branch emits its own set of RabbitMQ messages (consumption_order,
+        payment_registered, refund_processed, etc.) and marks the order as processed
+        in Odoo (x_rabbitmq_sent=True) so restarts don't re-publish.
+
+        Odoo sets state='invoiced' (not 'paid') when a fiscal receipt is generated
+        at the kiosk. Both 'paid' and 'invoiced' are treated as completed orders here.
+        """
         order_id = order['id']
 
         if order_id in self.processed_orders:
@@ -444,11 +481,11 @@ class OrderPoller:
                         # ── Happy path: Kassa is the authoritative balance owner ──────────
                         # Lease was fully granted by CRM (x_lease_id is set).
                         # Safe to add to x_wallet_balance and immediately inform frontend.
-                        new_balance = self.models.execute_kw(
+                        new_balance = float(self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'pos.order', 'action_add_wallet_amount',
                             [customer_info['id'], topup_amount]
-                        )
+                        ) or 0.0)
                         self.models.execute_kw(
                             self.odoo_db, self.odoo_uid, self.odoo_pass,
                             'pos.order', 'write',
@@ -738,7 +775,19 @@ class OrderPoller:
         )
 
     def _process_refund(self, order, order_id, customer_info, is_anonymous) -> tuple[bool, str | None]:
-        """Handle refund logic."""
+        """Publish a refund_processed message and credit the wallet if applicable.
+
+        Refund detection: process_order() identifies a refund when amount_total < 0.
+        Odoo creates a negative POS order (mirroring the original) — the line amounts
+        and payment method IDs on the negative order determine what is refunded.
+
+        Badge Wallet refunds: the wallet balance is increased by the refund amount.
+        action_add_wallet_amount() is used for atomic increment to prevent a race with
+        an active lease balance that CRM may be concurrently modifying.
+
+        Routing: refund_processed goes to kassa.payments.refund (not .consumption)
+        so CRM can apply a separate accounting treatment for refunds vs. sales.
+        """
         payment_ids = order.get('payment_ids', [])
         pay_info = self._get_special_payment_info(payment_ids)
 
@@ -754,11 +803,11 @@ class OrderPoller:
             try:
                 # BEST PRACTICE: Use action_add_wallet_amount for atomic balance updates
                 # This prevents overwriting active lease balances from CRM during refunds.
-                new_balance = self.models.execute_kw(
+                new_balance = float(self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order', 'action_add_wallet_amount',
                     [customer_info['id'], pay_info["wallet_amount"]]
-                )
+                ) or 0.0)
             except Exception as e:
                 logger.error(f"❌ Refund wallet update failed for order {order_id}: {e}")
                 monitor.log("error", "refund",
@@ -907,7 +956,21 @@ class OrderPoller:
         return (ok_wallet and ok_refund), refund_msg_id
 
     def _process_consumption(self, order, customer_info, is_anonymous) -> tuple[bool, str | None, str | None, str, str]:
-        """Handle regular sales orders."""
+        """Publish consumption_order and payment_registered messages for a bar/kiosk sale.
+
+        A single Odoo POS order may be paid with multiple methods (e.g., part Badge
+        Wallet, part cash). The order is always published once as consumption_order
+        (full item list). Then payment_registered is sent once per payment method used:
+        - Badge Wallet payment → routing key kassa.payments.consumption
+        - Cash/Card payment → routing key kassa.payments.consumption
+        Each payment_registered message carries only its own payment_method and amount.
+
+        consumption_order is always sent first so CRM can record the sale before
+        receiving the payment confirmation (avoids a timing race on CRM's side).
+
+        Top-up lines (x_is_topup=True products) are annotated with item_type=wallet_topup
+        in the XML. The caller (process_order) then triggers a wallet balance update.
+        """
         items = []
         self._last_consumption_has_topup = False
         self._last_consumption_topup_amount = 0.0

@@ -95,6 +95,7 @@ BUFFER_FILE = Path(os.environ.get("OUTBOX_DIR", "outbox")) / "outbox.json"
 BUFFER_MAX_MESSAGES = 500
 
 _buffer_lock = threading.Lock()
+_publish_lock = threading.Lock()
 _cached_buffer_ids: set[int] = set()
 _last_buffer_mtime = 0.0
 
@@ -277,27 +278,34 @@ def connect_to_rabbitmq():
 
 
 def _publish_or_raise(routing_key: str, message_xml: str, exchange: str | None = None) -> None:
-    """Publish with one retry and backoff on transient failures."""
+    """Publish with one retry and backoff on transient failures.
+
+    Guarded by _publish_lock so the receiver thread and the poller thread never
+    call basic_publish() on the same channel simultaneously.  pika's
+    BlockingConnection is not thread-safe; concurrent writes corrupt the AMQP
+    frame stream and cause the broker to reset the connection.
+    """
     target_exchange = exchange if exchange is not None else EXCHANGE_NAME
     for attempt in range(2):
-        try:
-            _, channel = connect_to_rabbitmq()
-            channel.basic_publish(
-                exchange=target_exchange,
-                routing_key=routing_key,
-                body=message_xml.encode("utf-8"),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
-            logger.info("[SENDER] ✅ Published | exchange=%s | routing_key=%s", target_exchange, routing_key)
-            return
-        except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
-            global _connection, _channel
-            _connection = None
-            _channel = None
-            if attempt == 1:
-                raise
-            # Small backoff prevents immediate hammering when broker is unstable.
-            time.sleep(0.25)
+        with _publish_lock:
+            try:
+                _, channel = connect_to_rabbitmq()
+                channel.basic_publish(
+                    exchange=target_exchange,
+                    routing_key=routing_key,
+                    body=message_xml.encode("utf-8"),
+                    properties=pika.BasicProperties(delivery_mode=2),
+                )
+                logger.info("[SENDER] ✅ Published | exchange=%s | routing_key=%s", target_exchange, routing_key)
+                return
+            except (pika.exceptions.AMQPError, OSError, RuntimeError):  # type: ignore[attr-defined]
+                global _connection, _channel
+                _connection = None
+                _channel = None
+                if attempt == 1:
+                    raise
+        # Sleep outside the lock so other threads can publish while we back off.
+        time.sleep(0.25)
 
 
 def setup_exchange(channel):
