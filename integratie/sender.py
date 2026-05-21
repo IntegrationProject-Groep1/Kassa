@@ -286,8 +286,8 @@ def _publish_or_raise(routing_key: str, message_xml: str, exchange: str | None =
     frame stream and cause the broker to reset the connection.
     """
     target_exchange = exchange if exchange is not None else EXCHANGE_NAME
-    with _publish_lock:
-        for attempt in range(2):
+    for attempt in range(2):
+        with _publish_lock:
             try:
                 _, channel = connect_to_rabbitmq()
                 channel.basic_publish(
@@ -304,8 +304,8 @@ def _publish_or_raise(routing_key: str, message_xml: str, exchange: str | None =
                 _channel = None
                 if attempt == 1:
                     raise
-                # Small backoff prevents immediate hammering when broker is unstable.
-                time.sleep(0.25)
+        # Sleep outside the lock so other threads can publish while we back off.
+        time.sleep(0.25)
 
 
 def setup_exchange(channel):

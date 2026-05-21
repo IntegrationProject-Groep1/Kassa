@@ -281,15 +281,14 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
     """Create or update the Odoo partner for a newly registered attendee (Flow 1).
 
     Upsert strategy:
-    1. Search res.partner by x_user_id (identity_uuid) — the canonical key.
-    2. If not found, fall back to email to handle partners created before UUID linking.
-    3. If still not found, create a new res.partner record.
+    1. Search res.partner by x_user_id (identity_uuid) — the only lookup key.
+    2. If not found, create a new res.partner record.
+
+    No email fallback: new_registration always contains an identity_uuid (enforced
+    by XSD), so a UUID-only lookup is sufficient and unambiguous.
 
     company vs. private: the <type> field drives is_company; company partners also
     receive the VAT number (required by CRM per §11.1).
-
-    x_invoice_on_qr_scan is auto-enabled for company partners because they nearly
-    always need a fiscal invoice — this reduces manual steps at the checkout kiosk.
     """
     body = root.find("body")
     if body is None:

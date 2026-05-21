@@ -37,7 +37,7 @@ CRM / IoT / Frontend / Planning ──> RabbitMQ (kassa.exchange) ──> Python
                                                               outbox.json (offline buffer, path: OUTBOX_DIR)
 ```
 
-All code lives under `integratie/`. The **four** runtime threads started by `main.py` are:
+All code lives under `integratie/`. The **three** runtime threads started by `main.py` are:
 
 **`receiver.py`** — RabbitMQ consumer on `kassa.incoming`. Handles **12 incoming message types**:
 - `new_registration`, `profile_update`, `badge_scanned`, `cancel_registration` (CRM/IoT)
