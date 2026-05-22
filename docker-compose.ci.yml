@@ -1,0 +1,11 @@
+services:
+  kassa-web:
+    restart: "no"
+  kassa-integratie:
+    restart: "no"
+  kassa-mcp:
+    restart: "no"
+  kassa-db:
+    restart: "no"
+  rabbitmq:
+    restart: "no"
