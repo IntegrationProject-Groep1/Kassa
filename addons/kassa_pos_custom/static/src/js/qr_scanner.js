@@ -1,11 +1,33 @@
 /** @odoo-module **/
 
+/**
+ * qr_scanner.js — QR / badge scan entry point for the Kassa POS.
+ *
+ * Adds a "Scan QR" button to the ProductScreen toolbar.  When pressed, the
+ * browser camera opens in a full-screen overlay and continuously scans for a
+ * QR code using the native BarcodeDetector API (Chrome / Android) or the
+ * jsQR library as a fallback.
+ *
+ * On a successful scan the code is POSTed to /kassa/qr_scan (controllers/main.py),
+ * which looks up or creates the Odoo partner, synchronises sessions via a
+ * RabbitMQ RPC to Frontend, and fires a wallet_lease_request to CRM.
+ *
+ * The QR payload can be either:
+ *   - a plain UUID string (identity_uuid)
+ *   - a JSON object: { "identity_uuid": "...", "email": "..." }
+ */
+
 import { Component, useState, useRef, onMounted, onWillUnmount } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { ProductScreen } from "@point_of_sale/app/screens/product_screen/product_screen";
 
+/** Milliseconds between successive frames decoded in the scan loop. */
 const SCAN_INTERVAL_MS = 200;
 
+/**
+ * Partner fields loaded via ORM after a successful scan.
+ * Mirrors KASSA_PARTNER_FIELDS in pos_custom.js — keep in sync.
+ */
 const QR_PARTNER_FIELDS = [
     "id", "name", "street", "city", "state_id", "country_id",
     "email", "phone", "mobile", "barcode", "vat",
@@ -14,10 +36,31 @@ const QR_PARTNER_FIELDS = [
     "x_outstanding_amount", "x_payment_status", "x_lease_active", "x_lease_id", "x_session_title",
 ];
 
+/**
+ * OWL component that renders the "Scan QR" button on the ProductScreen toolbar.
+ *
+ * Lifecycle:
+ *   onMounted  — moves the overlay <div> to document.body so it can cover the
+ *                entire viewport regardless of CSS stacking context.
+ *   onWillUnmount — stops the camera stream and removes the overlay from the DOM.
+ *
+ * State machine (this.state.phase):
+ *   "starting"    — camera permission requested, getUserMedia not yet resolved
+ *   "scanning"    — camera active, scan loop running, waiting for a QR code
+ *   "processing"  — QR detected, /kassa/qr_scan call in flight
+ *   "error"       — unrecoverable error; message shown to cashier
+ */
 export class QrScanButton extends Component {
     static template = "kassa_pos_custom.QrScanButton";
     static props = {};
 
+    /**
+     * OWL setup hook — runs once before first render.
+     *
+     * Injects POS/ORM/RPC/notification services, creates camera and overlay refs,
+     * initialises reactive state and private camera fields, and registers
+     * mount/unmount handlers that manage the overlay DOM node lifecycle.
+     */
     setup() {
         this.pos          = useService("pos");
         this.orm          = useService("orm");
@@ -51,6 +94,13 @@ export class QrScanButton extends Component {
 
     // ── Public ────────────────────────────────────────────────────────────────
 
+    /**
+     * Open the QR-scan overlay and start the camera.
+     *
+     * The 50 ms setTimeout gives OWL one render cycle to paint the <video>
+     * element into the DOM before _startCamera() tries to attach a MediaStream
+     * to it.  Without this delay videoRef.el would still be null.
+     */
     openScanner() {
         this.state.open    = true;
         this.state.phase   = "starting";
@@ -59,6 +109,10 @@ export class QrScanButton extends Component {
         setTimeout(() => this._startCamera(), 50);
     }
 
+    /**
+     * Close the overlay without processing a scan.
+     * Stops the camera stream first to release the hardware resource immediately.
+     */
     cancel() {
         this._stopCamera();
         this.state.open = false;
@@ -66,6 +120,14 @@ export class QrScanButton extends Component {
 
     // ── Camera ────────────────────────────────────────────────────────────────
 
+    /**
+     * Request camera access and begin streaming to the <video> element.
+     *
+     * Requests the rear-facing camera (facingMode: "environment") at 1280 px
+     * width so barcodes are readable on mobile without zooming.
+     * On success: sets phase="scanning" and starts the scan loop.
+     * On failure (permissions denied, no camera): calls _setError().
+     */
     async _startCamera() {
         const video = this.videoRef.el;
         if (!video) {
@@ -87,6 +149,20 @@ export class QrScanButton extends Component {
         }
     }
 
+    /**
+     * Continuous frame-decode loop that runs while this._scanning === true.
+     *
+     * Decoder priority:
+     *   1. window.BarcodeDetector (Chrome 83+, HTTPS required) — hardware-accelerated,
+     *      processes the <video> element directly without canvas round-trip.
+     *   2. window.jsQR (loaded via <script> tag in the QWeb template as a fallback
+     *      for Firefox and Safari) — pure-JS decoder that reads RGBA pixel data from
+     *      a hidden canvas.
+     *
+     * Per-frame errors (e.g. the video frame is not yet ready) are swallowed and
+     * the loop retries after SCAN_INTERVAL_MS — they are expected during startup.
+     * The loop exits as soon as a QR value is decoded.
+     */
     async _runScanLoop() {
         // Prefer the native BarcodeDetector (Chrome/HTTPS); fall back to jsQR.
         const detector = window.BarcodeDetector
@@ -131,6 +207,12 @@ export class QrScanButton extends Component {
         }
     }
 
+    /**
+     * Stop the camera and release the hardware resource.
+     * Calling this is idempotent — safe to call multiple times.
+     * Each MediaStreamTrack must be stopped individually; simply dropping
+     * the stream reference is not enough to turn off the camera indicator light.
+     */
     _stopCamera() {
         this._scanning = false;
         if (this._stream) {
@@ -141,6 +223,23 @@ export class QrScanButton extends Component {
 
     // ── QR detected ──────────────────────────────────────────────────────────
 
+    /**
+     * Handle a successfully decoded QR value.
+     *
+     * Payload parsing:
+     *   JSON object  → extracts identity_uuid (required) and email (optional).
+     *   Plain string → treated as identity_uuid directly (legacy / badge format).
+     *
+     * Processing flow:
+     *   1. POST to /kassa/qr_scan → returns { status, partner_id, sessions }.
+     *   2. Load the full partner record from Odoo via ORM.
+     *   3. Upsert the partner into the POS in-memory store (Odoo 17 model API
+     *      or legacy partners array, whichever is present).
+     *   4. Set the partner on the current order; auto-enable invoice for companies.
+     *   5. Show a success notification with wallet and session info.
+     *
+     * @param {string} rawValue — raw string decoded from the QR image
+     */
     async _onQrDetected(rawValue) {
         this._stopCamera();
         this.state.phase   = "processing";
@@ -229,6 +328,16 @@ export class QrScanButton extends Component {
         }
     }
 
+    /**
+     * POST identity_uuid (and optionally email) to the /kassa/qr_scan controller.
+     *
+     * Returns the JSON response on success, or null if the call throws (network
+     * error, Odoo 500, etc.).  Callers check for null / result.status === "error".
+     *
+     * @param {string} identityUuid — x_user_id / identity UUID from the QR code
+     * @param {string|null} email   — email extracted from a JSON QR payload
+     * @returns {Object|null}
+     */
     async _callQrScanEndpoint(identityUuid, email) {
         try {
             const payload = { identity_uuid: identityUuid };
@@ -240,6 +349,12 @@ export class QrScanButton extends Component {
         }
     }
 
+    /**
+     * Transition the component to the error state and display a message.
+     * Also stops the camera so the indicator light turns off immediately.
+     *
+     * @param {string} message — Dutch error string shown in the overlay
+     */
     _setError(message) {
         this._stopCamera();
         this.state.phase   = "error";
