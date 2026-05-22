@@ -73,7 +73,7 @@ services:
       - outbox-data:/app/outbox
     depends_on:
       kassa-web:
-        condition: service_healthy
+        condition: service_started
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
@@ -94,7 +94,7 @@ services:
       - ./integratie:/app
     depends_on:
       kassa-web:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
 
   rabbitmq:

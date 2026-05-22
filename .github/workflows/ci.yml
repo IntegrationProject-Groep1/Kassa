@@ -63,6 +63,27 @@ jobs:
       - name: Start Services
         run: docker compose up -d --build
 
+      - name: Wait for Odoo HTTP
+        run: |
+          echo "Waiting for Odoo at http://localhost:8069/web/health..."
+          for i in {1..60}; do
+            if curl -sf http://localhost:8069/web/health > /dev/null 2>&1; then
+              echo "✓ Odoo is up!"
+              exit 0
+            fi
+            STATUS=$(docker inspect --format='{{.State.Status}}' kassa_odoo 2>/dev/null || echo "missing")
+            echo "...attempt $i/60 — container: $STATUS"
+            if [ "$STATUS" = "exited" ]; then
+              echo "❌ Odoo container exited. Logs:"
+              docker logs kassa_odoo
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "❌ Odoo did not respond in time. Logs:"
+          docker logs kassa_odoo
+          exit 1
+
       - name: Wait for Integration Service (Healthcheck)
         run: |
           echo "Waiting for kassa_integratie to become healthy..."
