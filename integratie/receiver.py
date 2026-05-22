@@ -71,6 +71,7 @@ ODOO_USER = _odoo_env["ODOO_USER"]
 ODOO_PASS = _odoo_env["ODOO_PASS"]
 
 QUEUE_NAME = get_env("RABBIT_INCOMING_QUEUE", "kassa.incoming")
+FRONTEND_EXCHANGE = os.environ.get("RABBIT_FRONTEND_EXCHANGE", "frontend.exchange")
 DLX_NAME = get_env("RABBIT_DLX", EXCHANGE_NAME)
 DLQ_NAME = get_env("RABBIT_DLQ", "kassa.incoming.dlq")
 DLQ_ROUTING_KEY = get_env("RABBIT_DLX_ROUTING_KEY", DLQ_NAME)
@@ -96,6 +97,8 @@ SCHEMA_MAP = {
     "wallet_lease_grant": os.path.join(SCHEMA_DIR, "schema_wallet_lease_grant.xsd"),
     "wallet_remote_topup": os.path.join(SCHEMA_DIR, "schema_wallet_remote_topup.xsd"),
     "event_ended": os.path.join(SCHEMA_DIR, "schema_event_ended.xsd"),
+    "user_registered":        os.path.join(SCHEMA_DIR, "schema_user_registered.xsd"),
+    "user_unregistered":      os.path.join(SCHEMA_DIR, "schema_user_unregistered.xsd"),
     "user_sessions_response": os.path.join(SCHEMA_DIR, "schema_user_sessions_response.xsd"),
     "session_created":        os.path.join(SCHEMA_DIR, "schema_session_created.xsd"),
     "session_updated":        os.path.join(SCHEMA_DIR, "schema_session_updated.xsd"),
@@ -1102,95 +1105,6 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
         logger.warning("[USER_SESSIONS_RESPONSE] Could not push bus notification: %s", exc)
 
 
-def process_session_view_response(root: Element, uid: int, models: OdooModelsProxy) -> None:
-    """Handle session_view_response from Planning (startup all-sessions fetch).
-
-    For each session, ensure a POS product exists in the Inschrijvingskassa under
-    the 'Sessions' category with the price from Planning.
-    Binding required on planning.exchange: kassa.incoming ← planning.to.kassa.session.view.response
-    """
-    body = root.find("body")
-    request_message_id = (body.findtext("request_message_id") or "unknown") if body is not None else "unknown"
-    status = (body.findtext("status") or "unknown").strip() if body is not None else "unknown"
-    sessions = body.findall(".//session") if body is not None else []
-    session_count = len(sessions)
-
-    logger.info(
-        "[SESSION_VIEW_RESPONSE] ✅ Received | request_message_id=%s | status=%s | session_count=%d",
-        request_message_id, status, session_count,
-    )
-
-    if status == "not_found" or session_count == 0:
-        logger.warning(
-            "[SESSION_VIEW_RESPONSE] No sessions returned | request_message_id=%s", request_message_id
-        )
-        return
-
-    for i, session in enumerate(sessions, 1):
-        session_id = session.findtext("session_id") or "?"
-        title = session.findtext("title") or "?"
-        start = session.findtext("start_datetime") or "?"
-        end = session.findtext("end_datetime") or "?"
-        loc = session.findtext("location") or "?"
-        session_type = session.findtext("session_type") or "?"
-        status_val = session.findtext("status") or "?"
-        max_att = session.findtext("max_attendees") or "?"
-        cur_att = session.findtext("current_attendees") or "?"
-        speaker_el = session.find("speaker")
-        if speaker_el is not None:
-            fn = speaker_el.findtext("contact/first_name") or ""
-            ln = speaker_el.findtext("contact/last_name") or ""
-            speaker = f"{fn} {ln}".strip() or "-"
-        else:
-            speaker = "-"
-        price_el = session.find("price")
-        price = (
-            f"{price_el.text} {price_el.get('currency', '')}".strip()
-            if price_el is not None else "-"
-        )
-        logger.info(
-            "[SESSION_VIEW_RESPONSE] Session %d/%d: id=%s | '%s' | %s–%s | loc=%s"
-            " | type=%s | status=%s | attendees=%s/%s | speaker=%s | price=%s",
-            i, session_count, session_id, title, start, end, loc,
-            session_type, status_val, cur_att, max_att, speaker, price,
-        )
-
-        if title and title != "?":
-            session_price: float | None = None
-            if price_el is not None:
-                try:
-                    session_price = float(price_el.text or 0)
-                except (ValueError, TypeError):
-                    pass
-            _ensure_session_product(
-                uid, models, title, price=session_price,
-                session_id=session_id if session_id != "?" else None,
-            )
-
-    logger.info(
-        "[SESSION_VIEW_RESPONSE] ✅ %d session product(s) ensured in Inschrijvingskassa"
-        " | request_message_id=%s",
-        session_count, request_message_id,
-    )
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "session",
-                    f"session_view_response processed | {session_count} session(s) ensured"
-                    f" | request_message_id={request_message_id}")
-
-    # Push updated product list to all open POS sessions via the bus so the
-    # cashier's screen refreshes without a manual reload.
-    try:
-        notified = models.execute_kw(
-            ODOO_DB, uid, ODOO_PASS,
-            "pos.session", "kassa_notify_product_update", [[]],
-        )
-        logger.info(
-            "[SESSION_VIEW_RESPONSE] Bus notification sent to %d open POS session(s)", notified
-        )
-    except Exception as exc:
-        logger.warning("[SESSION_VIEW_RESPONSE] Could not push bus notification: %s", exc)
-
-
 def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
     """Parse x_session_title JSON; normalise plain-string entries to dict format."""
     if not raw:
@@ -1208,6 +1122,138 @@ def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
         elif isinstance(e, str) and e.strip():
             result.append({"session_id": "", "title": e.strip(), "price": None})
     return result
+
+
+def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle user_registered from Frontend (dual-publish, contract §5.5).
+
+    Adds the session entry (with price) to the partner's x_session_title list and
+    accumulates x_outstanding_amount. If the partner does not exist yet (race with
+    new_registration), logs a warning and does nothing — new_registration will
+    create the record with full profile data.
+    Binding: kassa.incoming ← kassa.exchange ← kassa.incoming.user_registered
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("user_registered: <body> missing")
+
+    customer = body.find("customer")
+    if customer is None:
+        raise ValueError("user_registered: <customer> missing in <body>")
+
+    identity_uuid = (customer.findtext("identity_uuid") or "").strip()
+    session_id = (customer.findtext("session_id") or "").strip()
+    if not identity_uuid:
+        raise ValueError("user_registered: identity_uuid missing")
+
+    session_title = (body.findtext("session_title") or "").strip()
+    payment_status = (body.findtext("payment_status") or "pending").strip()
+
+    price_el = body.find("price")
+    price: Optional[float] = None
+    if price_el is not None and price_el.text:
+        try:
+            price = float(price_el.text.strip())
+        except (ValueError, TypeError):
+            pass
+
+    existing: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount"], "limit": 1},
+    )
+
+    if not existing:
+        logger.warning(
+            "[USER_REGISTERED] ⚠ Partner not found for identity_uuid=%s — "
+            "will be handled when new_registration arrives", identity_uuid,
+        )
+        return
+
+    partner_id = existing[0]["id"]
+    sessions = _parse_session_list(existing[0].get("x_session_title") or "")
+
+    if not any(s.get("session_id") == session_id for s in sessions):
+        sessions.append({"session_id": session_id, "title": session_title, "price": price})
+
+    outstanding = sum(
+        float(s["price"]) for s in sessions if s.get("price") is not None
+    )
+
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "write",
+        [[partner_id], {
+            "x_session_title": json.dumps(sessions),
+            "x_outstanding_amount": outstanding,
+            "x_payment_status": payment_status,
+        }],
+    )
+    logger.info(
+        "[USER_REGISTERED] ✓ Session added | Odoo ID=%s | session_id=%s | price=%s | outstanding=%.2f",
+        partner_id, session_id, price, outstanding,
+    )
+    if MONITOR_SUCCESS_LOGS:
+        monitor.log("info", "registration",
+                    f"user_registered: session added | partner={partner_id} | session_id={session_id}")
+
+
+def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) -> None:
+    """Handle user_unregistered from Frontend (dual-publish, contract §5.5b).
+
+    Removes the session entry from the partner's x_session_title list and
+    recalculates x_outstanding_amount.
+    Binding: kassa.incoming ← kassa.exchange ← kassa.incoming.user_unregistered
+    """
+    body = root.find("body")
+    if body is None:
+        raise ValueError("user_unregistered: <body> missing")
+
+    identity_uuid = (body.findtext("identity_uuid") or "").strip()
+    session_id = (body.findtext("session_id") or "").strip()
+    if not identity_uuid:
+        raise ValueError("user_unregistered: identity_uuid missing")
+
+    existing: List[OdooRecord] = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "search_read",
+        [[["x_user_id", "=", identity_uuid]]],
+        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount"], "limit": 1},
+    )
+
+    if not existing:
+        logger.warning(
+            "[USER_UNREGISTERED] ⚠ Partner not found for identity_uuid=%s — no action",
+            identity_uuid,
+        )
+        return
+
+    partner_id = existing[0]["id"]
+    sessions = _parse_session_list(existing[0].get("x_session_title") or "")
+    sessions = [s for s in sessions if s.get("session_id") != session_id]
+
+    outstanding = sum(
+        float(s["price"]) for s in sessions if s.get("price") is not None
+    )
+    status = "unpaid" if not sessions else "pending"
+
+    models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "res.partner", "write",
+        [[partner_id], {
+            "x_session_title": json.dumps(sessions),
+            "x_outstanding_amount": outstanding,
+            "x_payment_status": status,
+        }],
+    )
+    logger.info(
+        "[USER_UNREGISTERED] ✓ Session removed | Odoo ID=%s | session_id=%s | outstanding=%.2f",
+        partner_id, session_id, outstanding,
+    )
+    if MONITOR_SUCCESS_LOGS:
+        monitor.log("info", "registration",
+                    f"user_unregistered: session removed | partner={partner_id} | session_id={session_id}")
 
 
 def process_session_created(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -1395,6 +1441,10 @@ def process_message(ch, method, properties, body):
 
         if msg_type == "new_registration":
             process_new_registration(root, uid, models)
+        elif msg_type == "user_registered":
+            process_user_registered(root, uid, models)
+        elif msg_type == "user_unregistered":
+            process_user_unregistered(root, uid, models)
         elif msg_type == "profile_update":
             process_profile_update(root, uid, models)
         elif msg_type == "badge_scanned":
@@ -1593,8 +1643,10 @@ def start_listening():
         msg = f"Startup flush failure: {str(e)[:500]}"
         monitor.log("warning", "system_error", msg)
 
-    # Bind Frontend → Kassa session routing keys on kassa.exchange
+    # Declare frontend.exchange and bind Frontend → Kassa session routing keys.
+    # Frontend owns this exchange and publishes session lifecycle + RPC responses to it.
     try:
+        channel.exchange_declare(exchange=FRONTEND_EXCHANGE, exchange_type="topic", durable=True)
         for routing_key in (
             "frontend.to.kassa.user_sessions_response",
             "frontend.to.kassa.session.created",
@@ -1602,15 +1654,15 @@ def start_listening():
             "frontend.to.kassa.session.deleted",
         ):
             channel.queue_bind(
-                exchange=EXCHANGE_NAME,
+                exchange=FRONTEND_EXCHANGE,
                 queue=QUEUE_NAME,
                 routing_key=routing_key,
             )
-        logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", EXCHANGE_NAME)
+        logger.info("[RECEIVER] ✅ Bound Frontend session routing keys on %s", FRONTEND_EXCHANGE)
     except Exception as e:
         logger.warning("[RECEIVER] Could not bind Frontend session routing keys: %s", e)
         monitor.log("warning", "session",
-                    f"Could not bind Frontend session routing keys on {EXCHANGE_NAME}: {str(e)[:300]}")
+                    f"Could not bind Frontend session routing keys on {FRONTEND_EXCHANGE}: {str(e)[:300]}")
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=process_message)
     logger.info("[RECEIVER] ✓ Listening on queue: %s", QUEUE_NAME)
