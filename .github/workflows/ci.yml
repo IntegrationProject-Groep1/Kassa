@@ -62,13 +62,30 @@ jobs:
 
       - name: Verify Odoo Image
         run: |
-          echo "Building Odoo image and checking odoo-bin is reachable..."
+          echo "Building Odoo image..."
           docker build -f Dockerfile.odoo -t kassa_odoo_test .
-          docker run --rm --entrypoint="" kassa_odoo_test odoo-bin --version 2>&1
-          echo "✓ Odoo image OK"
+          echo "--- odoo binary location ---"
+          docker run --rm --entrypoint="" kassa_odoo_test which odoo 2>&1 || true
+          echo "--- odoo version ---"
+          docker run --rm --entrypoint="" kassa_odoo_test odoo --version 2>&1 || true
+          echo "--- ODOO_RC / entrypoint env ---"
+          docker run --rm --entrypoint="" kassa_odoo_test env 2>&1 | grep -E "(ODOO|RC|CONFIG|DATA)" || true
+          echo "--- entrypoint.sh first 40 lines ---"
+          docker run --rm --entrypoint="" kassa_odoo_test head -40 /entrypoint.sh 2>&1 || true
+          echo "✓ Image OK"
 
       - name: Start Services
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
+
+      - name: Initial Container State
+        run: |
+          sleep 8
+          echo "--- container states ---"
+          docker ps -a
+          echo "--- kassa_odoo logs (first 8s) ---"
+          docker logs kassa_odoo 2>&1 || true
+          echo "--- kassa_db logs ---"
+          docker logs kassa_db 2>&1 | tail -20 || true
 
       - name: Wait for Odoo HTTP
         run: |
