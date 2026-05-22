@@ -373,4 +373,3 @@ class TestXSDCompliance:
         )
         valid, errors = validate_xml(xml, "schema_user_sessions_response.xsd")
         assert valid, f"XSD Error in user_sessions_response (no speaker): {errors}"
-
