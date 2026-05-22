@@ -60,32 +60,8 @@ jobs:
         run: |
           sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
 
-      - name: Verify Odoo Image
-        run: |
-          echo "Building Odoo image..."
-          docker build -f Dockerfile.odoo -t kassa_odoo_test .
-          echo "--- odoo binary location ---"
-          docker run --rm --entrypoint="" kassa_odoo_test which odoo 2>&1 || true
-          echo "--- odoo version ---"
-          docker run --rm --entrypoint="" kassa_odoo_test odoo --version 2>&1 || true
-          echo "--- ODOO_RC / entrypoint env ---"
-          docker run --rm --entrypoint="" kassa_odoo_test env 2>&1 | grep -E "(ODOO|RC|CONFIG|DATA)" || true
-          echo "--- entrypoint.sh first 40 lines ---"
-          docker run --rm --entrypoint="" kassa_odoo_test head -40 /entrypoint.sh 2>&1 || true
-          echo "✓ Image OK"
-
       - name: Start Services
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
-
-      - name: Initial Container State
-        run: |
-          sleep 8
-          echo "--- container states ---"
-          docker ps -a
-          echo "--- kassa_odoo logs (first 8s) ---"
-          docker logs kassa_odoo 2>&1 || true
-          echo "--- kassa_db logs ---"
-          docker logs kassa_db 2>&1 | tail -20 || true
 
       - name: Wait for Odoo HTTP
         run: |
@@ -100,19 +76,15 @@ jobs:
             if [ "$STATUS" = "exited" ] || [ "$STATUS" = "restarting" ]; then
               EXITCODE=$(docker inspect --format='{{.State.ExitCode}}' kassa_odoo 2>/dev/null || echo "?")
               echo "❌ Odoo container is $STATUS (exit code: $EXITCODE)."
-              echo "--- docker compose logs (kassa-web) ---"
-              docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -300
-              echo "--- docker logs kassa_odoo ---"
-              docker logs kassa_odoo 2>&1 | tail -300
-              echo "--- inspect ---"
-              docker inspect kassa_odoo --format='OOMKilled={{.State.OOMKilled}} Error={{.State.Error}}'
+              docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -200
+              docker logs kassa_odoo 2>&1 | tail -200
               exit 1
             fi
             sleep 10
           done
           echo "❌ Odoo did not respond in time."
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -300
-          docker logs kassa_odoo 2>&1 | tail -300
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -200
+          docker logs kassa_odoo 2>&1 | tail -200
           exit 1
 
       - name: Wait for Integration Service (Healthcheck)
