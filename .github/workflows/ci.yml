@@ -60,6 +60,13 @@ jobs:
         run: |
           sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
 
+      - name: Verify Odoo Image
+        run: |
+          echo "Building Odoo image and checking odoo-bin is reachable..."
+          docker build -f Dockerfile.odoo -t kassa_odoo_test .
+          docker run --rm --entrypoint="" kassa_odoo_test odoo-bin --version 2>&1
+          echo "✓ Odoo image OK"
+
       - name: Start Services
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
 
@@ -75,16 +82,20 @@ jobs:
             echo "...attempt $i/60 — container: $STATUS"
             if [ "$STATUS" = "exited" ] || [ "$STATUS" = "restarting" ]; then
               EXITCODE=$(docker inspect --format='{{.State.ExitCode}}' kassa_odoo 2>/dev/null || echo "?")
-              echo "❌ Odoo container is $STATUS (exit code: $EXITCODE). Logs:"
-              docker logs kassa_odoo 2>&1 | tail -200
+              echo "❌ Odoo container is $STATUS (exit code: $EXITCODE)."
+              echo "--- docker compose logs (kassa-web) ---"
+              docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -300
+              echo "--- docker logs kassa_odoo ---"
+              docker logs kassa_odoo 2>&1 | tail -300
               echo "--- inspect ---"
               docker inspect kassa_odoo --format='OOMKilled={{.State.OOMKilled}} Error={{.State.Error}}'
               exit 1
             fi
             sleep 10
           done
-          echo "❌ Odoo did not respond in time. Logs:"
-          docker logs kassa_odoo 2>&1 | tail -200
+          echo "❌ Odoo did not respond in time."
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -300
+          docker logs kassa_odoo 2>&1 | tail -300
           exit 1
 
       - name: Wait for Integration Service (Healthcheck)
