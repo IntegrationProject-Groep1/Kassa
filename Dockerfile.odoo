@@ -1,7 +1,5 @@
 FROM odoo:17.0
 USER root
 RUN pip install --no-cache-dir pika
-COPY entrypoint-wrapper.sh /entrypoint-wrapper.sh
-RUN chmod +x /entrypoint-wrapper.sh
 USER odoo
-ENTRYPOINT ["/entrypoint-wrapper.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
