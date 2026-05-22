@@ -1458,6 +1458,36 @@ class TestProcessUserRegistered:
         vals = write_call[0][5][1]
         assert vals["x_outstanding_amount"] == 0.0
 
+    def test_existing_outstanding_preserved_when_price_absent(self, odoo):
+        """CRM-authoritative outstanding is not zeroed when user_registered has no price."""
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 50.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(price=None), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 50.0
+
+    def test_outstanding_accumulates_on_top_of_existing_amount(self, odoo):
+        """Price is added to whatever Odoo currently stores, not recalculated from scratch."""
+        uid, models = odoo
+        import json
+        # Existing entry has no price (plain-string legacy entry normalised to price=None)
+        existing = json.dumps([{"session_id": "sess-000", "title": "Legacy", "price": None}])
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 40.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(session_id="sess-001", price="25.00"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        # 40 (authoritative from Odoo) + 25 (new session price) = 65, not 25
+        assert vals["x_outstanding_amount"] == 65.0
+
 
 # ── process_user_unregistered ─────────────────────────────────────────────────
 
@@ -1473,7 +1503,7 @@ class TestProcessUserUnregistered:
             "</body></message>"
         )
 
-    def test_removes_session_and_recalculates_outstanding(self, odoo):
+    def test_removes_session_and_decrements_outstanding(self, odoo):
         uid, models = odoo
         import json
         existing = json.dumps([
@@ -1481,7 +1511,8 @@ class TestProcessUserUnregistered:
             {"session_id": "sess-002", "title": "Keynote", "price": 10.0},
         ])
         models.execute_kw.side_effect = [
-            [{"id": 8, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 35.0}],
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 35.0, "x_payment_status": "pending"}],
             True,
         ]
         receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
@@ -1492,13 +1523,15 @@ class TestProcessUserUnregistered:
         assert len(sessions) == 1
         assert sessions[0]["session_id"] == "sess-002"
         assert vals["x_outstanding_amount"] == 10.0
+        assert vals["x_payment_status"] == "pending"
 
     def test_last_session_removed_zeros_outstanding(self, odoo):
         uid, models = odoo
         import json
         existing = json.dumps([{"session_id": "sess-001", "title": "Workshop AI", "price": 25.0}])
         models.execute_kw.side_effect = [
-            [{"id": 8, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 25.0}],
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 25.0, "x_payment_status": "pending"}],
             True,
         ]
         receiver.process_user_unregistered(self._root(), uid, models)
@@ -1532,7 +1565,8 @@ class TestProcessUserUnregistered:
         import json
         existing = json.dumps([{"session_id": "sess-999", "title": "Other", "price": 5.0}])
         models.execute_kw.side_effect = [
-            [{"id": 8, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 5.0}],
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 5.0, "x_payment_status": "pending"}],
             True,
         ]
         receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
@@ -1543,3 +1577,43 @@ class TestProcessUserUnregistered:
         sessions = _json.loads(vals["x_session_title"])
         assert len(sessions) == 1  # sess-999 untouched
         assert vals["x_outstanding_amount"] == 5.0
+
+    def test_paid_partner_partial_unregister_keeps_paid_status(self, odoo):
+        """Unregistering one session must not revert a fully-paid partner back to pending."""
+        uid, models = odoo
+        import json
+        existing = json.dumps([
+            {"session_id": "sess-001", "title": "Workshop AI", "price": 25.0},
+            {"session_id": "sess-002", "title": "Keynote", "price": 10.0},
+        ])
+        # Partner paid in full: order_poller set outstanding=0 and status="paid"
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 0.0, "x_payment_status": "paid"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        # outstanding stays 0 (max(0, 0 - 25) = 0); status must stay "paid"
+        assert vals["x_outstanding_amount"] == 0.0
+        assert vals["x_payment_status"] == "paid"
+
+    def test_unregister_clamps_outstanding_at_zero_when_partially_paid(self, odoo):
+        """Outstanding never goes negative when a session is removed after partial payment."""
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-001", "title": "Workshop AI", "price": 25.0}])
+        # Partner partially paid: outstanding was reduced to 10 (paid 15 out of 25)
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 10.0, "x_payment_status": "pending"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 0.0  # max(0, 10 - 25) = 0
+        assert vals["x_payment_status"] == "paid"
