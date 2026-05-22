@@ -84,7 +84,6 @@ ROUTING_KEYS = {
     "wallet_lease_request": "kassa.to.crm.wallet_lease_request",
     "wallet_lease_return": "kassa.to.crm.wallet_lease_return",
     "user_sessions_request": "kassa.to.frontend.user_sessions_request",
-    "session_view_request":  "kassa.to.planning.session.view",
     "system_error": "kassa.errors",
     "log": "logs",
 }
@@ -376,7 +375,6 @@ _OUTGOING_SCHEMA_MAP = {
     "wallet_lease_return":     _SCHEMA_DIR / "schema_wallet_lease_return.xsd",
     "user_sessions_request":   _SCHEMA_DIR / "schema_user_sessions_request.xsd",
     "user_sessions_response":  _SCHEMA_DIR / "schema_user_sessions_response.xsd",
-    "session_view_request":    _SCHEMA_DIR / "schema_session_view_request.xsd",
     "system_error": _SCHEMA_DIR / "schema_error.xsd",
     "log": _SCHEMA_DIR / "schema_log.xsd",
 }
@@ -750,18 +748,6 @@ def build_user_sessions_request_xml(identity_uuid: str, correlation_id: str) -> 
     _make_header(root, "user_sessions_request", correlation_id=correlation_id)
     body = ET.SubElement(root, "body")
     ET.SubElement(body, "identity_uuid").text = str(identity_uuid)
-    return _to_xml(root)
-
-
-def build_session_view_request_xml(correlation_id: str) -> str:
-    """Build session_view_request: Kassa asks Planning for all sessions at startup.
-
-    No session_id in body → Planning returns all active sessions with prices.
-    Send via: send_typed_message("session_view_request", xml, exchange="planning.exchange")
-    """
-    root = ET.Element("message")
-    _make_header(root, "session_view_request", correlation_id=correlation_id)
-    ET.SubElement(root, "body")
     return _to_xml(root)
 
 

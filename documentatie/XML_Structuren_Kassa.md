@@ -21,11 +21,12 @@ Alle messageType-waarden zijn conform de snake_case naamgevingsstandaard.
 | 6A | CRM | Odoo | `kassa.incoming` | wallet_lease_grant | schema_wallet_lease_grant.xsd |
 | 6B | CRM | Odoo | `kassa.incoming` | wallet_remote_topup | schema_wallet_remote_topup.xsd |
 | 6C | CRM | Odoo | `kassa.incoming` | event_ended | schema_event_ended.xsd |
+| 13A | Frontend | Odoo | `kassa.incoming` | user_registered | schema_user_registered.xsd |
+| 13B | Frontend | Odoo | `kassa.incoming` | user_unregistered | schema_user_unregistered.xsd |
 | 16 | Frontend | Odoo | `frontend.to.kassa.user_sessions_response` | user_sessions_response | schema_user_sessions_response.xsd |
 | 17A | Frontend | Odoo | `frontend.to.kassa.session.created` | session_created | schema_session_created.xsd |
 | 17B | Frontend | Odoo | `frontend.to.kassa.session.updated` | session_updated | schema_session_updated.xsd |
 | 17C | Frontend | Odoo | `frontend.to.kassa.session.deleted` | session_deleted | schema_session_deleted.xsd |
-| 18 | Planning | Odoo | via `planning.exchange` | session_view_response | schema_session_view_response.xsd |
 
 ### Uitgaande flows (Kassa verstuurt)
 
@@ -44,7 +45,6 @@ Alle messageType-waarden zijn conform de snake_case naamgevingsstandaard.
 | 6D | Odoo | CRM | `kassa.wallet.lease.request` | wallet_lease_request | schema_wallet_lease_request.xsd |
 | 6E | Odoo | CRM | `kassa.wallet.lease.return` | wallet_lease_return | schema_wallet_lease_return.xsd |
 | 19 | Odoo | Frontend | `kassa.to.frontend.user_sessions_request` | user_sessions_request | schema_user_sessions_request.xsd |
-| 20 | Odoo | Planning | via `planning.exchange` | session_view_request | schema_session_view_request.xsd |
 
 ## 2. Inkomende Flows (Kassa ontvangt)
 
@@ -307,18 +307,13 @@ Verstuurd bij check-out of bij ontvangst van `event_ended`. Bevat `final_balance
 
 Verstuurd door receiver.py bij badge-scan op locatie `session`. Frontend antwoordt met `user_sessions_response`.
 
-| **📤 FLOW 20: Sessiescatalogus Opvragen (session_view_request)** | via planning.exchange |
-| --- | --- |
-| **type:** session_view_request | **Bestand:** schema_session_view_request.xsd |
-
-Verstuurd door order_poller.py bij detectie van een nieuwe POS-sessie (`check_pos_sessions()`). Planning antwoordt met `session_view_response` zodat de sessiescatalogus met prijzen beschikbaar is in de Inschrijvingskassa.
 
 ## 4. Enum Waarden — Volledige Referentie
 
 | Element | Toegestane waarden |
 | ---| --- |
-| `<header><type>` (inkomend) | new_registration, badge_scanned, profile_update, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_sessions_response, session_created, session_updated, session_deleted, session_view_response |
-| `<header><type>` (uitgaand) | consumption_order, payment_registered, payment_status, wallet_balance_update, invoice_request, badge_assigned, refund_processed, system_error, wallet_lease_request, wallet_lease_return, user_sessions_request, session_view_request |
+| `<header><type>` (inkomend) | new_registration, badge_scanned, profile_update, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_registered, user_unregistered, user_sessions_response, session_created, session_updated, session_deleted |
+| `<header><type>` (uitgaand) | consumption_order, payment_registered, payment_status, wallet_balance_update, invoice_request, badge_assigned, refund_processed, system_error, wallet_lease_request, wallet_lease_return, user_sessions_request |
 | `<transaction><payment_method>` | company_link, on_site, online |
 | `<payment_context>` | registration, consumption |
 | `<customer><type>` | private, company, anonymous |

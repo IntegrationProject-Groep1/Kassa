@@ -98,6 +98,33 @@ def setup_database(
     odoo_master_pass: str,
     odoo_load_demo: bool = False,
 ) -> bool:
+    """Create the Odoo database if it does not exist, then wait until it is authenticatable.
+
+    Steps:
+    1. Call ``db_exist`` on the Odoo DB service to check for the database.
+       Falls back to an authentication attempt if the RPC call fails (some
+       Odoo deployments disable the ``db_exist`` endpoint).
+    2. If not found, call ``create_database`` with the master password.
+       The master password is set in the Odoo config or via ``ODOO_MASTER_PASS``.
+    3. Poll ``common.authenticate`` until either the target user or ``admin`` can log in
+       (Odoo initialises the database in the background; this can take up to 20 minutes
+       on CI nodes).  If ``admin`` logs in but the target user does not exist yet,
+       ``_ensure_custom_user`` creates or updates it.
+
+    Args:
+        odoo_url:       Full base URL, e.g. ``http://odoo:8069``.
+        odoo_db:        Name of the database to create or verify.
+        odoo_user:      Integration service username (e.g. ``kassa``).
+        odoo_pass:      Password for *odoo_user* — also used as the admin password
+                        when creating a fresh database.
+        odoo_master_pass: Odoo master (superadmin) password for DB operations.
+                          Pass ``None`` or ``""`` if the master password is disabled.
+        odoo_load_demo: Whether to load Odoo's built-in demo data. Only useful for
+                        local development; always ``False`` in production.
+
+    Returns:
+        ``True`` when authentication succeeded, ``False`` on any unrecoverable error.
+    """
     try:
         db_service = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/db", allow_none=True)
         common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common", allow_none=True)
@@ -170,7 +197,17 @@ def setup_database(
 
 
 def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> None:
-    """Ensure the custom Odoo user exists and has the correct password."""
+    """Create or update the integration-service Odoo user when only ``admin`` exists.
+
+    Fresh Odoo databases only have the ``admin`` account.  This function is called
+    from ``setup_database`` when ``admin`` authenticates but the target user
+    (e.g. ``kassa``) does not yet exist.  It clones the admin group memberships so
+    the integration service has full access to POS and partner data.
+
+    If the user already exists, only the password is updated (idempotent).
+    All errors are swallowed with a warning; failing here must not abort startup
+    because the admin session is still valid and the service can continue.
+    """
     try:
         common, models = _common_and_models(odoo_url)
         # Login as admin to create the user
@@ -205,6 +242,16 @@ def _ensure_custom_user(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
 
 def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
+    """Install the ``point_of_sale`` Odoo module if it is not already installed.
+
+    Checks the current state of the ``ir.module.module`` record for
+    ``point_of_sale``.  If the state is not ``installed``, calls
+    ``button_immediate_install`` and polls (max 300 s) until installation completes.
+
+    Returns:
+        ``True`` if POS is installed (or was just installed successfully).
+        ``False`` if the module record was not found or authentication failed.
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -248,6 +295,19 @@ def ensure_pos_installed(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
 
 
 def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
+    """Install the ``kassa_pos_custom`` Odoo addon if it is present and not yet installed.
+
+    The addon is optional — if it does not appear in ``ir.module.module`` (e.g. the
+    module directory is not mounted) the function silently skips it without failing.
+
+    Upgrade is intentionally skipped: ``button_immediate_upgrade`` triggers a full
+    Odoo registry reload that terminates all active POS sessions.  Schema upgrades
+    are handled via the ``--update=kassa_pos_custom`` flag on container startup instead.
+
+    Returns:
+        ``True`` always (failures are non-fatal — the service can still run without
+        the custom addon, albeit with reduced functionality).
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -287,6 +347,26 @@ def ensure_kassa_addons(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
 
 def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> bool:
+    """Create all Kassa custom fields in Odoo if they do not already exist.
+
+    Custom fields extend standard Odoo models (``res.partner``, ``pos.order``, etc.)
+    with Kassa-specific data.  They are created via ``ir.model.fields`` so no Odoo
+    module is required — the service can bootstrap a vanilla Odoo install at runtime.
+
+    Field creation is batched into a single ``create`` call to minimise round-trips.
+    Existing fields are left untouched; field definitions are never modified here to
+    avoid accidental data loss (e.g. changing a char field to an integer would clear
+    all existing values).
+
+    Returns:
+        ``True`` when the check completed (even if some models were not found).
+        ``False`` if authentication failed.
+
+    Note:
+        This function is NOT called by ``main.py`` in production — the custom addon
+        ``kassa_pos_custom`` declares all fields via Odoo's standard module mechanism.
+        This function exists as a fallback for environments where the addon is absent.
+    """
     print("Checking custom fields...", flush=True)
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
@@ -370,6 +450,20 @@ def ensure_custom_fields(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass:
 
 
 def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> dict[float, int]:
+    """Ensure Belgian VAT tax records exist and configure the company currency to EUR.
+
+    Creates ``account.tax`` records for the four Belgian VAT rates (0%, 6%, 12%, 21%)
+    as price-inclusive sales taxes.  "Price inclusive" means the entered price already
+    contains the tax — this matches how POS prices are shown on the display.
+
+    Also sets the company's tax rounding method to ``round_per_line`` (Belgian
+    accounting requirement) and activates EUR as the company currency if needed.
+
+    Returns:
+        A ``{rate: tax_id}`` dict, e.g. ``{0.0: 5, 6.0: 6, 12.0: 7, 21.0: 8}``.
+        Passed to ``ensure_demo_products`` so products are linked to the correct tax.
+        Returns an empty dict on authentication failure.
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -454,6 +548,20 @@ def ensure_tax_settings(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: 
 
 
 def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> tuple[int, int, int]:
+    """Create the three canonical POS product categories if they do not exist.
+
+    The three categories are:
+    - **Top-ups** — wallet top-up products (``x_is_topup=True``).  Used by
+      ``is_topup_product()`` in the order poller to detect top-up lines.
+    - **Drinks** — consumable items sold at the bar.
+    - **Sessions** — conference/workshop sessions added dynamically by
+      ``_ensure_session_product()`` in the receiver when ``session_created``
+      or ``user_sessions_response`` messages arrive.
+
+    Returns:
+        ``(topup_cat_id, drinks_cat_id, sessions_cat_id)`` — Odoo integer IDs.
+        Returns ``(0, 0, 0)`` on authentication failure.
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -478,6 +586,22 @@ def ensure_pos_categories(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass
 
 
 def ensure_payment_methods(odoo_url: str, odoo_db: str, odoo_user: str, odoo_pass: str) -> list[int]:
+    """Create the three standard POS payment methods if they do not exist.
+
+    Payment methods:
+    - **Cash** (``is_cash_count=True``) — physical cash; Odoo counts denominations.
+    - **Card** (``is_cash_count=False``) — card terminal; no cash tracking needed.
+    - **Badge Wallet** (``is_cash_count=False``, ``split_transactions=True``) —
+      deducts from the visitor's ``x_wallet_balance``.  ``split_transactions=True``
+      allows the cashier to split a single order across wallet + another method.
+
+    All three are created under the current user's company so multi-company installs
+    do not mix payment methods between tenants.
+
+    Returns:
+        ``[cash_id, card_id, badge_wallet_id]`` — Odoo integer IDs.
+        Returns an empty list on authentication failure.
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -529,6 +653,22 @@ def ensure_demo_products(
     drinks_cat_id: int,
     tax_map: dict[float, int],
 ) -> None:
+    """Create or update the canonical demo products for Bar Kassa and Top-ups.
+
+    Products are identified by ``default_code`` (internal reference) so they can
+    be updated on subsequent restarts without creating duplicates.  Each product
+    is placed in the correct POS category and linked to the appropriate VAT tax
+    from ``tax_map``.
+
+    Product list:
+    - Top-up EUR 10/20 and Top-up Algemeen (0% VAT, ``x_is_topup=True``)
+    - Cola/Beer (21% VAT), Water/Coffee (6% VAT), Beer also has ``x_age_restricted=True``
+
+    Args:
+        topup_cat_id:  POS category ID for Top-ups (from ``ensure_pos_categories``).
+        drinks_cat_id: POS category ID for Drinks (from ``ensure_pos_categories``).
+        tax_map:       ``{rate: tax_id}`` dict (from ``ensure_tax_settings``).
+    """
     common, models = _common_and_models(odoo_url)
     uid = common.authenticate(odoo_db, odoo_user, odoo_pass, {})
     if not uid:
@@ -576,6 +716,21 @@ def ensure_demo_products(
 
 
 def load_demo_data(odoo_db: str, uid: int, odoo_pass: str, models: OdooModelsProxy) -> bool:
+    """Seed a minimal set of demo partners and products for local development.
+
+    Creates a demo partner ``John Doe (Demo)`` with ``x_user_id=demo-user-123``
+    and a pre-loaded wallet balance of €50, plus standard drinks products.
+
+    This function uses ``price_include=False`` taxes (different from production)
+    so Odoo's own demo/test data can coexist. It is only called when
+    ``ODOO_LOAD_DEMO_DATA=true`` is set in the environment.
+
+    Idempotent: checks by ``x_user_id`` / ``default_code`` before creating.
+
+    Returns:
+        ``True`` always — individual product failures are caught and logged
+        without aborting the rest of the seed.
+    """
     print("Loading demo data...", flush=True)
 
     existing_partner = _rpc(

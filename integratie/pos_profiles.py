@@ -134,7 +134,17 @@ def _archive_unmanaged_pos_configs(
     keep: set[str],
     company_id: int | None = None,
 ) -> None:
-    """Archive any pos.config records whose name is not in *keep* (e.g. Odoo's default 'Shop')."""
+    """Archive any ``pos.config`` records whose name is not in *keep*.
+
+    Odoo ships with a default "Shop" configuration.  If left active, it occupies
+    the only allowed cash payment method (Odoo enforces a one-config-per-cash-method
+    constraint), which would prevent Kassa's "Bar Kassa" config from being created.
+    Archiving (``active=False``) is used instead of deletion so existing POS session
+    history remains accessible for audits.
+
+    Args:
+        keep: Set of profile names that should NOT be archived (e.g. ``{"Bar Kassa", "Inschrijvingskassa"}``).
+    """
     domain: list = [["active", "=", True]]
     if company_id:
         domain.append(["company_id", "=", company_id])
@@ -232,7 +242,29 @@ def _upsert_pos_config(
     company_id: int | None = None,
     categ_ids: list[int] | None = None,
 ) -> int:
-    """Create or update a pos.config record. Returns the record id."""
+    """Create or update a ``pos.config`` record (idempotent).
+
+    If a config with the given *name* already exists, its payment methods and
+    category filter are updated in place.  Two special cases are handled:
+
+    - **Open session lock**: Odoo raises a fault when a POS session is currently
+      open and someone tries to modify the config.  The fault is caught and the
+      config is returned unchanged — changes will be applied on the next restart
+      when the session has been closed.
+    - **Cash method conflict**: Odoo allows only one ``pos.config`` to use a given
+      cash-count payment method at a time.  When a conflict is detected,
+      ``_replace_conflicting_cash_methods`` creates a profile-specific cash method
+      (e.g. "Cash (Bar Kassa)") and retries the write.
+
+    Args:
+        name:       POS configuration name, e.g. ``"Bar Kassa"``.
+        pm_ids:     List of ``pos.payment.method`` IDs to assign to this config.
+        categ_ids:  List of ``pos.category`` IDs to limit what products are visible
+                    on the POS screen.  Pass an empty list to show all products.
+
+    Returns:
+        Odoo ID of the created or updated ``pos.config`` record.
+    """
     domain: list = [["name", "=", name]]
     if company_id:
         domain.append(["company_id", "=", company_id])
@@ -310,13 +342,25 @@ def _upsert_pos_config(
 
 
 def _is_pos_config_open_session_fault(fault: xmlrpc.client.Fault) -> bool:
-    """Return True when Odoo blocks POS config changes because a session is open."""
+    """Return ``True`` when Odoo blocks POS config changes because a session is open.
+
+    Odoo raises a ``UserError`` with the phrase "can't modify ... while a session
+    is open" when a cashier is actively using the POS.  This guard lets the setup
+    code detect that specific case and skip the update gracefully rather than
+    crashing the entire startup sequence.
+    """
     message = fault.faultString.lower()
     return "can't modify" in message and "while a session is open" in message
 
 
 def _is_cash_method_conflict_fault(fault: xmlrpc.client.Fault) -> bool:
-    """Return True if an XML-RPC fault matches Odoo's cash payment method exclusivity error."""
+    """Return ``True`` if the XML-RPC fault is Odoo's cash-method exclusivity error.
+
+    Odoo enforces that each ``pos.payment.method`` with ``is_cash_count=True`` can
+    only be assigned to one ``pos.config`` at a time.  When two profiles both want
+    the same cash method, Odoo raises this fault.  ``_replace_conflicting_cash_methods``
+    then creates a dedicated copy of the cash method for the conflicting profile.
+    """
     return "cash payment method is already used in another point of sale" in fault.faultString.lower()
 
 
@@ -329,7 +373,20 @@ def _replace_conflicting_cash_methods(
     pm_ids: list[int],
     company_id: int | None = None,
 ) -> list[int]:
-    """Swap shared cash-count methods with profile-specific methods to satisfy Odoo constraints."""
+    """Replace shared cash-count methods with profile-specific copies to resolve Odoo conflicts.
+
+    For each ``is_cash_count=True`` payment method in *pm_ids*, this function looks
+    up or creates a dedicated copy named ``"<OriginalName> (<profile_name>)"``
+    (e.g. ``"Cash (Bar Kassa)"``).  The dedicated copy has ``is_cash_count=True``
+    and is only used by this profile, satisfying Odoo's exclusivity constraint.
+
+    Non-cash methods (``is_cash_count=False``) are returned unchanged — there is
+    no conflict for those.
+
+    Returns:
+        A new list of payment method IDs with conflicting cash methods replaced.
+        If no conflicts were found, returns the original *pm_ids* list unchanged.
+    """
     methods = cast(list[dict[str, Any]], models.execute_kw(
         db, uid, password,
         "pos.payment.method", "read",

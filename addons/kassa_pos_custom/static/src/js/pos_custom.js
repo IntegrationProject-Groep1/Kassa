@@ -286,15 +286,33 @@ class VatPromptDialog extends Component {
         close: Function,
     };
 
+    /**
+     * OWL setup hook — initialises reactive dialog state.
+     * vatNumber: bound to the <input> field via t-model.
+     * error: validation message shown below the input when the format is wrong.
+     */
     setup() {
         this.state = useState({ vatNumber: "", error: "" });
     }
 
+    /**
+     * Validate a VAT number against the EU format.
+     * Expected format: two-letter ISO country code followed by 6–12 alphanumeric
+     * characters — e.g. BE0123456789, NL123456789B01, DE123456789.
+     *
+     * @param {string} val — raw input from the cashier
+     * @returns {boolean}
+     */
     _isValidVat(val) {
         // Two-letter country code + 6–12 alphanumeric chars — covers all EU formats.
         return /^[A-Z]{2}[A-Z0-9]{6,12}$/i.test(val.trim());
     }
 
+    /**
+     * Validate the entered VAT number, invoke onConfirm (which saves it to Odoo),
+     * then close the dialog.  If validation fails, show an inline error message
+     * and keep the dialog open so the cashier can correct the input.
+     */
     async confirm() {
         const vat = this.state.vatNumber.trim().toUpperCase();
         if (!this._isValidVat(vat)) {
@@ -305,6 +323,10 @@ class VatPromptDialog extends Component {
         this.props.close();
     }
 
+    /**
+     * Dismiss the dialog without saving a VAT number.
+     * Calls onCancel so the PaymentScreen can clear the invoice flag.
+     */
     cancel() {
         this.props.onCancel();
         this.props.close();
@@ -319,6 +341,14 @@ class VatPromptDialog extends Component {
  * - Story 19: Badge Wallet hidden via template t-if; safety net in addNewPaymentLine.
  */
 patch(PaymentScreen.prototype, {
+    /**
+     * Look up a payment method by exact name from the POS payment methods list.
+     * Supports both the Odoo 17 reactive model API (pos.models["pos.payment.method"])
+     * and the legacy flat array (pos.payment_methods) for backwards compatibility.
+     *
+     * @param {string} name — e.g. "Customer Account", "Badge Wallet"
+     * @returns {Object|undefined}
+     */
     _kassaFindPm(name) {
         return (
             this.pos.models?.["pos.payment.method"]?.getAll?.() ||
@@ -326,6 +356,19 @@ patch(PaymentScreen.prototype, {
         ).find((m) => m.name === name);
     },
 
+    /**
+     * Auto-configure the payment screen for a company or linked-contact customer.
+     *
+     * Fires when the PaymentScreen opens or after the cashier changes the partner.
+     * Two actions:
+     *   1. Enables "To Invoice" on the order (required for B2B transactions).
+     *   2. Adds the "Customer Account" payment method if no payment lines exist yet.
+     *
+     * Guard: skips entirely if the partner is a private individual without a
+     * parent company (is_company=false and parent_id=false).
+     * Guard: skips the payment line addition if lines are already present to avoid
+     * overriding manual payment choices.
+     */
     _kassaActivateCompanyFlow() {
         const order = this.currentOrder;
         const partner = order.get_partner();
@@ -337,6 +380,11 @@ patch(PaymentScreen.prototype, {
         if (pm) this.addNewPaymentLine(pm);
     },
 
+    /**
+     * PaymentScreen OWL setup hook.
+     * Calls the parent setup first, then immediately attempts the company flow so
+     * company orders that already have a partner set are configured on screen entry.
+     */
     setup() {
         super.setup(...arguments);
         try {
@@ -346,6 +394,12 @@ patch(PaymentScreen.prototype, {
         }
     },
 
+    /**
+     * Override of the partner-select button handler.
+     * Delegates to the parent implementation (which opens the partner picker),
+     * then re-runs the company flow so orders that get a company partner assigned
+     * mid-session are configured correctly without a screen reload.
+     */
     async selectPartner() {
         await super.selectPartner(...arguments);
         try {
@@ -355,6 +409,20 @@ patch(PaymentScreen.prototype, {
         }
     },
 
+    /**
+     * Override of addNewPaymentLine with two Kassa-specific guards:
+     *
+     * Badge Wallet guard (runs before super()):
+     *   - Blocks if no partner is selected.
+     *   - Blocks if the wallet lease is not yet active (x_lease_active=false) or the
+     *     lease ID has not arrived from CRM yet (x_lease_id empty — grant still in flight).
+     *   - Blocks if the wallet balance is insufficient for the current order total.
+     *     Comparison is done in integer cents to avoid floating-point rounding errors.
+     *
+     * Customer Account auto-invoice (runs after super()):
+     *   - Automatically enables "To Invoice" when a Customer Account line is added,
+     *     because Customer Account payments always require a B2B invoice.
+     */
     addNewPaymentLine(paymentMethod) {
         if (paymentMethod?.name === "Badge Wallet") {
             const partner = this.currentOrder.get_partner();
@@ -434,6 +502,16 @@ patch(PaymentScreen.prototype, {
         return false;
     },
 
+    /**
+     * Suppress the automatic invoice PDF download after order validation.
+     *
+     * The invoice is still created server-side; we just skip the browser download
+     * to avoid the cashier screen being interrupted by a PDF prompt.
+     * A brief info notification is shown instead so the cashier knows the invoice
+     * was generated.
+     *
+     * @param {number[]} orderIds — Odoo pos.order IDs (not used; PDF suppressed)
+     */
     async downloadInvoice(orderIds) {
         this.env.services.notification.add(
             _t("Factuur aangemaakt."),

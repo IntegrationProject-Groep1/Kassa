@@ -39,10 +39,11 @@ CRM / IoT / Frontend / Planning ──> RabbitMQ (kassa.exchange) ──> Python
 
 All code lives under `integratie/`. The **three** runtime threads started by `main.py` are:
 
-**`receiver.py`** — RabbitMQ consumer on `kassa.incoming`. Handles **12 incoming message types**:
+**`receiver.py`** — RabbitMQ consumer on `kassa.incoming`. Handles **14 incoming message types**:
 - `new_registration`, `profile_update`, `badge_scanned`, `cancel_registration` (CRM/IoT)
 - `wallet_lease_grant`, `wallet_remote_topup`, `event_ended` (CRM wallet lifecycle)
 - `user_event` (fanout, informational only)
+- `user_registered`, `user_unregistered` (Frontend dual-publish — session enrolment/withdrawal; updates partner's session list and outstanding amount)
 - `user_sessions_response`, `session_created`, `session_updated`, `session_deleted` (Frontend session management)
 
 Also binds routing keys for `session_view_response` from Planning. Validates against XSD schemas, detects duplicates (OrderedDict, max 10k), retries on Odoo errors (max 3, via RETRY_QUEUE with 5s TTL) → Dead Letter Queue on failure.

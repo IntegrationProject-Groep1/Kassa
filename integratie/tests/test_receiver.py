@@ -424,160 +424,6 @@ class TestEnsureSessionProduct:
         assert product_calls == []
 
 
-class TestProcessSessionViewResponse:
-    """Tests for process_session_view_response — startup all-sessions handler."""
-
-    def _make_root(self, sessions_xml: str, status: str = "ok", count: int = 1,
-                   req_msg_id: str = "550e8400-e29b-41d4-a716-446655440001") -> ET.Element:
-        xml = (
-            "<message>"
-            "<header>"
-            f"<message_id>550e8400-e29b-41d4-a716-446655440000</message_id>"
-            "<timestamp>2026-05-13T09:00:00Z</timestamp>"
-            "<source>planning</source>"
-            "<type>session_view_response</type>"
-            "<version>2.0</version>"
-            "</header>"
-            "<body>"
-            f"<request_message_id>{req_msg_id}</request_message_id>"
-            f"<status>{status}</status>"
-            f"<session_count>{count}</session_count>"
-            f"<sessions>{sessions_xml}</sessions>"
-            "</body>"
-            "</message>"
-        )
-        return ET.fromstring(xml)
-
-    def test_creates_product_for_each_session(self, odoo):
-        uid, models = odoo
-        sessions_xml = (
-            "<session>"
-            "<session_id>sess-001</session_id>"
-            "<title>Workshop: IoT</title>"
-            "<start_datetime>2026-05-15T14:00:00Z</start_datetime>"
-            "<end_datetime>2026-05-15T16:00:00Z</end_datetime>"
-            "<location>B3</location>"
-            "<session_type>workshop</session_type>"
-            "<status>published</status>"
-            "<max_attendees>30</max_attendees>"
-            "<current_attendees>12</current_attendees>"
-            '<price currency="eur">25.00</price>'
-            "</session>"
-        )
-        root = self._make_root(sessions_xml, status="ok", count=1)
-        models.execute_kw.side_effect = [
-            [],            # x_session_id search → not found
-            [],            # name search → not found
-            [{"id": 10}],  # Sessions category
-            42,            # create product
-        ]
-        receiver.process_session_view_response(root, uid, models)
-
-        create_call = models.execute_kw.call_args_list[3]
-        assert create_call[0][4] == "create"
-        vals = create_call[0][5][0]
-        assert vals["name"] == "Workshop: IoT"
-        assert vals["list_price"] == 25.0
-
-    def test_no_action_when_status_not_found(self, odoo):
-        uid, models = odoo
-        root = self._make_root("", status="not_found", count=0)
-        receiver.process_session_view_response(root, uid, models)
-        models.execute_kw.assert_not_called()
-
-    def test_no_action_when_sessions_empty(self, odoo):
-        uid, models = odoo
-        root = self._make_root("", status="ok", count=0)
-        receiver.process_session_view_response(root, uid, models)
-        models.execute_kw.assert_not_called()
-
-    def test_uses_request_message_id_from_body(self, odoo):
-        """Handler reads request_message_id from body, not correlation_id from header."""
-        uid, models = odoo
-        sessions_xml = (
-            "<session>"
-            "<session_id>s1</session_id>"
-            "<title>Keynote</title>"
-            "<start_datetime>2026-05-15T10:00:00Z</start_datetime>"
-            "<end_datetime>2026-05-15T11:00:00Z</end_datetime>"
-            "<location>Aula</location>"
-            "<session_type>keynote</session_type>"
-            "<status>published</status>"
-            "<max_attendees>200</max_attendees>"
-            "<current_attendees>0</current_attendees>"
-            "</session>"
-        )
-        custom_req_id = "550e8400-e29b-41d4-a716-446655441234"
-        root = self._make_root(sessions_xml, status="ok", count=1, req_msg_id=custom_req_id)
-        models.execute_kw.side_effect = [
-            # found by x_session_id, all fields in sync → no write needed
-            [{"id": 5, "name": "Keynote", "list_price": 0.0, "x_session_id": "s1"}],
-            1,  # kassa_notify_product_update → 1 session notified
-        ]
-        receiver.process_session_view_response(root, uid, models)
-        # 1 search (found by x_session_id) + 1 kassa_notify_product_update
-        assert models.execute_kw.call_count == 2
-
-    def test_bus_notify_called_after_products_ensured(self, odoo):
-        """kassa_notify_product_update is called once after all products are processed."""
-        uid, models = odoo
-        sessions_xml = (
-            "<session>"
-            "<session_id>s1</session_id><title>Session A</title>"
-            "<start_datetime>2026-05-15T10:00:00Z</start_datetime>"
-            "<end_datetime>2026-05-15T11:00:00Z</end_datetime>"
-            "<location>B1</location><session_type>keynote</session_type>"
-            "<status>published</status><max_attendees>100</max_attendees>"
-            "<current_attendees>0</current_attendees>"
-            '<price currency="eur">30.00</price>'
-            "</session>"
-        )
-        root = self._make_root(sessions_xml, status="ok", count=1)
-        models.execute_kw.side_effect = [
-            [],            # product not found
-            [{"id": 10}],  # Sessions category
-            42,            # create product
-            2,             # kassa_notify_product_update returns 2 sessions notified
-        ]
-        receiver.process_session_view_response(root, uid, models)
-
-        notify_call = models.execute_kw.call_args_list[3]
-        assert notify_call[0][3] == "pos.session"
-        assert notify_call[0][4] == "kassa_notify_product_update"
-
-    def test_bus_notify_failure_does_not_crash_handler(self, odoo):
-        """If kassa_notify_product_update raises, the handler completes without re-raising."""
-        uid, models = odoo
-        sessions_xml = (
-            "<session>"
-            "<session_id>s1</session_id><title>Crash Test</title>"
-            "<start_datetime>2026-05-15T10:00:00Z</start_datetime>"
-            "<end_datetime>2026-05-15T11:00:00Z</end_datetime>"
-            "<location>B1</location><session_type>keynote</session_type>"
-            "<status>published</status><max_attendees>50</max_attendees>"
-            "<current_attendees>0</current_attendees>"
-            "</session>"
-        )
-        root = self._make_root(sessions_xml, status="ok", count=1)
-        models.execute_kw.side_effect = [
-            [],            # x_session_id search → not found
-            [],            # name search → not found
-            [],            # no category
-            55,            # create product
-            Exception("bus unavailable"),  # notify fails
-        ]
-        # Must not raise
-        receiver.process_session_view_response(root, uid, models)
-        assert models.execute_kw.call_count == 5
-
-    def test_bus_notify_not_called_when_status_not_found(self, odoo):
-        """kassa_notify_product_update is never called when Planning returns not_found."""
-        uid, models = odoo
-        root = self._make_root("", status="not_found", count=0)
-        receiver.process_session_view_response(root, uid, models)
-        models.execute_kw.assert_not_called()
-
-
 # ── process_user_sessions_response ────────────────────────────────────────────
 
 class TestProcessUserSessionsResponse:
@@ -1512,3 +1358,262 @@ class TestPaymentDueStatusDefault:
         vals = write_call[0][5][1]
         assert vals["x_payment_status"] == "unpaid", \
             f"Expected 'unpaid', got '{vals['x_payment_status']}'"
+
+
+# ── process_user_registered ───────────────────────────────────────────────────
+
+class TestProcessUserRegistered:
+    UUID = "550e8400-e29b-41d4-a716-446655440010"
+
+    def _root(self, session_id="sess-001", session_title="Workshop AI",
+              price="25.00", payment_status="pending"):
+        price_el = f'<price currency="eur">{price}</price>' if price else ""
+        status_el = f"<payment_status>{payment_status}</payment_status>" if payment_status else ""
+        return ET.fromstring(
+            "<message><header/><body>"
+            f"<customer>"
+            f"<identity_uuid>{self.UUID}</identity_uuid>"
+            f"<session_id>{session_id}</session_id>"
+            f"</customer>"
+            f"<session_title>{session_title}</session_title>"
+            f"{price_el}"
+            f"{status_el}"
+            "</body></message>"
+        )
+
+    def test_adds_session_and_sets_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 0.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        import json
+        sessions = json.loads(vals["x_session_title"])
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "sess-001"
+        assert sessions[0]["price"] == 25.0
+        assert vals["x_outstanding_amount"] == 25.0
+        assert vals["x_payment_status"] == "pending"
+
+    def test_accumulates_multiple_sessions(self, odoo):
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-000", "title": "Existing", "price": 10.0}])
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 10.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(session_id="sess-001", price="25.00"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        sessions = json.loads(vals["x_session_title"])
+        assert len(sessions) == 2
+        assert vals["x_outstanding_amount"] == 35.0
+
+    def test_does_not_duplicate_same_session(self, odoo):
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-001", "title": "Workshop AI", "price": 25.0}])
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 25.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(session_id="sess-001"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        sessions = json.loads(vals["x_session_title"])
+        assert len(sessions) == 1
+
+    def test_partner_not_found_logs_warning_no_write(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[]]  # not found
+        receiver.process_user_registered(self._root(), uid, models)
+        assert models.execute_kw.call_count == 1  # only the search, no write
+
+    def test_raises_without_identity_uuid(self, odoo):
+        uid, models = odoo
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<customer><session_id>s1</session_id></customer>"
+            "</body></message>"
+        )
+        with pytest.raises(ValueError, match="identity_uuid missing"):
+            receiver.process_user_registered(root, uid, models)
+
+    def test_price_absent_does_not_count_toward_outstanding(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 0.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(price=None), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 0.0
+
+    def test_existing_outstanding_preserved_when_price_absent(self, odoo):
+        """CRM-authoritative outstanding is not zeroed when user_registered has no price."""
+        uid, models = odoo
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 50.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(price=None), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 50.0
+
+    def test_outstanding_accumulates_on_top_of_existing_amount(self, odoo):
+        """Price is added to whatever Odoo currently stores, not recalculated from scratch."""
+        uid, models = odoo
+        import json
+        # Existing entry has no price (plain-string legacy entry normalised to price=None)
+        existing = json.dumps([{"session_id": "sess-000", "title": "Legacy", "price": None}])
+        models.execute_kw.side_effect = [
+            [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 40.0}],
+            True,
+        ]
+        receiver.process_user_registered(self._root(session_id="sess-001", price="25.00"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        # 40 (authoritative from Odoo) + 25 (new session price) = 65, not 25
+        assert vals["x_outstanding_amount"] == 65.0
+
+
+# ── process_user_unregistered ─────────────────────────────────────────────────
+
+class TestProcessUserUnregistered:
+    UUID = "550e8400-e29b-41d4-a716-446655440011"
+
+    def _root(self, session_id="sess-001", session_title="Workshop AI"):
+        return ET.fromstring(
+            "<message><header/><body>"
+            f"<identity_uuid>{self.UUID}</identity_uuid>"
+            f"<session_id>{session_id}</session_id>"
+            f"<session_title>{session_title}</session_title>"
+            "</body></message>"
+        )
+
+    def test_removes_session_and_decrements_outstanding(self, odoo):
+        uid, models = odoo
+        import json
+        existing = json.dumps([
+            {"session_id": "sess-001", "title": "Workshop AI", "price": 25.0},
+            {"session_id": "sess-002", "title": "Keynote", "price": 10.0},
+        ])
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 35.0, "x_payment_status": "pending"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        sessions = json.loads(vals["x_session_title"])
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "sess-002"
+        assert vals["x_outstanding_amount"] == 10.0
+        assert vals["x_payment_status"] == "pending"
+
+    def test_last_session_removed_zeros_outstanding(self, odoo):
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-001", "title": "Workshop AI", "price": 25.0}])
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 25.0, "x_payment_status": "pending"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        import json as _json
+        sessions = _json.loads(vals["x_session_title"])
+        assert sessions == []
+        assert vals["x_outstanding_amount"] == 0.0
+        assert vals["x_payment_status"] == "paid"
+
+    def test_partner_not_found_no_write(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = [[]]
+        receiver.process_user_unregistered(self._root(), uid, models)
+        assert models.execute_kw.call_count == 1
+
+    def test_raises_without_identity_uuid(self, odoo):
+        uid, models = odoo
+        root = ET.fromstring(
+            "<message><header/><body>"
+            "<session_id>s1</session_id>"
+            "</body></message>"
+        )
+        with pytest.raises(ValueError, match="identity_uuid missing"):
+            receiver.process_user_unregistered(root, uid, models)
+
+    def test_unregistering_nonexistent_session_is_noop(self, odoo):
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-999", "title": "Other", "price": 5.0}])
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 5.0, "x_payment_status": "pending"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        import json as _json
+        sessions = _json.loads(vals["x_session_title"])
+        assert len(sessions) == 1  # sess-999 untouched
+        assert vals["x_outstanding_amount"] == 5.0
+
+    def test_paid_partner_partial_unregister_keeps_paid_status(self, odoo):
+        """Unregistering one session must not revert a fully-paid partner back to pending."""
+        uid, models = odoo
+        import json
+        existing = json.dumps([
+            {"session_id": "sess-001", "title": "Workshop AI", "price": 25.0},
+            {"session_id": "sess-002", "title": "Keynote", "price": 10.0},
+        ])
+        # Partner paid in full: order_poller set outstanding=0 and status="paid"
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 0.0, "x_payment_status": "paid"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(session_id="sess-001"), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        # outstanding stays 0 (max(0, 0 - 25) = 0); status must stay "paid"
+        assert vals["x_outstanding_amount"] == 0.0
+        assert vals["x_payment_status"] == "paid"
+
+    def test_unregister_clamps_outstanding_at_zero_when_partially_paid(self, odoo):
+        """Outstanding never goes negative when a session is removed after partial payment."""
+        uid, models = odoo
+        import json
+        existing = json.dumps([{"session_id": "sess-001", "title": "Workshop AI", "price": 25.0}])
+        # Partner partially paid: outstanding was reduced to 10 (paid 15 out of 25)
+        models.execute_kw.side_effect = [
+            [{"id": 8, "name": "Jan", "x_session_title": existing,
+              "x_outstanding_amount": 10.0, "x_payment_status": "pending"}],
+            True,
+        ]
+        receiver.process_user_unregistered(self._root(), uid, models)
+
+        write_call = models.execute_kw.call_args_list[1]
+        vals = write_call[0][5][1]
+        assert vals["x_outstanding_amount"] == 0.0  # max(0, 10 - 25) = 0
+        assert vals["x_payment_status"] == "paid"

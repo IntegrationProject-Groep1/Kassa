@@ -3,3 +3,4 @@ USER root
 RUN pip install --no-cache-dir pika
 USER odoo
 ENTRYPOINT ["/entrypoint.sh"]
+CMD ["odoo"]

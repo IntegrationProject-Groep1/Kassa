@@ -8,10 +8,11 @@
   </xs:simpleType>
 
   <!--
-    session_view_request — Kassa → Planning
-    Sent at Kassa startup (without session_id) to fetch all sessions with prices.
-    Planning responds with session_view_response on planning.to.kassa.session.view.response.
-    Routing key: kassa.to.planning.session.view
+    user_unregistered — Frontend → Kassa (dual-publish, also to CRM)
+    Sent when a user unregisters from a session. Kassa removes the session
+    entry from the partner record and recalculates the outstanding amount.
+    Routing key: kassa.incoming.user_unregistered
+    Contract section: 5.5b
   -->
   <xs:element name="message">
     <xs:complexType>
@@ -20,21 +21,19 @@
         <xs:element name="header">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="message_id"    type="UUIDType"/>
-              <xs:element name="timestamp"     type="xs:dateTime"/>
+              <xs:element name="message_id"     type="UUIDType"/>
+              <xs:element name="timestamp"      type="xs:dateTime"/>
               <xs:element name="source">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
-                    <xs:enumeration value="kassa"/>
                     <xs:enumeration value="frontend"/>
-                    <xs:enumeration value="crm"/>
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
               <xs:element name="type">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">
-                    <xs:enumeration value="session_view_request"/>
+                    <xs:enumeration value="user_unregistered"/>
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
@@ -45,7 +44,6 @@
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
-              <!-- Optional: used for tracing the response back to this request -->
               <xs:element name="correlation_id" type="UUIDType" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
@@ -54,8 +52,9 @@
         <xs:element name="body">
           <xs:complexType>
             <xs:sequence>
-              <!-- Absent = all sessions; present = single session lookup -->
-              <xs:element name="session_id" type="xs:string" minOccurs="0"/>
+              <xs:element name="identity_uuid" type="UUIDType"/>
+              <xs:element name="session_id"    type="xs:string"/>
+              <xs:element name="session_title" type="xs:string" minOccurs="0"/>
             </xs:sequence>
           </xs:complexType>
         </xs:element>

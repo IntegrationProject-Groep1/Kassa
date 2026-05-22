@@ -458,19 +458,24 @@ class TestReceiverBindings:
         except KeyboardInterrupt:
             pass
 
-        bound_routing_keys = [
-            call_args[1].get("routing_key") or (call_args[0][2] if len(call_args[0]) > 2 else None)
+        # Collect (exchange, routing_key) pairs from all queue_bind calls
+        bindings = [
+            (
+                call_args[1].get("exchange") or (call_args[0][0] if call_args[0] else None),
+                call_args[1].get("routing_key") or (call_args[0][2] if len(call_args[0]) > 2 else None),
+            )
             for call_args in channel_mock.queue_bind.call_args_list
         ]
 
-        expected_keys = {
-            "frontend.to.kassa.user_sessions_response",
-            "frontend.to.kassa.session.created",
-            "frontend.to.kassa.session.updated",
-            "frontend.to.kassa.session.deleted",
+        expected = {
+            ("frontend.exchange", "frontend.to.kassa.user_sessions_response"),
+            ("frontend.exchange", "frontend.to.kassa.session.created"),
+            ("frontend.exchange", "frontend.to.kassa.session.updated"),
+            ("frontend.exchange", "frontend.to.kassa.session.deleted"),
         }
-        for key in expected_keys:
-            assert key in bound_routing_keys, f"Missing binding: {key}"
+        for exchange, key in expected:
+            assert (exchange, key) in bindings, \
+                f"Missing binding: routing_key={key} on exchange={exchange}"
 
     @patch("receiver.connect_to_rabbitmq")
     @patch("receiver.setup_exchange")

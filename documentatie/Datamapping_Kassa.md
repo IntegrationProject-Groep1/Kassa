@@ -22,12 +22,13 @@ Integratieproject Desideriushogeschool 2026
 | Inschrijving geannuleerd | cancel_registration | CRM | Kassa | `kassa.incoming` | Bezoeker annuleert ticket |
 | Wallet lease bevestigd | wallet_lease_grant | CRM | Kassa | `kassa.incoming` | CRM bevestigt balance authority na lease request |
 | Online top-up ontvangen | wallet_remote_topup | CRM | Kassa | `kassa.incoming` | Bezoeker laadt saldo op via website |
-| Event beëindigd | event_ended | CRM | Kassa | `kassa.incoming` | Organisator sluit het event af |
+| Event beëindigd | event_ended | Frontend | Kassa | `kassa.incoming` | Organisator sluit het event af |
+| Sessie inschrijving | user_registered | Frontend (dual-publish) | Kassa | `kassa.incoming` | Bezoeker schrijft in voor een sessie |
+| Sessie uitschrijving | user_unregistered | Frontend (dual-publish) | Kassa | `kassa.incoming` | Bezoeker schrijft zich uit voor een sessie |
 | Sessies per bezoeker | user_sessions_response | Frontend | Kassa | `frontend.to.kassa.user_sessions_response` | Antwoord op user_sessions_request |
 | Nieuwe sessie aangemaakt | session_created | Frontend | Kassa | `frontend.to.kassa.session.created` | Planning maakt nieuwe sessie aan |
 | Sessie bijgewerkt | session_updated | Frontend | Kassa | `frontend.to.kassa.session.updated` | Titel of prijs van sessie gewijzigd |
 | Sessie verwijderd | session_deleted | Frontend | Kassa | `frontend.to.kassa.session.deleted` | Sessie uit programma verwijderd |
-| Sessiescatalogus | session_view_response | Planning | Kassa | via `planning.exchange` | Antwoord op session_view_request bij POS-opstart |
 
 ### Uitgaande flows (Kassa → CRM/Frontend/Planning)
 
@@ -44,7 +45,6 @@ Integratieproject Desideriushogeschool 2026
 | Wallet lease aanvragen | wallet_lease_request | Kassa | CRM | `kassa.wallet.lease.request` | Badge/QR scan op entrance/bar/session |
 | Wallet lease teruggeven | wallet_lease_return | Kassa | CRM | `kassa.wallet.lease.return` | Event beëindigd of check-out |
 | Sessies bezoeker opvragen | user_sessions_request | Kassa | Frontend | `kassa.to.frontend.user_sessions_request` | Badge/QR scan op locatie `session` |
-| Sessiescatalogus opvragen | session_view_request | Kassa | Planning | via `planning.exchange` | Nieuwe POS-sessie gedetecteerd bij opstart |
 | Fout rapporteren | system_error | Kassa | Elastic | `kassa.errors` | Validatiefout, onbekend type, Odoo-fout |
 
 ## 3. Master Datamapping Overzicht
@@ -90,8 +90,8 @@ Integratieproject Desideriushogeschool 2026
 
 | Element | Toegestane waarden |
 | --- | --- |
-| `<header><type>` (inkomend) | new_registration, profile_update, badge_scanned, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_sessions_response, session_created, session_updated, session_deleted, session_view_response |
-| `<header><type>` (uitgaand) | consumption_order, payment_registered, refund_processed, invoice_request, badge_assigned, payment_status, wallet_balance_update, system_error, wallet_lease_request, wallet_lease_return, user_sessions_request, session_view_request |
+| `<header><type>` (inkomend) | new_registration, profile_update, badge_scanned, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_registered, user_unregistered, user_sessions_response, session_created, session_updated, session_deleted |
+| `<header><type>` (uitgaand) | consumption_order, payment_registered, refund_processed, invoice_request, badge_assigned, payment_status, wallet_balance_update, system_error, wallet_lease_request, wallet_lease_return, user_sessions_request |
 | `<payment_context>` | consumption, registration |
 | `<customer><type>` | private, company, anonymous |
 | `<transaction><payment_method>` | company_link, on_site, online |

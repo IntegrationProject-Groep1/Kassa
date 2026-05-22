@@ -38,6 +38,12 @@ _identity_request_schema: "etree.XMLSchema | None" = None
 
 
 def _get_identity_response_schema() -> "etree.XMLSchema | None":
+    """Load and cache the XSD schema for Identity Service response messages.
+
+    Parsed once on first access and reused.  Returns ``None`` if the schema
+    file cannot be loaded (e.g. during unit tests without the schema directory)
+    — callers skip validation in that case rather than crashing.
+    """
     global _identity_response_schema
     if _identity_response_schema is None:
         try:
@@ -48,6 +54,12 @@ def _get_identity_response_schema() -> "etree.XMLSchema | None":
 
 
 def _get_identity_request_schema() -> "etree.XMLSchema | None":
+    """Load and cache the XSD schema for Identity Service request messages.
+
+    Same lazy-load pattern as ``_get_identity_response_schema``.
+    Validating outgoing requests before sending prevents sending malformed XML
+    to the Identity Service, which would result in an error response or timeout.
+    """
     global _identity_request_schema
     if _identity_request_schema is None:
         try:
@@ -58,6 +70,11 @@ def _get_identity_request_schema() -> "etree.XMLSchema | None":
 
 
 def _validate_request_xml(xml_text: str) -> None:
+    """Validate an outgoing Identity request against the request XSD schema.
+
+    Raises ``IdentityError`` if the XML does not conform.  Skips validation
+    silently when the schema could not be loaded (schema is optional for tests).
+    """
     schema = _get_identity_request_schema()
     if schema is None:
         return
@@ -99,6 +116,12 @@ class IdentityEmailAlreadyExists(IdentityError):
 
 
 def _build_create_request_xml(email: str, source_system: str) -> str:
+    """Build the flat XML body for ``identity.user.create.request``.
+
+    The Identity Service uses a simplified flat-XML format (no ``<message><header><body>``
+    envelope) for its own RPC protocol.  ``source_system`` identifies which team
+    provisioned the user (e.g. ``"kassa"``), stored by the Identity Service for audit.
+    """
     root = ET.Element("identity_request")
     ET.SubElement(root, "email").text = email
     ET.SubElement(root, "source_system").text = source_system
@@ -106,12 +129,14 @@ def _build_create_request_xml(email: str, source_system: str) -> str:
 
 
 def _build_lookup_email_xml(email: str) -> str:
+    """Build the flat XML body for ``identity.user.lookup.email.request``."""
     root = ET.Element("identity_request")
     ET.SubElement(root, "email").text = email
     return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
 
 
 def _build_lookup_uuid_xml(master_uuid: str) -> str:
+    """Build the flat XML body for ``identity.user.lookup.uuid.request``."""
     root = ET.Element("identity_request")
     ET.SubElement(root, "master_uuid").text = master_uuid
     return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")

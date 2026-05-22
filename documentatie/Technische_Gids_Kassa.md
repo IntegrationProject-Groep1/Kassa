@@ -63,7 +63,6 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 | `frontend.payments` | `kassa.frontend.wallet` | `wallet_balance_update` |
 | `kassa.errors` | `kassa.errors` | `system_error` |
 | Frontend queue | `kassa.to.frontend.user_sessions_request` | `user_sessions_request` (sessies opvragen per bezoeker) |
-| Planning queue | via `planning.exchange` | `session_view_request` (volledige sessiescatalogus bij POS-opstart) |
 | CRM queue | `kassa.wallet.lease.request` | `wallet_lease_request` (balance authority aanvragen) |
 | CRM queue | `kassa.wallet.lease.return` | `wallet_lease_return` (balance authority teruggeven) |
 
@@ -77,13 +76,14 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 | `kassa.incoming` | `cancel_registration` | CRM |
 | `kassa.incoming` | `wallet_lease_grant` | CRM |
 | `kassa.incoming` | `wallet_remote_topup` | CRM |
-| `kassa.incoming` | `event_ended` | CRM / Organisator |
+| `kassa.incoming` | `event_ended` | Frontend |
 | `kassa.incoming` | `user_event` | user.events fanout (optioneel) |
+| `kassa.incoming` | `user_registered` | Frontend (dual-publish) |
+| `kassa.incoming` | `user_unregistered` | Frontend (dual-publish) |
 | `frontend.to.kassa.user_sessions_response` | `user_sessions_response` | Frontend |
 | `frontend.to.kassa.session.created` | `session_created` | Frontend |
 | `frontend.to.kassa.session.updated` | `session_updated` | Frontend |
 | `frontend.to.kassa.session.deleted` | `session_deleted` | Frontend |
-| via `planning.exchange` | `session_view_response` | Planning |
 
 ## **3\. Odoo POS Architectuur**
 
@@ -102,10 +102,10 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 | `x_lease_id` | Char | De lease ID ontvangen van CRM via `wallet_lease_grant`. |
 | `x_lease_transaction_count` | Integer | Aantal transacties gedurende de actieve lease. |
 | `x_pending_topup_balance` | Float | Topup gebufferd vóór ontvangst van `wallet_lease_grant` (race-condition buffer). |
-| `x_identity_status` | Char | Status identity-koppeling: `pending`, `linked`, `error`. |
+| `x_identity_status` | Selection | Status identity-koppeling: `pending`, `linked`, `error`. |
 | `x_identity_last_sync` | Datetime | Tijdstip van laatste identity-synchronisatiepoging. |
 | `x_badge_sent` | Boolean | `badge_assigned` bericht al verstuurd voor deze partner? |
-| `x_rabbitmq_error` | Char | Laatste XSD- of identity-foutdetails (voor operatordiagnose). |
+| `x_rabbitmq_error` | Text | Laatste XSD- of identity-foutdetails (voor operatordiagnose). |
 
 ### **3.2 Custom Velden — pos.order**
 
@@ -121,8 +121,9 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 
 | Veld | Model | Type | Beschrijving |
 | --- | --- | --- | --- |
-| `x_session_id` | `product.template` | Char | Koppeling aan planningssessie-ID (survives title renames). |
-| `x_is_topup` | `product.product` | Boolean | Vlag voor top-up producten (alternatief voor POS-categorie 'Top-ups'). |
+| `x_session_id` | `product.template` | Char | Koppeling aan planningssessie-ID (survives title renames). Primaire lookup-sleutel in `_ensure_session_product()`. |
+| `x_is_topup` | `product.template` | Boolean | Vlag voor top-up producten. `order_poller.py` herkent top-ups via `is_topup_product()` (categorie 'Top-ups' of dit veld). |
+| `x_age_restricted` | `product.template` | Boolean | Vlag voor producten met leeftijdsbeperking (bv. bier). Gereserveerd voor toekomstige leeftijdscontrole (Story 17). |
 
 ### **3.4 Odoo Addon: kassa_pos_custom**
 
@@ -135,31 +136,33 @@ Breidt de Odoo POS-interface uit om badge-scans te verwerken en real-time saldo-
 
 ## **4\. De Integratie Service (Python)**
 
-De integratie service start **4 achtergrond-threads** vanuit `main.py`:
+De integratie service start **3 achtergrond-threads** vanuit `main.py`. `sender.py` is een gedeelde module die door de andere threads wordt aangeroepen — het is geen eigen thread.
 
 ### **4.1 Sender Module (`sender.py`)**
-Verantwoordelijk voor het bouwen en versturen van XML berichten.
+Gedeelde module — geen eigen thread. Verantwoordelijk voor het bouwen en versturen van XML berichten.
 1.  **Header Generation:** Voegt een standaard header toe met `message_id`, `timestamp`, `source`, `type` en `version` (in deze strikte volgorde conform v2.3).
 2.  **Validation:** Valideert elke uitgaande XML tegen de XSD's in `schemas/`.
 3.  **Resilience:** Indien RabbitMQ onbereikbaar is, worden berichten gebufferd in `outbox/outbox.json` (max 500, pad instelbaar via `OUTBOX_DIR`).
 
 ### **4.2 Receiver Module (`receiver.py`) — Thread 1**
-Luistert op `kassa.incoming` voor berichten van andere teams. Verwerkt **12 berichttypes**:
+Luistert op `kassa.incoming` voor berichten van andere teams. Verwerkt **14 berichttypes**:
 
-| Berichttype | Actie |
-| --- | --- |
-| `new_registration` | Partner aanmaken/updaten in Odoo + bus event naar POS |
-| `profile_update` | Profielgegevens bijwerken + bus event |
-| `badge_scanned` | Partner opzoeken via `x_badge_id` of `identity_uuid` (QR); wallet lease starten |
-| `cancel_registration` | Partner op `active=False` zetten |
-| `wallet_lease_grant` | Wallet balance reconciliëren; lease_id opslaan; `wallet_balance_update` sturen |
-| `wallet_remote_topup` | Online topup verwerken; balance bijwerken; `wallet_balance_update` sturen |
-| `event_ended` | Alle actieve leases teruggeven aan CRM via `wallet_lease_return` |
-| `user_event` | Informationeel; geen Odoo-actie |
-| `user_sessions_response` | Sessie-POS producten aanmaken/bijwerken per bezoeker |
-| `session_created` | Nieuw POS product aanmaken voor sessie |
-| `session_updated` | Bestaand sessie-POS product bijwerken (naam/prijs) |
-| `session_deleted` | Log + ack; POS product bewaard voor bestaande transacties |
+| Berichttype | Bron | Actie |
+| --- | --- | --- |
+| `new_registration` | CRM | Partner aanmaken/updaten in Odoo + bus event naar POS |
+| `profile_update` | CRM | Profielgegevens bijwerken + bus event |
+| `badge_scanned` | IoT / Frontend (QR) | Partner opzoeken via `x_badge_id` of `identity_uuid` (QR); wallet lease starten |
+| `cancel_registration` | CRM | Partner op `active=False` zetten |
+| `wallet_lease_grant` | CRM | Wallet balance reconciliëren; lease_id opslaan; `wallet_balance_update` sturen |
+| `wallet_remote_topup` | CRM | Online topup verwerken; balance bijwerken; `wallet_balance_update` sturen |
+| `event_ended` | Frontend | Alle actieve leases teruggeven aan CRM via `wallet_lease_return` |
+| `user_event` | user.events fanout (optioneel) | Informationeel; geen Odoo-actie |
+| `user_registered` | Frontend (dual-publish) | Sessie toevoegen aan partner `x_session_title`; `x_outstanding_amount` bijwerken |
+| `user_unregistered` | Frontend (dual-publish) | Sessie verwijderen uit partner `x_session_title`; `x_outstanding_amount` bijwerken |
+| `user_sessions_response` | Frontend | Sessie-POS producten aanmaken/bijwerken per bezoeker |
+| `session_created` | Frontend | Nieuw POS product aanmaken voor sessie |
+| `session_updated` | Frontend | Bestaand sessie-POS product bijwerken (naam/prijs) |
+| `session_deleted` | Frontend | Log + ack; POS product bewaard voor bestaande transacties |
 
 **Processing pipeline per bericht:**
 1. XML parse-controle
@@ -185,8 +188,7 @@ Draait continu (interval: `POLL_INTERVAL`, default 5 seconden) om nieuwe verkope
 Per polling-cyclus:
 1. Nieuwe orders ophalen + verwerken (consumption / registration / refund)
 2. Badge assignments detecteren + `badge_assigned` sturen
-3. Nieuwe POS-sessies detecteren → `session_view_request` naar Planning
-4. Buffer flushen elke ~30 seconden
+3. Buffer flushen elke ~30 seconden
 
 ### **4.4 Partner Identity Poller (`partner_identity_poller.py`) — Thread 3**
 Draait continu (interval: `IDENTITY_POLL_INTERVAL`, default 10 seconden). Detecteert Odoo-partners met een e-mailadres maar zonder `x_user_id` en koppelt hen automatisch via de Identity Service.

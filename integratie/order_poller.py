@@ -126,8 +126,6 @@ class OrderPoller:
         self._session_config_cache: dict[int, str | None] = {}
         self._last_consumption_has_topup = False
         self._last_consumption_topup_amount = 0.0
-        self._seen_pos_sessions: set[int] = set()
-
         # Outbox folder setup
         self.outbox_dir = Path(os.environ.get("OUTBOX_DIR", "outbox"))
         self.outbox_dir.mkdir(parents=True, exist_ok=True)
@@ -1253,53 +1251,6 @@ class OrderPoller:
 
         return (ok_payment and ok_status), payment_msg_id
 
-    def check_pos_sessions(self) -> None:
-        """Detect newly opened POS sessions and send session_view_request to Planning.
-
-        Queries pos.session for state='opened'. On first sight of a session ID,
-        sends session_view_request so Planning's session catalogue (with prices) is
-        loaded into Odoo POS products before the cashier starts selling.
-        _seen_pos_sessions is in-memory: a service restart resets it, which is fine —
-        it just triggers one extra session_view_request on reconnect.
-        """
-        try:
-            sessions = self.models.execute_kw(
-                self.odoo_db, self.odoo_uid, self.odoo_pass,
-                'pos.session', 'search_read',
-                [[['state', '=', 'opened']]],
-                {'fields': ['id', 'name'], 'limit': 10},
-            )
-        except Exception as e:
-            logger.warning("[POS_SESSION] Could not query pos.session: %s", e)
-            return
-
-        for session in sessions:
-            sid = session['id']
-            if sid in self._seen_pos_sessions:
-                continue
-            self._seen_pos_sessions.add(sid)
-            corr = str(uuid.uuid4())
-            try:
-                from sender import build_session_view_request_xml
-                xml = build_session_view_request_xml(correlation_id=corr)
-                sender.send_typed_message(
-                    "session_view_request", xml,
-                    exchange="planning.exchange",
-                    buffer_on_fail=False,
-                )
-                logger.info(
-                    "[POS_SESSION] ✅ session_view_request sent for POS session '%s' (id=%d)"
-                    " | correlation_id=%s",
-                    session.get('name', '?'), sid, corr,
-                )
-            except Exception as e:
-                logger.warning(
-                    "[POS_SESSION] Could not send session_view_request for session %d: %s", sid, e
-                )
-                monitor.log("warning", "session",
-                            f"session_view_request failed for POS session {sid}"
-                            f" (correlation_id={corr}): {str(e)[:300]}")
-
     def poll_badge_assignments(self):
         """
         BEST PRACTICE: Detect when a partner is assigned a badge in Odoo
@@ -1509,9 +1460,6 @@ class OrderPoller:
 
                 for order in orders:
                     self.process_order(order, country_map=country_map)
-
-                # Detect newly opened POS sessions → trigger session_view_request
-                self.check_pos_sessions()
 
                 # Poll for badge assignments
                 self.poll_badge_assignments()
