@@ -7,7 +7,6 @@ services:
       kassa-db:
         condition: service_healthy
     container_name: kassa_odoo
-    command: ["odoo", "--admin_passwd", "${ODOO_MASTER_PASS:-admin}"]
     ports:
       - "8069:8069"
     volumes:

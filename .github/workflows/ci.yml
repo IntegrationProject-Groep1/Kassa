@@ -48,7 +48,7 @@ jobs:
     env:
       POSTGRES_USER: ${{ secrets.CI_POSTGRES_USER || 'odoo_test' }}
       POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'odoo_test_pwd' }}
-      ODOO_MASTER_PASS: ${{ secrets.CI_ODOO_MASTER_PASS || 'admin_test' }}
+      ODOO_MASTER_PASS: admin
       ODOO_DB: odoo_kassa
     steps:
       - name: Checkout Code
