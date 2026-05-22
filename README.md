@@ -71,7 +71,6 @@ flowchart LR
     CRM -- "new_registration\nprofile_update\ncancel_registration\nwallet_lease_grant\nwallet_remote_topup" --> RMQ
     FE -- "user_registered\nuser_unregistered\nevent_ended\nsession_created/updated/deleted\nuser_sessions_response" --> RMQ
     IOT -- "badge_scanned" --> RMQ
-    PLAN -- "session_view_response" --> RMQ
     RMQ -- "kassa.incoming" --> PY
     PY <-->|XML-RPC| ODOO
     ODOO --- ADDON
@@ -80,7 +79,7 @@ flowchart LR
     RMQ -- "kassa.payments.*" --> CRM2
     RMQ -- "kassa.frontend.*" --> DRUPAL
     RMQ -- "kassa.errors" --> ELASTIC
-    RMQ -- "session_view_request\nuser_sessions_request" --> PLAN2
+    RMQ -- "user_sessions_request" --> PLAN2
 ```
 
 The Python integration service communicates with Odoo exclusively via the built-in **XML-RPC API**. All inter-system communication is asynchronous, via structured **XML messages over RabbitMQ** (`kassa.exchange`, topic exchange). The `kassa_pos_custom` Odoo addon extends the POS UI with OWL components for QR scanning, real-time partner updates via the Odoo bus, and payment guards.
@@ -128,7 +127,6 @@ The Python integration service communicates with Odoo exclusively via the built-
 | `session_created` | Frontend | Create new POS product for session |
 | `session_updated` | Frontend | Update existing session POS product (name/price) |
 | `session_deleted` | Frontend | Log and ack — product kept for ongoing transactions |
-| `session_view_response` | Planning | Bulk-upsert full session catalogue into Odoo POS |
 | `user_event` | user.events fanout | Informational only — no Odoo action |
 
 </details>
@@ -151,7 +149,6 @@ The Python integration service communicates with Odoo exclusively via the built-
 | `payment_status` | `kassa.frontend.payment` | Drupal Frontend |
 | `wallet_balance_update` | `kassa.frontend.wallet` | Drupal Frontend |
 | `user_sessions_request` | `kassa.to.frontend.user_sessions_request` | Drupal Frontend |
-| `session_view_request` | via `planning.exchange` | Planning |
 | `system_error` | `kassa.errors` | Elastic |
 
 </details>

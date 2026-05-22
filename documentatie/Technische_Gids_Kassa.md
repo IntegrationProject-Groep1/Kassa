@@ -63,7 +63,6 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 | `frontend.payments` | `kassa.frontend.wallet` | `wallet_balance_update` |
 | `kassa.errors` | `kassa.errors` | `system_error` |
 | Frontend queue | `kassa.to.frontend.user_sessions_request` | `user_sessions_request` (sessies opvragen per bezoeker) |
-| Planning queue | via `planning.exchange` | `session_view_request` (volledige sessiescatalogus bij POS-opstart) |
 | CRM queue | `kassa.wallet.lease.request` | `wallet_lease_request` (balance authority aanvragen) |
 | CRM queue | `kassa.wallet.lease.return` | `wallet_lease_return` (balance authority teruggeven) |
 
@@ -85,7 +84,6 @@ Kassa verstuurt berichten via `kassa.exchange` (topic exchange).
 | `frontend.to.kassa.session.created` | `session_created` | Frontend |
 | `frontend.to.kassa.session.updated` | `session_updated` | Frontend |
 | `frontend.to.kassa.session.deleted` | `session_deleted` | Frontend |
-| via `planning.exchange` | `session_view_response` | Planning |
 
 ## **3\. Odoo POS Architectuur**
 
@@ -190,8 +188,7 @@ Draait continu (interval: `POLL_INTERVAL`, default 5 seconden) om nieuwe verkope
 Per polling-cyclus:
 1. Nieuwe orders ophalen + verwerken (consumption / registration / refund)
 2. Badge assignments detecteren + `badge_assigned` sturen
-3. Nieuwe POS-sessies detecteren → `session_view_request` naar Planning
-4. Buffer flushen elke ~30 seconden
+3. Buffer flushen elke ~30 seconden
 
 ### **4.4 Partner Identity Poller (`partner_identity_poller.py`) — Thread 3**
 Draait continu (interval: `IDENTITY_POLL_INTERVAL`, default 10 seconden). Detecteert Odoo-partners met een e-mailadres maar zonder `x_user_id` en koppelt hen automatisch via de Identity Service.

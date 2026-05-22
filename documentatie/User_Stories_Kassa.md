@@ -1001,47 +1001,55 @@ _Als kassamedewerker wil ik dat sessies en lezingen die via het planningssysteem
 - [ ] `user_sessions_request` verstuurd na badge-scan met `identity_uuid`
 - [ ] `user_sessions_response`: sessie-producten aangemaakt/bijgewerkt in Inschrijvingskassa
 
-## **Story 23: Sessiescatalogus opvragen bij POS-opstart (Frontend integratie)**
+## **Story 23: Sessiescatalogus bijhouden via Frontend push-events**
 
 > _MVP status: MVP_
 
-_Als kassamedewerker wil ik dat bij het openen van een POS-sessie automatisch de volledige sessiescatalogus van Frontend wordt opgehaald, zodat alle beschikbare sessieproducten met de juiste prijzen direct beschikbaar zijn bij de eerste scan._
+_Als kassamedewerker wil ik dat sessieproducten in de Inschrijvingskassa automatisch bijgewerkt worden wanneer Frontend een sessie aanmaakt, wijzigt of verwijdert, zodat de catalogus altijd up-to-date is zonder handmatig ingrijpen._
+
+**TOELICHTING:**
+
+De oorspronkelijke implementatie stuurde een `session_view_request` vanuit `order_poller.py` naar Planning bij detectie van een nieuwe POS-sessie. Dit is vervangen door een push-model: Frontend verstuurt `session_created`, `session_updated` en `session_deleted` rechtstreeks naar Kassa. De Planning → Kassa RPC flow (`session_view_request` / `session_view_response`) is deprecated (zie XSD Contract v2.3 §19.2).
 
 **ACCEPTATIECRITERIA:**
 
-- Zodra `order_poller.py` een nieuw geopende POS-sessie detecteert (staat `opened`), verstuurt hij één `session_view_request` naar Frontend.
-- Frontend antwoordt met een `session_view_response` die de volledige sessiescatalogus bevat. `receiver.py` verwerkt deze respons en zorgt dat alle sessieproducten aanwezig zijn in Odoo POS.
-- Een herstart van de integratieservice triggert bij de volgende pollingcyclus automatisch een nieuwe `session_view_request` voor alle nog openstaande POS-sessies.
+- Wanneer Frontend een `session_created` bericht stuurt, maakt `receiver.py` automatisch een POS-product aan op basis van `session_id` en `title`.
+- Wanneer Frontend een `session_updated` bericht stuurt, wordt het bestaande POS-product bijgewerkt — geen duplicaat.
+- Wanneer Frontend een `session_deleted` bericht stuurt, wordt het product bewaard (voor lopende transacties) en enkel gelogd.
 
 **BDD (GEGEVEN/WANNEER/DAN):**
 
-**Gegeven** dat een medewerker een nieuwe POS-sessie opstart in Odoo
+**Gegeven** dat Frontend een `session_created` bericht stuurt met `session_id` en `title`
 
-**Wanneer** `order_poller.py` deze sessie voor de eerste keer detecteert tijdens een pollingcyclus
+**Wanneer** `receiver.py` het bericht verwerkt
 
-**Dan** wordt er één `session_view_request` verstuurd naar Frontend
+**Dan** is een POS-product met die titel beschikbaar in de Inschrijvingskassa
 
-**En** wordt de sessie-ID in de interne cache opgeslagen zodat geen dubbele aanvragen worden verstuurd
+**Gegeven** dat Frontend een `session_updated` bericht stuurt met dezelfde `session_id` maar gewijzigde titel of prijs
 
-**Gegeven** dat Frontend antwoordt met een `session_view_response`
+**Wanneer** `receiver.py` het bericht verwerkt
 
-**Wanneer** `receiver.py` de respons verwerkt
+**Dan** wordt het bestaande POS-product bijgewerkt — geen duplicaat aangemaakt
 
-**Dan** zijn alle sessies uit de catalogus beschikbaar als POS-product in Odoo
+**Gegeven** dat Frontend een `session_deleted` bericht stuurt
+
+**Wanneer** `receiver.py` het bericht verwerkt
+
+**Dan** blijft het POS-product bewaard — enkel gelogd
 
 **TECHNISCH STAPPENPLAN (HIGH-LEVEL):**
 
-1. `order_poller.check_pos_sessions()` polt elke cyclus op `pos.session` met staat `opened`.
-2. Nieuwe sessie-ID's (niet in `_seen_pos_sessions`) triggeren een `session_view_request` XML naar Frontend.
-3. De sessie-ID wordt toegevoegd aan `_seen_pos_sessions` (in-memory, reset bij herstart).
-4. `receiver.py` verwerkt de binnenkomende `session_view_response` en roept `_ensure_session_product()` aan voor elke sessie.
+1. `receiver.py` luistert op `session_created`, `session_updated` en `session_deleted` routing keys vanuit `frontend.exchange`.
+2. `_ensure_session_product()` zoekt primair op `x_session_id` (overleeft hernoemen), naam-lookup als fallback.
+3. Bij create/update: schrijf naam en prijs naar het POS-product.
+4. Bij delete: log en ack — geen product verwijderen.
 
 **DEFINITION OF DONE:**
 
-- [ ] `order_poller.check_pos_sessions()` detecteert nieuwe POS-sessies en verstuurt `session_view_request` naar Frontend
-- [ ] Reeds geziene sessie-ID's worden niet opnieuw aangevraagd binnen dezelfde process-lifetime
-- [ ] `receiver.py` verwerkt `session_view_response` en maakt sessieproducten aan in Odoo POS
-- [ ] Herstart van de service triggert automatisch nieuwe aanvraag voor open sessies
+- [x] `receiver.py` verwerkt `session_created`, `session_updated` en `session_deleted` correct
+- [x] `_ensure_session_product()` maakt nieuw product aan of update bestaand op basis van `x_session_id`
+- [x] `session_deleted`: POS-product bewaard, enkel gelogd
+- [x] Planning RPC flow (`session_view_request` / `session_view_response`) verwijderd uit codebase
 
 ## **EPIC 8: UITGEBREIDE WALLET & FACTURATIE FLOWS**
 
