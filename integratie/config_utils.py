@@ -14,7 +14,14 @@ import os
 
 
 def _clean_env_value(value: str | None) -> str | None:
-    """Trim whitespace and remove matching wrapping quotes."""
+    """Trim whitespace and remove matching wrapping quotes from an env-var string.
+
+    Docker Compose and shell scripts sometimes pass values with surrounding
+    quotes, e.g. ``RABBIT_HOST="rabbitmq"`` becomes ``"rabbitmq"`` in the
+    environment.  This function strips those quotes so callers always receive
+    the bare value.  Only symmetric single- or double-quote pairs are removed;
+    unbalanced quotes are left untouched.
+    """
     if value is None:
         return None
 
@@ -25,7 +32,12 @@ def _clean_env_value(value: str | None) -> str | None:
 
 
 def get_env(name: str, default: str | None = None) -> str | None:
-    """Read a single environment variable, returning default if it is unset or blank."""
+    """Read a single environment variable, returning *default* if it is unset or blank.
+
+    "Blank" means an empty string after whitespace and quote stripping (see
+    ``_clean_env_value``).  This prevents callers from accidentally treating
+    ``RABBIT_HOST=``  (empty assignment) as a valid hostname.
+    """
     value = _clean_env_value(os.environ.get(name))
     if value is None or not value:
         return default
@@ -33,7 +45,12 @@ def get_env(name: str, default: str | None = None) -> str | None:
 
 
 def parse_rabbit_port(default: int = 5672) -> int:
-    """Read RABBIT_PORT from the environment and return it as an integer."""
+    """Read ``RABBIT_PORT`` from the environment and return it as an integer.
+
+    Defaults to 5672 (the standard AMQP port) when the variable is absent or
+    not a valid integer — this avoids a hard crash on misconfigured deployments
+    and lets pika report a clearer connection error instead.
+    """
     value = get_env("RABBIT_PORT")
     try:
         return int(value) if value else default
@@ -42,7 +59,15 @@ def parse_rabbit_port(default: int = 5672) -> int:
 
 
 def require_env(*names: str) -> dict[str, str]:
-    """Return a dict of the requested environment variables."""
+    """Return a ``{name: value}`` dict for the requested environment variables.
+
+    Raises ``ValueError`` listing ALL missing names at once (not just the first)
+    so operators can fix their ``.env`` file in a single attempt rather than
+    discovering missing variables one by one.
+
+    Called at module import time by ``receiver.py`` and ``sender.py`` so the
+    service fails fast with a clear message before attempting any network I/O.
+    """
     values: dict[str, str] = {}
     missing: list[str] = []
 
@@ -61,7 +86,16 @@ def require_env(*names: str) -> dict[str, str]:
 
 
 def parse_xml_float(element, default: float = 0.0) -> float:
-    """Consistently parse a float from an XML element's text, falling back to default on error."""
+    """Parse a float from an XML element's text, falling back to *default* on any error.
+
+    Handles three common "no value" cases without raising:
+    - ``element`` is ``None`` (the XML tag was absent entirely)
+    - ``element.text`` is ``None`` or empty (tag present but empty: ``<amount/>``)
+    - ``element.text`` cannot be converted to float (malformed value)
+
+    Used when reading ``<amount>`` and ``<current_balance>`` from incoming CRM
+    messages where an absent tag means "zero" rather than an error.
+    """
     if element is None or not element.text:
         return default
     try:

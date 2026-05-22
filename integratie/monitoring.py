@@ -49,9 +49,22 @@ class MonitoringManager:
             return cls._instance
 
     def log(self, level: LogLevel, action: LogAction, message: str):
-        """
-        Send a conformant log message to the monitoring team.
-        Logs are sent to the default exchange ("") on the 'logs' queue.
+        """Send a conformant log message to the monitoring team via RabbitMQ.
+
+        The message is built using ``build_log_xml`` and validated against the
+        ``schema_log.xsd`` contract before being published.  It is sent on the
+        default exchange (``""``) to the ``logs`` queue — direct queue routing,
+        not the Kassa topic exchange.
+
+        Logs are NOT buffered when the broker is unreachable (``buffer_on_fail=False``).
+        Transient log loss is acceptable; a failed log should not fill the offline
+        outbox and delay business messages (orders, payments, wallet updates).
+
+        Args:
+            level:   Severity — ``"info"``, ``"warning"``, or ``"error"``.
+            action:  Message category from the contract's allowed-action list,
+                     e.g. ``"payment"``, ``"wallet"``, ``"xml_validation"``.
+            message: Human-readable description, truncated by the XSD at 1000 chars.
         """
         try:
             xml = build_log_xml(level, action, message)

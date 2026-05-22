@@ -52,6 +52,15 @@ class PartnerIdentityPoller:
         self.models = None
 
     def connect_odoo(self) -> bool:
+        """Open an XML-RPC session with Odoo and store ``uid`` and ``models`` on ``self``.
+
+        Must be called once before ``poll()`` is invoked. main.py calls this right
+        after instantiating the poller and aborts startup if it returns ``False``
+        (no point starting a poller that cannot talk to Odoo).
+
+        Returns:
+            ``True`` on successful authentication, ``False`` otherwise.
+        """
         try:
             common = xmlrpc.client.ServerProxy(f"{self.odoo_url}/xmlrpc/2/common", allow_none=True)
             self.uid = common.authenticate(self.odoo_db, self.odoo_user, self.odoo_pass, {})
