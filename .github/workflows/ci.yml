@@ -10,8 +10,6 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Least-privilege: jobs get read-only access by default.
-# Any job that needs write access must declare it explicitly.
 permissions:
   contents: read
 
@@ -56,51 +54,33 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Odoo Config
-        run: |
-          sed "s/<your_odoo_master_password>/${ODOO_MASTER_PASS}/" odoo.conf.example > odoo.conf
-
       - name: Start Services
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
-
-      - name: Post-start diagnostics
-        run: |
-          sleep 5
-          echo "=== container list ==="
-          docker ps -a
-          echo "=== kassa_odoo inspect ==="
-          docker inspect kassa_odoo --format='Status={{.State.Status}} ExitCode={{.State.ExitCode}} Cmd={{.Config.Cmd}} Entrypoint={{.Config.Entrypoint}} Env={{.Config.Env}}' 2>/dev/null || echo "container not found"
-          echo "=== kassa_odoo logs ==="
-          docker logs kassa_odoo 2>&1 || true
+        run: docker compose up -d --build
 
       - name: Wait for Odoo HTTP
         run: |
           echo "Waiting for Odoo at http://localhost:8069/web/health..."
           for i in {1..60}; do
             if curl -sf http://localhost:8069/web/health > /dev/null 2>&1; then
-              echo "✓ Odoo is up!"
+              echo "✓ Odoo is up (attempt $i)!"
               exit 0
             fi
             STATUS=$(docker inspect --format='{{.State.Status}}' kassa_odoo 2>/dev/null || echo "missing")
             echo "...attempt $i/60 — container: $STATUS"
             if [ "$STATUS" = "exited" ] || [ "$STATUS" = "restarting" ]; then
-              EXITCODE=$(docker inspect --format='{{.State.ExitCode}}' kassa_odoo 2>/dev/null || echo "?")
-              echo "❌ Odoo container is $STATUS (exit code: $EXITCODE)."
-              docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -200
-              docker logs kassa_odoo 2>&1 | tail -200
+              echo "❌ Odoo container is $STATUS (exit $(docker inspect --format='{{.State.ExitCode}}' kassa_odoo 2>/dev/null)). Logs:"
+              docker logs kassa_odoo 2>&1 | tail -300
               exit 1
             fi
             sleep 10
           done
-          echo "❌ Odoo did not respond in time."
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs kassa-web 2>&1 | tail -200
-          docker logs kassa_odoo 2>&1 | tail -200
+          echo "❌ Odoo did not respond in time. Logs:"
+          docker logs kassa_odoo 2>&1 | tail -300
           exit 1
 
       - name: Wait for Integration Service (Healthcheck)
         run: |
           echo "Waiting for kassa_integratie to become healthy..."
-          # Increased timeout to 10 minutes (60 * 10s) as Odoo setup can be slow in CI
           for i in {1..60}; do
             HEALTH=$(docker inspect --format='{{.State.Health.Status}}' kassa_integratie)
             if [ "$HEALTH" == "healthy" ]; then
@@ -128,4 +108,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down
+        run: docker compose down

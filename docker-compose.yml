@@ -7,18 +7,17 @@ services:
       kassa-db:
         condition: service_healthy
     container_name: kassa_odoo
-    restart: unless-stopped
     ports:
       - "8069:8069"
     volumes:
       - ./addons:/mnt/extra-addons
-      - ./odoo.conf:/etc/odoo/odoo.conf:ro
       - odoo-data:/var/lib/odoo
     environment:
       - HOST=kassa-db
+      - PORT=5432
       - USER=${POSTGRES_USER}
       - PASSWORD=${POSTGRES_PASSWORD}
-      - DBNAME=${ODOO_DB:-odoo_kassa}
+      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-admin}
       - RABBIT_HOST=${RABBIT_HOST:-rabbitmq}
       - RABBIT_PORT=${RABBIT_PORT:-5672}
       - RABBIT_USER=${RABBIT_USER:-guest}
@@ -35,7 +34,6 @@ services:
   kassa-db:
     image: postgres:15
     container_name: kassa_db
-    restart: unless-stopped
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -57,6 +55,7 @@ services:
       - ODOO_DB=${ODOO_DB:-odoo_kassa}
       - ODOO_USER=${ODOO_USER:-odoo}
       - ODOO_PASS=${ODOO_PASS:-myodoo}
+      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-admin}
       - RABBIT_HOST=${RABBIT_HOST:-rabbitmq}
       - RABBIT_PORT=${RABBIT_PORT:-5672}
       - RABBIT_USER=${RABBIT_USER:-guest}
@@ -67,7 +66,6 @@ services:
       - RABBIT_DLX=${RABBIT_DLX:-kassa.exchange}
       - RABBIT_DLQ=${RABBIT_DLQ:-kassa.incoming.dlq}
       - POLL_INTERVAL=${POLL_INTERVAL:-3}
-      - ODOO_MASTER_PASS=${ODOO_MASTER_PASS:-admin}
     volumes:
       - ./integratie:/app
       - outbox-data:/app/outbox
@@ -76,7 +74,6 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_healthy
-    restart: unless-stopped
 
   kassa-mcp:
     build: .
@@ -95,7 +92,6 @@ services:
     depends_on:
       kassa-web:
         condition: service_started
-    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -111,7 +107,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
 
 volumes:
   outbox-data:

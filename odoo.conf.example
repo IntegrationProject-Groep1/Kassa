@@ -1,6 +1,13 @@
 [options]
-; Master password for the Manage Databases page — must match ODOO_MASTER_PASS in .env
+; Master password for the Manage Databases page.
+; For Docker (local dev / CI): set ODOO_MASTER_PASS env var — the entrypoint
+; wrapper generates this file automatically, no manual copy needed.
+; For bare-metal / non-Docker: copy to odoo.conf and fill in values below.
 admin_passwd = <your_odoo_master_password>
+db_host = localhost
+db_port = 5432
+db_user = odoo
+db_password = odoo
 addons_path = /mnt/extra-addons
 data_dir = /var/lib/odoo
 ; Suppress per-request XML-RPC access logs — keeps kassa-web logs readable
