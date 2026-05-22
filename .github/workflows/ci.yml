@@ -57,6 +57,21 @@ jobs:
       - name: Start Services
         run: docker compose up -d --build
 
+      - name: Trace Odoo Entrypoint
+        run: |
+          echo "=== Starting DB only and tracing entrypoint ==="
+          docker compose up -d kassa-db
+          until [ "$(docker inspect --format='{{.State.Health.Status}}' kassa_db 2>/dev/null)" = "healthy" ]; do sleep 2; done
+          echo "DB healthy. Building image..."
+          docker build -f Dockerfile.odoo -t kassa_odoo_debug . 2>/dev/null
+          echo "Running entrypoint with bash -x..."
+          docker run --rm --network kassa_default \
+            -e HOST=kassa-db -e PORT=5432 -e USER=odoo -e PASSWORD=odoo \
+            -e PYTHONUNBUFFERED=1 \
+            --entrypoint bash \
+            kassa_odoo_debug \
+            -x /entrypoint.sh odoo --stop-after-init --no-http 2>&1 | head -200 || true
+
       - name: Wait for Odoo HTTP
         run: |
           echo "Waiting for Odoo at http://localhost:8069/web/health..."
