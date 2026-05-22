@@ -1,6 +1,8 @@
 services:
   kassa-web:
-    image: ${ODOO_IMAGE:-odoo:17.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.odoo
     depends_on:
       - kassa-db
     container_name: kassa_odoo
@@ -16,6 +18,12 @@ services:
       - USER=${POSTGRES_USER}
       - PASSWORD=${POSTGRES_PASSWORD}
       - DBNAME=${ODOO_DB}
+      - RABBIT_HOST=${RABBIT_HOST:-rabbitmq}
+      - RABBIT_PORT=${RABBIT_PORT:-5672}
+      - RABBIT_USER=${RABBIT_USER:-guest}
+      - RABBIT_PASS=${RABBIT_PASS:-guest}
+      - RABBIT_VHOST=${RABBIT_VHOST:-/}
+      - RABBIT_EXCHANGE=${RABBIT_EXCHANGE:-kassa.exchange}
 
   kassa-db:
     image: postgres:15

@@ -1,0 +1,4 @@
+FROM odoo:17.0
+USER root
+RUN pip install --no-cache-dir pika
+USER odoo
