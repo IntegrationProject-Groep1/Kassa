@@ -74,14 +74,17 @@ jobs:
             STATUS=$(docker inspect --format='{{.State.Status}}' kassa_odoo 2>/dev/null || echo "missing")
             echo "...attempt $i/60 — container: $STATUS"
             if [ "$STATUS" = "exited" ] || [ "$STATUS" = "restarting" ]; then
-              echo "❌ Odoo container is $STATUS. Logs:"
-              docker logs kassa_odoo --tail=200
+              EXITCODE=$(docker inspect --format='{{.State.ExitCode}}' kassa_odoo 2>/dev/null || echo "?")
+              echo "❌ Odoo container is $STATUS (exit code: $EXITCODE). Logs:"
+              docker logs kassa_odoo 2>&1 | tail -200
+              echo "--- inspect ---"
+              docker inspect kassa_odoo --format='OOMKilled={{.State.OOMKilled}} Error={{.State.Error}}'
               exit 1
             fi
             sleep 10
           done
           echo "❌ Odoo did not respond in time. Logs:"
-          docker logs kassa_odoo --tail=200
+          docker logs kassa_odoo 2>&1 | tail -200
           exit 1
 
       - name: Wait for Integration Service (Healthcheck)
