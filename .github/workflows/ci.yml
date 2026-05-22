@@ -46,8 +46,8 @@ jobs:
     name: Integration Tests (Docker Compose)
     runs-on: ubuntu-latest
     env:
-      POSTGRES_USER: ${{ secrets.CI_POSTGRES_USER || 'odoo_test' }}
-      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'odoo_test_pwd' }}
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
       ODOO_MASTER_PASS: admin
       ODOO_DB: odoo_kassa
     steps:

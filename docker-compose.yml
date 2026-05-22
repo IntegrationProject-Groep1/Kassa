@@ -13,6 +13,7 @@ services:
       - ./addons:/mnt/extra-addons
       - odoo-data:/var/lib/odoo
     environment:
+      - PYTHONUNBUFFERED=1
       - HOST=kassa-db
       - PORT=5432
       - USER=${POSTGRES_USER}
