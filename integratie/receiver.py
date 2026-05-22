@@ -1145,6 +1145,8 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
     session_id = (customer.findtext("session_id") or "").strip()
     if not identity_uuid:
         raise ValueError("user_registered: identity_uuid missing")
+    if not session_id:
+        raise ValueError("user_registered: session_id missing")
 
     session_title = (body.findtext("session_title") or "").strip()
     payment_status = (body.findtext("payment_status") or "pending").strip()
@@ -1190,6 +1192,10 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
             "x_payment_status": payment_status,
         }],
     )
+    _publish_partner_bus_event(
+        uid, models, partner_id,
+        outstanding, payment_status, existing[0].get("name") or "",
+    )
     logger.info(
         "[USER_REGISTERED] ✓ Session added | Odoo ID=%s | session_id=%s | price=%s | outstanding=%.2f",
         partner_id, session_id, price, outstanding,
@@ -1214,6 +1220,8 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
     session_id = (body.findtext("session_id") or "").strip()
     if not identity_uuid:
         raise ValueError("user_unregistered: identity_uuid missing")
+    if not session_id:
+        raise ValueError("user_unregistered: session_id missing")
 
     existing: List[OdooRecord] = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -1236,7 +1244,7 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
     outstanding = sum(
         float(s["price"]) for s in sessions if s.get("price") is not None
     )
-    status = "unpaid" if not sessions else "pending"
+    status = "paid" if not sessions else "pending"
 
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
@@ -1246,6 +1254,10 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
             "x_outstanding_amount": outstanding,
             "x_payment_status": status,
         }],
+    )
+    _publish_partner_bus_event(
+        uid, models, partner_id,
+        outstanding, status, existing[0].get("name") or "",
     )
     logger.info(
         "[USER_UNREGISTERED] ✓ Session removed | Odoo ID=%s | session_id=%s | outstanding=%.2f",
