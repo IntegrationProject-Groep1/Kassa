@@ -21,6 +21,8 @@ Alle messageType-waarden zijn conform de snake_case naamgevingsstandaard.
 | 6A | CRM | Odoo | `kassa.incoming` | wallet_lease_grant | schema_wallet_lease_grant.xsd |
 | 6B | CRM | Odoo | `kassa.incoming` | wallet_remote_topup | schema_wallet_remote_topup.xsd |
 | 6C | CRM | Odoo | `kassa.incoming` | event_ended | schema_event_ended.xsd |
+| 13A | Frontend | Odoo | `kassa.incoming` | user_registered | schema_user_registered.xsd |
+| 13B | Frontend | Odoo | `kassa.incoming` | user_unregistered | schema_user_unregistered.xsd |
 | 16 | Frontend | Odoo | `frontend.to.kassa.user_sessions_response` | user_sessions_response | schema_user_sessions_response.xsd |
 | 17A | Frontend | Odoo | `frontend.to.kassa.session.created` | session_created | schema_session_created.xsd |
 | 17B | Frontend | Odoo | `frontend.to.kassa.session.updated` | session_updated | schema_session_updated.xsd |
@@ -317,7 +319,7 @@ Verstuurd door order_poller.py bij detectie van een nieuwe POS-sessie (`check_po
 
 | Element | Toegestane waarden |
 | ---| --- |
-| `<header><type>` (inkomend) | new_registration, badge_scanned, profile_update, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_sessions_response, session_created, session_updated, session_deleted, session_view_response |
+| `<header><type>` (inkomend) | new_registration, badge_scanned, profile_update, cancel_registration, wallet_lease_grant, wallet_remote_topup, event_ended, user_event, user_registered, user_unregistered, user_sessions_response, session_created, session_updated, session_deleted, session_view_response |
 | `<header><type>` (uitgaand) | consumption_order, payment_registered, payment_status, wallet_balance_update, invoice_request, badge_assigned, refund_processed, system_error, wallet_lease_request, wallet_lease_return, user_sessions_request, session_view_request |
 | `<transaction><payment_method>` | company_link, on_site, online |
 | `<payment_context>` | registration, consumption |
