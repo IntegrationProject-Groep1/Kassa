@@ -293,16 +293,15 @@ Three GitHub Actions workflows run automatically:
 
 | Workflow | Trigger | Action |
 | :--- | :--- | :--- |
-| **ci.yml** | push to `main`, `dev`, `prod` | flake8 lint → mypy type-check → pytest → Docker integration tests |
-| **deploy.yml** | push to `main` / `prod` | Build Docker image → push to GHCR |
-| **security.yml** | push to `main`, `dev`, `prod` | Bandit (SAST) → pip-audit → TruffleHog → Trivy image scan |
+| **ci.yml** | push to `main` or `dev` | flake8 lint → mypy type-check → pytest → Docker integration tests |
+| **deploy.yml** | push to `main` | Build Docker image → push to GHCR |
+| **security.yml** | push to `main` or `dev` | Bandit (SAST) → pip-audit → TruffleHog → Trivy image scan |
 
 ### Branch Strategy
 
 | Branch | Purpose |
 | :--- | :--- |
-| `main` | Stable — approved code, triggers deploy |
-| `prod` | Production deployment target |
+| `main` | Production — stable, approved code, triggers deployment |
 | `dev` | Active development |
 | `feature/...` | New features |
 | `fix/...` | Bug fixes |
