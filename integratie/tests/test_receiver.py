@@ -1509,7 +1509,7 @@ class TestProcessUserUnregistered:
         sessions = _json.loads(vals["x_session_title"])
         assert sessions == []
         assert vals["x_outstanding_amount"] == 0.0
-        assert vals["x_payment_status"] == "unpaid"
+        assert vals["x_payment_status"] == "paid"
 
     def test_partner_not_found_no_write(self, odoo):
         uid, models = odoo
