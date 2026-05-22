@@ -2,6 +2,7 @@
 import logging
 
 from odoo import models
+from odoo.osv import expression
 
 _logger = logging.getLogger(__name__)
 
@@ -44,8 +45,10 @@ class PosSession(models.Model):
             if f not in fields:
                 fields.append(f)
 
-        base_domain = search_params.get('domain', [])
-        search_params['domain'] = ['|'] + base_domain + [['x_user_id', '!=', False]]
+        search_params['domain'] = expression.OR([
+            search_params.get('domain', []),
+            [('x_user_id', '!=', False)],
+        ])
         return result
 
     def kassa_notify_product_update(self):

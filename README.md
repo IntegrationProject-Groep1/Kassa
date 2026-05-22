@@ -28,62 +28,15 @@
 <br>
 
 <div align="center">
-<table>
-  <tr>
-    <td align="center" width="220">
-      <a href="#system-architecture">
-        <img src="https://img.shields.io/badge/01-System_Architecture-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Components · flows · design principles</sub>
-    </td>
-    <td width="16"></td>
-    <td align="center" width="220">
-      <a href="#message-flows--routing">
-        <img src="https://img.shields.io/badge/02-Message_Flows_%26_Routing-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Inbound &amp; outbound routing keys</sub>
-    </td>
-    <td width="16"></td>
-    <td align="center" width="220">
-      <a href="#documentation--data-mapping">
-        <img src="https://img.shields.io/badge/03-Documentation_%26_Data_Mapping-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Architecture docs &amp; data mapping</sub>
-    </td>
-  </tr>
-  <tr><td colspan="5" height="12"></td></tr>
-  <tr>
-    <td align="center" width="220">
-      <a href="#local-development--setup">
-        <img src="https://img.shields.io/badge/04-Local_Development_%26_Setup-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Docker · env vars · quickstart</sub>
-    </td>
-    <td width="16"></td>
-    <td align="center" width="220">
-      <a href="#repository-structure">
-        <img src="https://img.shields.io/badge/05-Repository_Structure-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Folder layout &amp; key files</sub>
-    </td>
-    <td width="16"></td>
-    <td align="center" width="220">
-      <a href="#cicd--deployment">
-        <img src="https://img.shields.io/badge/06-CI%2FCD_%26_Deployment-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>GitHub Actions · Docker · GHCR</sub>
-    </td>
-  </tr>
-  <tr><td colspan="5" height="12"></td></tr>
-  <tr>
-    <td colspan="5" align="center">
-      <a href="#team">
-        <img src="https://img.shields.io/badge/07-Team-0d1117?style=for-the-badge&labelColor=1f3a5f&logoColor=58A6FF"/>
-      </a><br/>
-      <sub>Kassa POS · Desideriushogeschool 2026</sub>
-    </td>
-  </tr>
-</table>
+
+<a href="#system-architecture"><img src="https://img.shields.io/badge/01-System_Architecture-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#message-flows--routing"><img src="https://img.shields.io/badge/02-Message_Flows_%26_Routing-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#documentation--data-mapping"><img src="https://img.shields.io/badge/03-Documentation_%26_Data_Mapping-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#local-development--setup"><img src="https://img.shields.io/badge/04-Local_Development_%26_Setup-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#repository-structure"><img src="https://img.shields.io/badge/05-Repository_Structure-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#cicd--deployment"><img src="https://img.shields.io/badge/06-CI%2FCD_%26_Deployment-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>&nbsp;
+<a href="#team"><img src="https://img.shields.io/badge/07-Team-0d1117?style=for-the-badge&labelColor=1f3a5f"/></a>
+
 </div>
 
 <br>
