@@ -322,6 +322,123 @@ def get_orders_by_email(
 
 
 @mcp.tool()
+def get_orders_by_date_range(
+    date_from: Annotated[str, Field(description="Start date in ISO format 'YYYY-MM-DD', e.g. '2026-05-01'.")],
+    date_to: Annotated[str, Field(description="End date in ISO format 'YYYY-MM-DD', e.g. '2026-05-31'.")],
+    limit: Annotated[int, Field(description="Max orders to return (default 100, max 500).")] = 100,
+) -> dict[str, Any]:
+    """
+    Get POS orders placed within a date range.
+    Useful for 'orders today', 'orders this week', or any specific period.
+    Returns order list, total count, and total revenue for the period.
+    """
+    limit = min(limit, 500)
+    domain = [
+        ["state", "in", ["paid", "done", "invoiced"]],
+        ["date_order", ">=", f"{date_from} 00:00:00"],
+        ["date_order", "<=", f"{date_to} 23:59:59"],
+    ]
+    try:
+        # Aggregate the true period total server-side before applying the row limit,
+        # so total_revenue is always accurate even when results are truncated.
+        stats = _odoo("pos.order", "read_group", [domain, ["amount_total"], []], {})
+        total_revenue = round(stats[0].get("amount_total") or 0, 2) if stats else 0.0
+        total_count = stats[0].get("__count", 0) if stats else 0
+
+        orders = _odoo("pos.order", "search_read", [domain], {
+            "fields": ["name", "amount_total", "date_order", "state", "partner_id"],
+            "limit": limit,
+            "order": "date_order desc",
+        })
+        partner_ids = [o["partner_id"][0] for o in orders if o.get("partner_id")]
+        partner_map: dict[int, dict] = {}
+        if partner_ids:
+            partners = _odoo("res.partner", "read", [list(set(partner_ids))],
+                             {"fields": ["id", "name", "x_user_id"]})
+            partner_map = {p["id"]: p for p in partners}
+
+        result = []
+        for o in orders:
+            partner = partner_map.get((o.get("partner_id") or [None])[0], {}) if o.get("partner_id") else {}
+            result.append({
+                "order_id":    o["name"],
+                "total":       float(o.get("amount_total") or 0),
+                "date":        o["date_order"],
+                "status":      o["state"],
+                "customer":    partner.get("name") or (o["partner_id"][1] if o.get("partner_id") else None),
+                "master_uuid": partner.get("x_user_id") or None,
+            })
+
+        return {
+            "orders":        result,
+            "count":         len(result),
+            "total_count":   total_count,
+            "total_revenue": total_revenue,
+            "currency":      "EUR",
+            "period":        {"from": date_from, "to": date_to},
+            "truncated":     len(orders) >= limit,
+        }
+    except Exception as exc:
+        return {"error": f"Odoo unavailable: {exc}", "orders": [], "count": 0}
+
+
+@mcp.tool()
+def get_top_spenders(
+    limit: Annotated[int, Field(description="Number of top spenders to return (default 10, max 50).")] = 10,
+    date_from: Annotated[str | None, Field(description="Optional start date 'YYYY-MM-DD'. Omit for all time.")] = None,
+    date_to: Annotated[str | None, Field(description="Optional end date 'YYYY-MM-DD'. Omit for all time.")] = None,
+) -> dict[str, Any]:
+    """
+    Get the customers who have spent the most at the POS, ranked by total spend.
+    Optionally scoped to a date range. Useful for VIP identification or event analysis.
+    """
+    limit = min(limit, 50)
+    domain: list = [["state", "in", ["paid", "done", "invoiced"]], ["partner_id", "!=", False]]
+    if date_from:
+        domain.append(["date_order", ">=", f"{date_from} 00:00:00"])
+    if date_to:
+        domain.append(["date_order", "<=", f"{date_to} 23:59:59"])
+    try:
+        # Use read_group for server-side aggregation — avoids the 5000-row cap
+        # and lets Odoo do the sorting, so results are always correct regardless
+        # of total order volume.
+        groups = _odoo("pos.order", "read_group",
+                       [domain, ["amount_total"], ["partner_id"]],
+                       {"orderby": "amount_total desc", "limit": limit})
+
+        partner_ids = [g["partner_id"][0] for g in groups if g.get("partner_id")]
+        partner_map: dict[int, dict] = {}
+        if partner_ids:
+            partners = _odoo("res.partner", "read", [partner_ids],
+                             {"fields": ["id", "x_user_id", "x_badge_id"]})
+            partner_map = {p["id"]: p for p in partners}
+
+        ranked = []
+        for g in groups:
+            if not g.get("partner_id"):
+                continue
+            pid, name = g["partner_id"]
+            extra = partner_map.get(pid, {})
+            ranked.append({
+                "partner_id":  pid,
+                "name":        name,
+                "total":       round(float(g.get("amount_total") or 0), 2),
+                "order_count": g.get("__count") or 0,
+                "master_uuid": extra.get("x_user_id") or None,
+                "badge_id":    extra.get("x_badge_id") or None,
+            })
+
+        return {
+            "top_spenders": ranked,
+            "count":        len(ranked),
+            "currency":     "EUR",
+            "period":       {"from": date_from, "to": date_to},
+        }
+    except Exception as exc:
+        return {"error": f"Odoo unavailable: {exc}", "top_spenders": [], "count": 0}
+
+
+@mcp.tool()
 def process_refund(
     order_id: Annotated[
         str,

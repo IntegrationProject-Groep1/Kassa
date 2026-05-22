@@ -61,6 +61,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.odoo
+          no-cache: true
           push: true
           tags: |
             ghcr.io/${{ steps.repo_name.outputs.value }}:odoo-latest-dev
@@ -72,6 +73,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.odoo
+          no-cache: true
           push: true
           tags: |
             ghcr.io/${{ steps.repo_name.outputs.value }}:odoo-latest
