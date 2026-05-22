@@ -14,7 +14,7 @@
 
 > **Official repository of Team POS (Kassa) — Integration Project Desideriushogeschool 2026**
 >
-> *A generic, reusable event-driven Point of Sale system built on Odoo POS, communicating asynchronously with Salesforce CRM, Drupal, Elastic, and IoT Badge Scanners via RabbitMQ.*
+> *A generic, reusable event-driven Point of Sale system built on Odoo POS, communicating asynchronously with Salesforce CRM, Drupal Frontend, Planning, Identity Service, Elastic, and IoT Badge Scanners via RabbitMQ.*
 
 <br>
 
@@ -45,35 +45,45 @@
 
 ```mermaid
 flowchart LR
-    subgraph Incoming
+    subgraph Sources["External Sources"]
         CRM[Salesforce CRM]
-        IoT[IoT Badge Scanners]
+        FE[Drupal Frontend]
+        IOT[IoT Badge Scanners]
+        PLAN[Planning]
+        ID[Identity Service]
     end
 
     RMQ{{"RabbitMQ\nkassa.exchange"}}
 
-    subgraph POS["Team POS"]
-        PY[Python POS Integration\nsender / receiver / poller]
-        ODOO[(Odoo POS\n+ PostgreSQL)]
+    subgraph POS["Team POS (Kassa)"]
+        PY["Python Integration\nreceiver · order_poller\npartner_identity_poller\nsender"]
+        ODOO[("Odoo 17 POS\n+ PostgreSQL 15")]
+        ADDON["kassa_pos_custom\n(Odoo addon + OWL)"]
     end
 
-    subgraph Outgoing
+    subgraph Sinks["External Sinks"]
         CRM2[Salesforce CRM]
         DRUPAL[Drupal Frontend]
         ELASTIC[Elastic Monitoring]
+        PLAN2[Planning]
     end
 
-    CRM -- "new_registration\nprofile_update\ncancel_registration" --> RMQ
-    IoT -- "badge_scanned" --> RMQ
+    CRM -- "new_registration\nprofile_update\ncancel_registration\nwallet_lease_grant\nwallet_remote_topup" --> RMQ
+    FE -- "user_registered\nuser_unregistered\nevent_ended\nsession_created/updated/deleted\nuser_sessions_response" --> RMQ
+    IOT -- "badge_scanned" --> RMQ
+    PLAN -- "session_view_response" --> RMQ
     RMQ -- "kassa.incoming" --> PY
     PY <-->|XML-RPC| ODOO
-    PY -- "consumption_order\npayment_registered\nbadge_assigned\ninvoice_request\nrefund_processed" --> RMQ
+    ODOO --- ADDON
+    PY -- "consumption_order\npayment_registered\nbadge_assigned\ninvoice_request\nrefund_processed\nwallet_lease_request/return" --> RMQ
+    PY <-->|RPC| ID
     RMQ -- "kassa.payments.*" --> CRM2
     RMQ -- "kassa.frontend.*" --> DRUPAL
     RMQ -- "kassa.errors" --> ELASTIC
+    RMQ -- "session_view_request\nuser_sessions_request" --> PLAN2
 ```
 
-The Python POS Integration container communicates with Odoo exclusively via the built-in **XML-RPC API**. All communication with external systems is asynchronous, through structured **XML messages over RabbitMQ**.
+The Python integration service communicates with Odoo exclusively via the built-in **XML-RPC API**. All inter-system communication is asynchronous, via structured **XML messages over RabbitMQ** (`kassa.exchange`, topic exchange). The `kassa_pos_custom` Odoo addon extends the POS UI with OWL components for QR scanning, real-time partner updates via the Odoo bus, and payment guards.
 
 <br>
 
@@ -100,15 +110,26 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 <br>
 
 <details open>
-<summary><b>Incoming — <code>kassa.incoming</code></b></summary>
+<summary><b>Incoming — <code>kassa.incoming</code> &amp; Frontend exchange</b></summary>
 <br>
 
 | Type | From | Action |
 | :--- | :--- | :--- |
-| `new_registration` | CRM | Create or update customer profile in Odoo |
-| `profile_update` | CRM | Update customer profile in Odoo |
-| `cancel_registration` | CRM | Deactivate customer profile in Odoo |
-| `badge_scanned` | IoT | Look up badge, load customer profile in POS |
+| `new_registration` | CRM | Create or update customer profile; set `customer_rank=1` for POS visibility |
+| `profile_update` | CRM | Update customer profile fields in Odoo |
+| `cancel_registration` | CRM | Deactivate customer profile (`active=False`) |
+| `badge_scanned` | IoT / Frontend (QR) | Look up by `x_badge_id` or `identity_uuid`; start wallet lease |
+| `wallet_lease_grant` | CRM | Reconcile `x_wallet_balance`; store `x_lease_id`; publish `wallet_balance_update` |
+| `wallet_remote_topup` | CRM | Add balance to active lease; park in `x_pending_topup_balance` if grant pending |
+| `event_ended` | Frontend | Return all active wallet leases to CRM via `wallet_lease_return` |
+| `user_registered` | Frontend (dual-publish) | Add session to `x_session_title`; update `x_outstanding_amount` additively |
+| `user_unregistered` | Frontend (dual-publish) | Remove session; subtract price from `x_outstanding_amount` |
+| `user_sessions_response` | Frontend | Create/update POS session products per visitor |
+| `session_created` | Frontend | Create new POS product for session |
+| `session_updated` | Frontend | Update existing session POS product (name/price) |
+| `session_deleted` | Frontend | Log and ack — product kept for ongoing transactions |
+| `session_view_response` | Planning | Bulk-upsert full session catalogue into Odoo POS |
+| `user_event` | user.events fanout | Informational only — no Odoo action |
 
 </details>
 
@@ -125,8 +146,12 @@ The Python POS Integration container communicates with Odoo exclusively via the 
 | `invoice_request` | `kassa.payments.invoice` | Salesforce CRM |
 | `badge_assigned` | `kassa.payments.badge` | Salesforce CRM |
 | `refund_processed` | `kassa.payments.refund` | Salesforce CRM |
-| `payment_status` | `kassa.frontend.payment` | Drupal |
-| `wallet_balance_update` | `kassa.frontend.wallet` | Drupal |
+| `wallet_lease_request` | `kassa.wallet.lease.request` | Salesforce CRM |
+| `wallet_lease_return` | `kassa.wallet.lease.return` | Salesforce CRM |
+| `payment_status` | `kassa.frontend.payment` | Drupal Frontend |
+| `wallet_balance_update` | `kassa.frontend.wallet` | Drupal Frontend |
+| `user_sessions_request` | `kassa.to.frontend.user_sessions_request` | Drupal Frontend |
+| `session_view_request` | via `planning.exchange` | Planning |
 | `system_error` | `kassa.errors` | Elastic |
 
 </details>
@@ -147,10 +172,12 @@ All architecture, data flows, and XML standards live in the `documentatie/` dire
 
 | File | Contents |
 | :--- | :--- |
-| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all scripts with code examples, Docker setup, CI/CD |
+| [Technische_Gids_Kassa.md](documentatie/Technische_Gids_Kassa.md) | Full architecture, all modules explained, Docker setup, wallet lease lifecycle |
 | [Tech_Stack_Kassa.md](documentatie/Tech_Stack_Kassa.md) | Technologies, Python libraries, environment variables, architecture constraints |
-| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | Exact XML examples and XSD schemas per flow |
+| [XML_XSD_Contract_v2.3_Centralized.md](documentatie/XML_XSD_Contract_v2.3_Centralized.md) | **Authoritative** XML/XSD contract — all message types, schemas, enums |
+| [XML_Structuren_Kassa.md](documentatie/XML_Structuren_Kassa.md) | XML examples and XSD schema references per flow |
 | [Datamapping_Kassa.md](documentatie/Datamapping_Kassa.md) | Field mapping from Odoo to XML per message type, enum values |
+| [Identity_Integration.md](documentatie/Identity_Integration.md) | Identity Service RPC format, routing keys, PartnerIdentityPoller flow |
 | [User_Stories_Kassa.md](documentatie/User_Stories_Kassa.md) | MVP features, BDD scenarios, acceptance criteria, Definition of Done |
 | [Vragen_Kassa.md](documentatie/Vragen_Kassa.md) | Decision log — all technical and functional choices explained |
 
@@ -226,18 +253,31 @@ docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 
 ```text
 📦 Kassa/
- ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation
- ┣ 📂 integratie/            # Python integration scripts
- ┃ ┣ 📂 schemas/             # XSD validation files
- ┃ ┣ 📂 tests/               # Pytest files
+ ┣ 📂 addons/
+ ┃ ┗ 📂 kassa_pos_custom/    # Odoo addon — extends POS UI
+ ┃   ┣ 📂 models/            # Custom fields (res.partner, product.template, pos.session)
+ ┃   ┣ 📂 controllers/       # HTTP: /kassa/qr_scan endpoint + service-worker override
+ ┃   ┣ 📂 static/src/js/     # OWL components: QR scanner, partner bus updates, payment guards
+ ┃   ┗ 📂 views/             # XML templates for POS UI extensions
+ ┣ 📂 documentatie/          # Architecture, mapping, and flow documentation (Dutch)
+ ┣ 📂 integratie/            # Python integration service
+ ┃ ┣ 📂 schemas/             # XSD validation files (one per message type)
+ ┃ ┣ 📂 tests/               # Pytest test suite
  ┃ ┣ 📂 tools/               # Ping and diagnostic scripts
- ┃ ┣ 📄 main.py              # Entrypoint — starts receiver + poller
- ┃ ┣ 📄 receiver.py          # Processes incoming RabbitMQ messages
- ┃ ┣ 📄 sender.py            # Builds and dispatches outgoing XML messages
- ┃ ┗ 📄 poller.py            # Polls Odoo for new POS orders, triggers flows
- ┣ 📂 outbox/                # Mounted as Docker volume — outbox.json buffer
- ┣ 📄 .env.example           # Example environment variables
- ┣ 📄 docker-compose.yml     # Odoo + PostgreSQL + POS integration stack
+ ┃ ┣ 📄 main.py              # Entrypoint — starts 3 daemon threads + health file
+ ┃ ┣ 📄 receiver.py          # Thread 1 — consumes kassa.incoming (14 message types)
+ ┃ ┣ 📄 order_poller.py      # Thread 2 — polls Odoo POS orders; triggers outgoing flows
+ ┃ ┣ 📄 partner_identity_poller.py  # Thread 3 — links unmatched partners to Identity Service
+ ┃ ┣ 📄 sender.py            # Shared module — builds + validates + publishes XML; outbox buffer
+ ┃ ┣ 📄 odoo_setup.py        # One-time bootstrap: DB creation, addon install, custom fields
+ ┃ ┣ 📄 identity_client.py   # RPC client for the central Identity Service
+ ┃ ┣ 📄 config_utils.py      # Environment variable parsing helpers
+ ┃ ┣ 📄 monitoring.py        # Structured log publisher to the monitoring queue
+ ┃ ┣ 📄 pos_profiles.py      # Idempotent POS config setup (Bar Kassa + Inschrijvingskassa)
+ ┃ ┗ 📄 mcp_server.py        # FastMCP server — exposes Odoo POS data as tools for Claude Code
+ ┣ 📂 outbox/                # Docker named volume — outbox.json offline message buffer
+ ┣ 📄 .env.example           # Environment variable reference
+ ┣ 📄 docker-compose.yml     # Odoo 17 + PostgreSQL 15 + integration service
  ┗ 📄 README.md
 ```
 
@@ -249,18 +289,20 @@ docker-compose exec kassa-integratie python integratie/tools/test_sender.py
 
 <br>
 
-The GitHub Actions pipeline triggers automatically on push to `dev` or `main`:
+Three GitHub Actions workflows run automatically:
 
-| Step | Trigger | Action |
+| Workflow | Trigger | Action |
 | :--- | :--- | :--- |
-| **Tests** | push to `dev` or `main` | `pytest tests/ -v` |
-| **Deploy** | push to `main` | SSH deploy via `docker-compose up -d --build` |
+| **ci.yml** | push to `main`, `dev`, `prod` | flake8 lint → mypy type-check → pytest → Docker integration tests |
+| **deploy.yml** | push to `main` / `prod` | Build Docker image → push to GHCR |
+| **security.yml** | push to `main`, `dev`, `prod` | Bandit (SAST) → pip-audit → TruffleHog → Trivy image scan |
 
 ### Branch Strategy
 
 | Branch | Purpose |
 | :--- | :--- |
-| `main` | Production — stable, approved code, triggers deployment |
+| `main` | Stable — approved code, triggers deploy |
+| `prod` | Production deployment target |
 | `dev` | Active development |
 | `feature/...` | New features |
 | `fix/...` | Bug fixes |
