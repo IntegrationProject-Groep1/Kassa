@@ -1,4 +1,29 @@
 # -*- coding: utf-8 -*-
+"""
+controllers/main.py — HTTP and RabbitMQ entry points for the Kassa POS QR-scan flow.
+
+This module has two responsibilities:
+
+1. **QR scan endpoint** (``/kassa/qr_scan``, JSON-RPC):
+   Called by the POS frontend (qr_scanner.js) when the cashier scans a visitor's
+   QR code.  The endpoint:
+   - Finds or creates the Odoo partner for the scanned identity_uuid.
+   - Calls the Frontend via RabbitMQ RPC (user_sessions_request) to get the
+     visitor's registered sessions and syncs them to the partner record.
+   - Publishes a wallet_lease_request to CRM so the visitor's wallet balance is
+     transferred to Kassa authority for the duration of the event.
+   - Returns partner data and session list to the POS screen.
+
+2. **Service-worker override** (``/web/service-worker.js``):
+   Replaces Odoo's default service worker with a cache-clearing no-op.
+   Odoo's default SW caches 303 redirects which cause persistent login loops —
+   this override prevents that without requiring a custom Odoo module.
+
+XML builders in this file duplicate a subset of sender.py's builder functions.
+This is intentional: the Odoo addon runs inside the Odoo server process, which
+does not have access to the integration service's Python modules.  Both sets of
+builders produce identical XML per the contract v2.3 schema.
+"""
 import json
 import os
 import uuid
@@ -21,10 +46,17 @@ _PLANNING_RPC_TIMEOUT = float(os.environ.get("PLANNING_RPC_TIMEOUT", "5"))
 # ── XML builders ──────────────────────────────────────────────────────────────
 
 def _now_utc() -> str:
+    """Return the current UTC time as an ISO-8601 string (``YYYY-MM-DDTHH:MM:SSZ``)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _build_wallet_lease_request_xml(identity_uuid: str) -> str:
+    """Build a contract-compliant ``wallet_lease_request`` XML message.
+
+    Mirrors ``sender.build_wallet_lease_request_xml`` from the integration service.
+    Duplicated here because the Odoo addon runs inside the Odoo process and cannot
+    import from the external ``integratie/`` package.
+    """
     root = ET.Element("message")
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
@@ -38,6 +70,14 @@ def _build_wallet_lease_request_xml(identity_uuid: str) -> str:
 
 
 def _build_user_sessions_request_xml(identity_uuid: str, correlation_id: str) -> str:
+    """Build a contract-compliant ``user_sessions_request`` XML message.
+
+    ``correlation_id`` is set to a fresh UUID per call so ``_fetch_sessions_from_frontend``
+    can match the reply queue response back to this specific request even when
+    multiple QR scans happen concurrently on different POS terminals.
+
+    Mirrors ``sender.build_user_sessions_request_xml`` from the integration service.
+    """
     root = ET.Element("message")
     header = ET.SubElement(root, "header")
     ET.SubElement(header, "message_id").text = str(uuid.uuid4())
@@ -223,6 +263,12 @@ def _ensure_session_products(env, session_titles: List[str]) -> None:
 # ── Controller ────────────────────────────────────────────────────────────────
 
 class KassaQrController(http.Controller):
+    """HTTP controller providing the QR-scan JSON endpoint and a service-worker override.
+
+    All routes are registered under the Odoo HTTP layer and require an active
+    user session (``auth='user'``) except the service-worker route which serves
+    anonymous requests (``auth='none'``).
+    """
 
     @http.route('/web/service-worker.js', type='http', auth='none', csrf=False)
     def service_worker(self, **kwargs):
@@ -253,6 +299,40 @@ class KassaQrController(http.Controller):
     @http.route("/kassa/qr_scan", type="json", auth="user", methods=["POST"], csrf=False,
                 groups="point_of_sale.group_pos_user")
     def qr_scan(self, identity_uuid=None, email=None, **kwargs):
+        """Process a QR-code scan from the POS frontend and return partner + session data.
+
+        Called by ``qr_scanner.js`` in the browser after the camera decodes a QR code.
+        The QR payload is either a plain UUID string or a JSON object
+        ``{"identity_uuid": "...", "email": "..."}`` — both forms are handled by the
+        JS layer before calling this endpoint.
+
+        Processing steps
+        ────────────────
+        1. **Partner resolution** — find the Odoo partner by ``x_user_id``.
+           If not found, try matching by email (links UUID to an existing record).
+           If still not found, create a minimal placeholder partner so the POS can
+           proceed immediately; the full profile arrives via ``new_registration`` later.
+
+        2. **Session sync** — call the Frontend via RabbitMQ RPC
+           (``user_sessions_request``) to get the visitor's registered sessions.
+           Writes ``x_session_title`` and ``x_outstanding_amount`` to the partner and
+           publishes a POS bus event so any open POS terminal sees the update.
+           Falls back to the stored ``x_session_title`` if the Frontend is unreachable.
+
+        3. **Wallet lease** — if the partner does not already have an active lease,
+           publish ``wallet_lease_request`` to CRM and set ``x_lease_active=True``
+           on the partner.  The lease is considered "requested" until CRM responds
+           with ``wallet_lease_grant`` (handled by receiver.py).
+
+        Returns a JSON dict with:
+            ``status``       — "lease_requested" | "already_active" | "not_found_and_created" | "error"
+            ``partner_id``   — Odoo ID of the resolved/created partner
+            ``partner_name`` — Display name
+            ``sessions``     — List of ``{"session_id": ..., "title": ..., "price": ...}`` dicts
+
+        Access is restricted to users in the ``point_of_sale.group_pos_user`` group
+        (i.e. active cashiers) — anonymous callers receive a 403.
+        """
         if not identity_uuid:
             return {"status": "error", "message": "identity_uuid is vereist."}
 

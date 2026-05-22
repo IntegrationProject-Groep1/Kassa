@@ -19,7 +19,13 @@ class PosSession(models.Model):
     _inherit = 'pos.session'
 
     def _loader_params_res_partner(self):
-        """Add Kassa custom fields to the partner payload sent to the POS frontend."""
+        """Add Kassa custom fields to the partner payload sent to the POS frontend.
+
+        Also widens the search domain so all Kassa event attendees (x_user_id set)
+        are loaded regardless of customer_rank. The base Odoo domain filters by
+        customer_rank > 0, which excludes partners created before customer_rank=1
+        was set on new_registration. The OR ensures they appear in the customer tab.
+        """
         result = super()._loader_params_res_partner()
         extra = [
             'x_outstanding_amount',
@@ -32,10 +38,14 @@ class PosSession(models.Model):
             'x_lease_id',
             'vat',
         ]
-        fields = result.get('search_params', {}).get('fields', [])
+        search_params = result.get('search_params', {})
+        fields = search_params.get('fields', [])
         for f in extra:
             if f not in fields:
                 fields.append(f)
+
+        base_domain = search_params.get('domain', [])
+        search_params['domain'] = ['|'] + base_domain + [['x_user_id', '!=', False]]
         return result
 
     def kassa_notify_product_update(self):
