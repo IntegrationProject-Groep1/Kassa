@@ -17,13 +17,19 @@ services:
       - HOST=kassa-db
       - USER=${POSTGRES_USER}
       - PASSWORD=${POSTGRES_PASSWORD}
-      - DBNAME=${ODOO_DB}
+      - DBNAME=${ODOO_DB:-odoo_kassa}
       - RABBIT_HOST=${RABBIT_HOST:-rabbitmq}
       - RABBIT_PORT=${RABBIT_PORT:-5672}
       - RABBIT_USER=${RABBIT_USER:-guest}
       - RABBIT_PASS=${RABBIT_PASS:-guest}
       - RABBIT_VHOST=${RABBIT_VHOST:-/}
       - RABBIT_EXCHANGE=${RABBIT_EXCHANGE:-kassa.exchange}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8069/web/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 10
 
   kassa-db:
     image: postgres:15
@@ -60,7 +66,7 @@ services:
       - outbox-data:/app/outbox
     depends_on:
       kassa-web:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
@@ -81,7 +87,7 @@ services:
       - ./integratie:/app
     depends_on:
       kassa-web:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   rabbitmq:
