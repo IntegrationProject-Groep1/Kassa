@@ -63,6 +63,16 @@ jobs:
       - name: Start Services
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
 
+      - name: Post-start diagnostics
+        run: |
+          sleep 5
+          echo "=== container list ==="
+          docker ps -a
+          echo "=== kassa_odoo inspect ==="
+          docker inspect kassa_odoo --format='Status={{.State.Status}} ExitCode={{.State.ExitCode}} Cmd={{.Config.Cmd}} Entrypoint={{.Config.Entrypoint}} Env={{.Config.Env}}' 2>/dev/null || echo "container not found"
+          echo "=== kassa_odoo logs ==="
+          docker logs kassa_odoo 2>&1 || true
+
       - name: Wait for Odoo HTTP
         run: |
           echo "Waiting for Odoo at http://localhost:8069/web/health..."
