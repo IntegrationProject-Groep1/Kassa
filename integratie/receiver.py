@@ -358,6 +358,10 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         "is_company": ctype == "company",
         "x_payment_status": status,
         "x_outstanding_amount": amount,
+        # Required so Odoo POS includes this partner in the customer tab.
+        # The POS session loader and the partner-list search both filter by
+        # customer_rank > 0; without this, the partner is invisible in the UI.
+        "customer_rank": 1,
     }
     if session_title:
         existing_raw = existing[0].get("x_session_title") or "" if existing else ""
@@ -1124,6 +1128,16 @@ def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
     return result
 
 
+def _safe_price(value: Any) -> Optional[float]:
+    """Convert a stored price value to float, or None if missing/non-numeric."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle user_registered from Frontend (dual-publish, contract §5.5).
 
@@ -1175,30 +1189,34 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
 
     partner_id = existing[0]["id"]
     sessions = _parse_session_list(existing[0].get("x_session_title") or "")
+    current_outstanding = round(float(existing[0].get("x_outstanding_amount") or 0.0), 2)
 
-    if not any(s.get("session_id") == session_id for s in sessions):
+    is_new = not any(s.get("session_id") == session_id for s in sessions)
+    if is_new:
         sessions.append({"session_id": session_id, "title": session_title, "price": price})
-
-    outstanding = sum(
-        float(s["price"]) for s in sessions if s.get("price") is not None
-    )
+        # Additive: add this session's price to the current authoritative outstanding.
+        # Recalculating from x_session_title would erase amounts set by new_registration
+        # (CRM payment_due) or zeroed by order_poller after payment.
+        new_outstanding = round(current_outstanding + (price if price is not None else 0.0), 2)
+    else:
+        new_outstanding = current_outstanding
 
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "write",
         [[partner_id], {
             "x_session_title": json.dumps(sessions),
-            "x_outstanding_amount": outstanding,
+            "x_outstanding_amount": new_outstanding,
             "x_payment_status": payment_status,
         }],
     )
     _publish_partner_bus_event(
         uid, models, partner_id,
-        outstanding, payment_status, existing[0].get("name") or "",
+        new_outstanding, payment_status, existing[0].get("name") or "",
     )
     logger.info(
         "[USER_REGISTERED] ✓ Session added | Odoo ID=%s | session_id=%s | price=%s | outstanding=%.2f",
-        partner_id, session_id, price, outstanding,
+        partner_id, session_id, price, new_outstanding,
     )
     if MONITOR_SUCCESS_LOGS:
         monitor.log("info", "registration",
@@ -1227,7 +1245,7 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "search_read",
         [[["x_user_id", "=", identity_uuid]]],
-        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount"], "limit": 1},
+        {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"], "limit": 1},
     )
 
     if not existing:
@@ -1239,29 +1257,40 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
 
     partner_id = existing[0]["id"]
     sessions = _parse_session_list(existing[0].get("x_session_title") or "")
+    current_outstanding = round(float(existing[0].get("x_outstanding_amount") or 0.0), 2)
+    current_status = existing[0].get("x_payment_status") or "pending"
+
+    removed = next((s for s in sessions if s.get("session_id") == session_id), None)
     sessions = [s for s in sessions if s.get("session_id") != session_id]
 
-    outstanding = sum(
-        float(s["price"]) for s in sessions if s.get("price") is not None
-    )
-    status = "paid" if not sessions else "pending"
+    removed_price = _safe_price(removed.get("price")) if removed else None
+    if removed_price is not None:
+        # Subtractive: remove only this session's price from the authoritative outstanding.
+        # Clamped at 0 so a partially-paid balance never goes negative.
+        new_outstanding = round(max(0.0, current_outstanding - removed_price), 2)
+    else:
+        new_outstanding = current_outstanding
+
+    # Only flip to "paid" when the debt is actually cleared; preserve the current status
+    # otherwise so a "paid" partner who partially unregisters does not revert to "pending".
+    status = "paid" if new_outstanding == 0.0 else current_status
 
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS,
         "res.partner", "write",
         [[partner_id], {
             "x_session_title": json.dumps(sessions),
-            "x_outstanding_amount": outstanding,
+            "x_outstanding_amount": new_outstanding,
             "x_payment_status": status,
         }],
     )
     _publish_partner_bus_event(
         uid, models, partner_id,
-        outstanding, status, existing[0].get("name") or "",
+        new_outstanding, status, existing[0].get("name") or "",
     )
     logger.info(
         "[USER_UNREGISTERED] ✓ Session removed | Odoo ID=%s | session_id=%s | outstanding=%.2f",
-        partner_id, session_id, outstanding,
+        partner_id, session_id, new_outstanding,
     )
     if MONITOR_SUCCESS_LOGS:
         monitor.log("info", "registration",
