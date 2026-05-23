@@ -7,6 +7,8 @@ Standalone process. Run with:
 Requires env vars: ODOO_URL, ODOO_DB, ODOO_USER, ODOO_PASS
 Optional: PORT (default 8004)
 """
+import logging
+import logging.handlers
 import os
 import xmlrpc.client  # nosec B411
 from typing import Annotated, Any, cast
@@ -16,6 +18,16 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
 from monitoring import monitor
+
+_log = logging.getLogger("kassa-mcp")
+if not _log.handlers:
+    _log.setLevel(logging.DEBUG)
+    _fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
+    _sh = logging.StreamHandler(); _sh.setFormatter(_fmt); _log.addHandler(_sh)
+    if os.path.isdir("/data"):
+        _fh = logging.handlers.RotatingFileHandler("/data/kassa-mcp.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+        _fh.setFormatter(_fmt); _log.addHandler(_fh)
+    _log.propagate = False
 
 defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
@@ -461,12 +473,15 @@ def process_refund(
     """
     if not reason or not reason.strip():
         return {"error": "A reason is required to process a refund.", "success": False}
+    _log.info("process_refund called: order_id=%s reason=%.100s", order_id, reason)
     try:
         ids = _odoo("pos.order", "search", [[["name", "=", order_id]]])
         if not ids:
+            _log.warning("process_refund: order not found: %s", order_id)
             return {"error": f"Order '{order_id}' not found.", "success": False}
         result = _odoo("pos.order", "refund", [ids])
         monitor.log("info", "refund", f"Admin initiated refund for order {order_id}: {reason[:200]}")
+        _log.info("process_refund success: order_id=%s", order_id)
         return {
             "success": True,
             "order_id": order_id,
@@ -476,6 +491,7 @@ def process_refund(
         }
     except Exception as exc:
         monitor.log("error", "refund", f"Admin refund failed for order {order_id}: {str(exc)[:300]}")
+        _log.error("process_refund error: order_id=%s error=%s", order_id, exc)
         return {"error": f"Refund failed: {exc}", "success": False}
 
 
@@ -503,6 +519,7 @@ def topup_wallet(
     import sender  # lazy: requires RABBIT_* env vars — fail before any Odoo writes
     if not reason or not reason.strip():
         return {"error": "A reason is required for a wallet top-up.", "success": False}
+    _log.info("topup_wallet called: master_uuid=%s amount=%.2f reason=%.100s", master_uuid, amount, reason)
     try:
         partners = _odoo(
             "res.partner", "search_read",
@@ -581,6 +598,7 @@ def topup_wallet(
         monitor.log("info", "wallet",
                     f"Admin topped up wallet for {partner['name']} (uuid={master_uuid}): "
                     f"+\u20ac{amount:.2f} \u2192 \u20ac{new_balance:.2f}. Reason: {reason[:200]}")
+        _log.info("topup_wallet success: master_uuid=%s amount=%.2f new_balance=%.2f", master_uuid, amount, new_balance)
         return {
             "success":      True,
             "master_uuid":  master_uuid,
@@ -594,6 +612,7 @@ def topup_wallet(
         }
     except Exception as exc:
         monitor.log("error", "wallet", f"Admin wallet top-up failed for uuid={master_uuid}: {str(exc)[:300]}")
+        _log.error("topup_wallet error: master_uuid=%s error=%s", master_uuid, exc)
         return {"error": f"Wallet top-up failed: {exc}", "success": False}
 
 
