@@ -970,8 +970,8 @@ def process_event_ended(root: Element, uid: int, models: OdooModelsProxy) -> Non
     body = root.find("body")
     if body is None:
         raise ValueError("event_ended: <body> missing")
-    session_id = (body.findtext("session_id") or "").strip()
-    logger.info("[EVENT_ENDED] Received (session_id=%s) — returning all active leases", session_id)
+    ended_at = (body.findtext("ended_at") or "").strip()
+    logger.info("[EVENT_ENDED] Received (ended_at=%s) — returning all active leases", ended_at)
     _do_return_all_leases(uid, models)
 
 
