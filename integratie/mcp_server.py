@@ -22,11 +22,19 @@ from monitoring import monitor
 _log = logging.getLogger("kassa-mcp")
 if not _log.handlers:
     _log.setLevel(logging.DEBUG)
-    _fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
-    _sh = logging.StreamHandler(); _sh.setFormatter(_fmt); _log.addHandler(_sh)
+    _fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(_fmt)
+    _log.addHandler(_sh)
     if os.path.isdir("/data"):
-        _fh = logging.handlers.RotatingFileHandler("/data/kassa-mcp.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
-        _fh.setFormatter(_fmt); _log.addHandler(_fh)
+        _fh = logging.handlers.RotatingFileHandler(
+            "/data/kassa-mcp.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        _fh.setFormatter(_fmt)
+        _log.addHandler(_fh)
     _log.propagate = False
 
 defusedxml.xmlrpc.monkey_patch()
