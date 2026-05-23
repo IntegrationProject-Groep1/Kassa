@@ -98,7 +98,7 @@ def _wallet_remote_topup_xml(
     ).encode("utf-8")
 
 
-def _event_ended_xml(session_id: str = "SESSION-001", message_id: str | None = None) -> bytes:
+def _event_ended_xml(message_id: str | None = None) -> bytes:
     mid = message_id or _make_id()
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -111,7 +111,6 @@ def _event_ended_xml(session_id: str = "SESSION-001", message_id: str | None = N
         "<version>2.0</version>"
         "</header>"
         "<body>"
-        f"<session_id>{session_id}</session_id>"
         "<ended_at>2026-05-08T18:00:00Z</ended_at>"
         "</body>"
         "</message>"

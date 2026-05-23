@@ -71,11 +71,10 @@ def _topup_root(identity_uuid: str, add_amount: str, reason: str = "gift") -> ET
     )
 
 
-def _event_ended_root(session_id: str = "S1") -> ET.Element:
+def _event_ended_root() -> ET.Element:
     return ET.fromstring(
         "<message><header/>"
-        f"<body><session_id>{session_id}</session_id>"
-        "<ended_at>2026-05-08T18:00:00Z</ended_at>"
+        "<body><ended_at>2026-05-08T18:00:00Z</ended_at>"
         "</body></message>"
     )
 
