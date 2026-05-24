@@ -424,9 +424,11 @@ class TestWalletRemoteTopup:
 
     @patch("receiver.send_typed_message")
     def test_rejects_topup_when_no_active_lease(self, mock_send, odoo):
+        import pytest
         uid, models = odoo
         models.execute_kw.return_value = [self._partner(lease_active=False)]
-        receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
+        with pytest.raises(ValueError, match="No active lease"):
+            receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
         assert models.execute_kw.call_count == 1  # only search_read, no action_add_wallet_amount
         mock_send.assert_not_called()
 

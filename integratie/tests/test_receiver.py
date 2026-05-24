@@ -703,7 +703,7 @@ class TestProcessCancelRegistration:
             "</body></message>"
         )
 
-    def test_deactivates_existing_partner(self, odoo):
+    def test_cancels_registration_on_existing_partner(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 9, "name": "Carol"}],
@@ -713,7 +713,10 @@ class TestProcessCancelRegistration:
 
         write_call = models.execute_kw.call_args_list[1]
         assert write_call[0][4] == "write"
-        assert write_call[0][5][1] == {"active": False}
+        assert write_call[0][5][1] == {
+            "x_outstanding_amount": 0.0,
+            "x_payment_status": "cancelled",
+        }
 
     def test_no_action_when_not_found(self, odoo, caplog):
         uid, models = odoo

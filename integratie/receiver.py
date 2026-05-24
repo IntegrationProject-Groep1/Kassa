@@ -857,8 +857,7 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
     partner = existing[0]
 
     if not partner.get("x_lease_active"):
-        logger.warning("[REMOTE_TOPUP] No active lease for %s – rejecting remote top-up", identity_uuid)
-        return
+        raise ValueError(f"No active lease for {identity_uuid} – cannot apply remote top-up")
 
     # If the badge was scanned (x_lease_active=True) but the CRM grant has not
     # yet arrived (x_lease_id is empty), applying the topup directly would lose
@@ -1020,10 +1019,13 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
-            [[partner_id], {"active": False}],
+            [[partner_id], {
+                "x_outstanding_amount": 0.0,
+                "x_payment_status": "cancelled",
+            }],
         )
         logger.info(
-            "[CANCEL_REGISTRATION] ✓ Profile deactivated: Odoo ID=%s | session_id=%s | reason=%s",
+            "[CANCEL_REGISTRATION] ✓ Registration cancelled: Odoo ID=%s | session_id=%s | reason=%s",
             partner_id,
             session_id,
             reason,
