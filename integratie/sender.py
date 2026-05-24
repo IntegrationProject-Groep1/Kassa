@@ -49,6 +49,7 @@ from typing import Optional
 from lxml import etree
 
 from config_utils import parse_rabbit_port, require_env
+from monitoring import monitor
 
 
 class BufferFullError(RuntimeError):
@@ -60,6 +61,21 @@ class XSDValidationError(Exception):
 
 
 logger = logging.getLogger(__name__)
+
+# Maps outbound message type → monitoring action for structured log coverage.
+_MSG_TYPE_TO_ACTION = {
+    "consumption_order": "payment",
+    "payment_registered_consumption": "payment",
+    "payment_registered_registration": "payment",
+    "payment_status": "payment",
+    "invoice_request": "invoice",
+    "badge_assigned": "badge",
+    "refund_processed": "refund",
+    "wallet_balance_update": "wallet",
+    "wallet_lease_request": "wallet",
+    "wallet_lease_return": "wallet",
+    "user_sessions_request": "session",
+}
 
 
 # Configuration — RABBIT_HOST/USER/PASS are validated lazily in _get_connection(),
@@ -167,6 +183,8 @@ def _buffer_message(
                     f"⚠️  Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}"
                 )
 
+            monitor.log("warning", "system_error",
+                        f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message dropped: {routing_key}")
             raise BufferFullError(
                 f"Outbox buffer full ({BUFFER_MAX_MESSAGES} items) — message not buffered: {routing_key}"
             )
@@ -443,6 +461,7 @@ def send_typed_message(
             f"❌ MESSAGE BLOCKED: {error_msg}\n"
             f"Message content (first 500 chars): {message_xml[:500]}..."
         )
+        monitor.log("error", "xml_validation", error_msg[:300])
         # BEST PRACTICE: Buffer the message even on XSD failure to prevent data loss.
         # This allows manual recovery or re-processing if the contract is updated later.
         if buffer_on_fail:
@@ -460,7 +479,8 @@ def send_typed_message(
         raise XSDValidationError(error_msg)
 
     routing_key = ROUTING_KEYS.get(msg_type, f"kassa.misc.{msg_type}")
-    return send_message(
+    action = _MSG_TYPE_TO_ACTION.get(msg_type, "system_error")
+    ok = send_message(
         routing_key,
         message_xml,
         record_id=record_id,
@@ -468,6 +488,11 @@ def send_typed_message(
         buffer_on_fail=buffer_on_fail,
         exchange=exchange
     )
+    if ok:
+        monitor.log("info", action, f"Sent {msg_type}")
+    else:
+        monitor.log("warning", action, f"Failed to send {msg_type} — buffered for retry")
+    return ok
 
 
 def get_buffered_record_ids(model: str = "pos.order") -> set[int]:
@@ -899,6 +924,7 @@ def send_error_to_queue(
     except Exception as err:
         logger.error(
             f"❌ Could not send error message to RabbitMQ (it will not be buffered): {err}")
+        monitor.log("error", "system_error", f"Failed to publish system_error to RabbitMQ: {err}")
 
 
 def build_log_xml(level: str, action: str, message: str) -> str:

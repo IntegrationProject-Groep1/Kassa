@@ -76,3 +76,4 @@ integratie/out.txt
 .gemini/
 **/outbox/
 .claude/
+*.stackdump
