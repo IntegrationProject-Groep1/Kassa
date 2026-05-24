@@ -1078,6 +1078,30 @@ class OrderPoller:
                 "country": customer_info.get('country_code') or "be"
             }
 
+        # For contact persons linked to a company, fetch parent company's name to match the VAT number
+        company_name_value = None
+        if customer_info and customer_type == 'company':
+            if customer_info.get('is_company'):
+                # Partner is directly a company
+                company_name_value = customer_info.get('name')
+            elif customer_info.get('parent_id'):
+                # Contact person with company parent — fetch parent's name for consistency with VAT
+                try:
+                    parent_id = customer_info['parent_id'][0] if isinstance(customer_info['parent_id'], (list, tuple)) else customer_info['parent_id']
+                    parent_record = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'read',
+                        [parent_id, ['name']]
+                    )
+                    if parent_record:
+                        company_name_value = parent_record[0].get('name')
+                except Exception as e:
+                    logger.warning(f"Could not fetch parent company name for contact person {customer_info['id']}: {e}")
+                    # Fallback to contact's name if parent fetch fails
+                    company_name_value = customer_info.get('name')
+            else:
+                company_name_value = customer_info.get('name')
+
         xml_message = sender.build_consumption_order_xml(
             items=items,
             customer_id=str(customer_info['id']) if customer_info else None,
@@ -1086,7 +1110,7 @@ class OrderPoller:
             email=customer_info.get('email') or None if customer_info else None,
             address=address,
             is_anonymous=is_anonymous,
-            company_name=customer_info.get('name') if (customer_info and customer_type == 'company') else None,
+            company_name=company_name_value,
             vat_number=customer_info.get('vat') if (customer_info and customer_type == 'company') else None)
 
         order_id = order['id']
