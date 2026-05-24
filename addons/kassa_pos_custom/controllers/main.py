@@ -236,7 +236,7 @@ def _ensure_session_products(env, session_titles: List[str]) -> None:
     if not session_titles:
         return
 
-    existing = env["product.template"].search([
+    existing = env["product.template"].sudo().search([
         ("name", "in", session_titles),
         ("available_in_pos", "=", True),
     ])
@@ -246,7 +246,7 @@ def _ensure_session_products(env, session_titles: List[str]) -> None:
     if not titles_to_create:
         return
 
-    categ = env["pos.category"].search([("name", "=", "Sessions")], limit=1)
+    categ = env["pos.category"].sudo().search([("name", "=", "Sessions")], limit=1)
     for title in titles_to_create:
         vals: Dict = {
             "name": title,
@@ -256,7 +256,7 @@ def _ensure_session_products(env, session_titles: List[str]) -> None:
         }
         if categ:
             vals["pos_categ_ids"] = [(6, 0, [categ.id])]
-        env["product.template"].create(vals)
+        env["product.template"].sudo().create(vals)
         _logger.info("[Kassa QR] Created session product: '%s'", title)
 
 
@@ -339,13 +339,13 @@ class KassaQrController(http.Controller):
         env = request.env
 
         # 1. Find or create partner.
-        partner = env["res.partner"].search([("x_user_id", "=", identity_uuid)], limit=1)
+        partner = env["res.partner"].sudo().search([("x_user_id", "=", identity_uuid)], limit=1)
         created = False
         if not partner and email:
             # Reverse lookup: UUID unknown but email matches an existing partner.
-            partner = env["res.partner"].search([("email", "=", email)], limit=1)
+            partner = env["res.partner"].sudo().search([("email", "=", email)], limit=1)
             if partner:
-                partner.write({"x_user_id": identity_uuid})
+                partner.sudo().write({"x_user_id": identity_uuid})
                 _logger.info(
                     "[Kassa QR] Linked uuid %s to existing partner %s via email",
                     identity_uuid, partner.id,
@@ -355,14 +355,14 @@ class KassaQrController(http.Controller):
             vals = {"name": name, "x_user_id": identity_uuid, "customer_rank": 1}
             if email:
                 vals["email"] = email
-            partner = env["res.partner"].create(vals)
+            partner = env["res.partner"].sudo().create(vals)
             created = True
             _logger.info(
                 "[Kassa QR] Created placeholder partner %s for uuid %s",
                 partner.id, identity_uuid,
             )
         elif email and not partner.email:
-            partner.write({"email": email})
+            partner.sudo().write({"email": email})
 
         # 2. Ask Frontend for all sessions this visitor is registered for.
         sessions = _fetch_sessions_from_frontend(identity_uuid)

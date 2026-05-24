@@ -64,7 +64,7 @@ class PosSession(models.Model):
 
         Returns the number of sessions notified.
         """
-        open_sessions = self.env['pos.session'].search([('state', '=', 'opened')])
+        open_sessions = self.env['pos.session'].sudo().search([('state', 'in', ('opened', 'opening_control'))])
         if not open_sessions:
             return 0
 
