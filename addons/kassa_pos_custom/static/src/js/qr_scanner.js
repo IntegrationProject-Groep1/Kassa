@@ -131,7 +131,7 @@ export class QrScanButton extends Component {
     async _startCamera() {
         const video = this.videoRef.el;
         if (!video) {
-            this._setError("Video element niet gevonden.");
+            this._setError("Camera kon niet worden gestart. Herlaad de pagina.");
             return;
         }
         try {
@@ -145,7 +145,7 @@ export class QrScanButton extends Component {
             this._scanning     = true;
             this._runScanLoop();
         } catch (err) {
-            this._setError(`Camera niet beschikbaar: ${err.message}`);
+            this._setError("Camera niet beschikbaar. Controleer de cameratoegang en probeer opnieuw.");
         }
     }
 
@@ -170,7 +170,7 @@ export class QrScanButton extends Component {
             : null;
 
         if (!detector && !window.jsQR) {
-            this._setError("QR-scannen wordt niet ondersteund door deze browser.");
+            this._setError("QR-scannen wordt niet ondersteund in deze browser. Gebruik Chrome of Edge.");
             return;
         }
 
@@ -261,14 +261,14 @@ export class QrScanButton extends Component {
             const result = await this._callQrScanEndpoint(identityUuid, qrEmail);
 
             if (!result || result.status === "error") {
-                this._setError(result?.message || "Onbekende fout bij het opzoeken van de klant.");
+                this._setError("Klant niet gevonden. Controleer de QR-code en probeer opnieuw.");
                 return;
             }
 
             const partnerId = result.partner_id;
             const [partner] = await this.orm.read("res.partner", [partnerId], QR_PARTNER_FIELDS);
             if (!partner) {
-                this._setError("Partner kon niet worden opgehaald uit Odoo.");
+                this._setError("Klantgegevens konden niet worden geladen. Probeer opnieuw.");
                 return;
             }
 
@@ -309,23 +309,23 @@ export class QrScanButton extends Component {
             this.state.open = false;
 
             const balance = partner.x_wallet_balance || 0;
-            const leaseNote =
+            const walletNote =
                 result.status === "lease_requested" || result.status === "not_found_and_created"
-                    ? " — saldo wordt opgehaald bij CRM"
+                    ? " | Wallet wordt geactiveerd..."
                     : result.status === "already_active"
-                    ? ` — saldo: ${this.pos.format_currency(balance)}`
+                    ? ` | Wallet: ${this.pos.format_currency(balance)}`
                     : "";
 
             const sessionTitles = (result.sessions || []).map((s) => s.title).filter(Boolean);
-            const sessionNote   = sessionTitles.length > 0 ? ` — ${sessionTitles.join(", ")}` : "";
-            const emailNote     = qrEmail ? ` (${qrEmail})` : "";
+            const sessionNote   = sessionTitles.length > 0 ? ` | Sessie: ${sessionTitles.join(", ")}` : "";
 
             this.notification.add(
-                `Klant geïdentificeerd: ${partner.name}${emailNote}${sessionNote}${leaseNote}`,
+                `Welkom, ${partner.name}!${sessionNote}${walletNote}`,
                 { type: "success", sticky: false }
             );
         } catch (err) {
-            this._setError(`Fout: ${err.message}`);
+            console.error("[Kassa] QR scan error:", err);
+            this._setError("Er is een fout opgetreden. Probeer opnieuw.");
         }
     }
 

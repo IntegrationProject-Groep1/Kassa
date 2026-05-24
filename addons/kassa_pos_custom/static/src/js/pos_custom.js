@@ -500,7 +500,7 @@ patch(PaymentScreen.prototype, {
             }
             if (!partner.x_lease_active || !partner.x_lease_id) {
                 this.env.services.notification.add(
-                    _t("Wallet is nog niet beschikbaar. Probeer opnieuw."),
+                    _t("Wallet is nog niet actief. Even geduld en probeer opnieuw."),
                     { type: "warning", sticky: false }
                 );
                 return;
@@ -579,7 +579,7 @@ patch(PaymentScreen.prototype, {
      */
     async downloadInvoice(orderIds) {
         this.env.services.notification.add(
-            _t("Factuur aangemaakt."),
+            _t("Factuurverzoek ingediend."),
             { type: "info", sticky: false }
         );
     },
@@ -611,7 +611,7 @@ patch(PaymentScreen.prototype, {
         await super.validate(...arguments);
         if (order?.finalized) {
             this.env.services.notification.add(
-                _t("Betaling geslaagd!"),
+                _t("Betaling verwerkt."),
                 { type: "success", sticky: false }
             );
         }
