@@ -64,7 +64,18 @@ class PosSession(models.Model):
 
         Returns the number of sessions notified.
         """
-        open_sessions = self.env['pos.session'].sudo().search([('state', 'in', ('opened', 'opening_control'))])
+        # Widen the company context before searching: .sudo() bypasses record
+        # rules but Odoo 16/17 still applies a company filter derived from
+        # allowed_company_ids in the environment.  The XML-RPC caller
+        # (desiderius) may only have one company in its context, so sessions
+        # belonging to other companies would silently return empty.
+        all_company_ids = self.env['res.company'].sudo().search([]).ids
+        open_sessions = (
+            self.env['pos.session']
+            .with_context(allowed_company_ids=all_company_ids)
+            .sudo()
+            .search([('state', 'in', ('opened', 'opening_control'))])
+        )
         if not open_sessions:
             return 0
 
