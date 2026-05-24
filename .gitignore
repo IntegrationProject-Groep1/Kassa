@@ -77,3 +77,5 @@ integratie/out.txt
 **/outbox/
 .claude/
 *.stackdump
+*.log
+*.log.*
