@@ -64,11 +64,27 @@ class PosSession(models.Model):
 
         Returns the number of sessions notified.
         """
-        open_sessions = self.env['pos.session'].sudo().search([('state', 'in', ('opened', 'opening_control'))])
+        # Widen the company context before searching: .sudo() bypasses record
+        # rules but Odoo 16/17 still applies a company filter derived from
+        # allowed_company_ids in the environment.  The XML-RPC caller
+        # (desiderius) may only have one company in its context, so sessions
+        # belonging to other companies would silently return empty.
+        all_company_ids = self.env['res.company'].sudo().search([]).ids
+        if not all_company_ids:
+            _logger.warning("[KASSA] kassa_notify_product_update: no companies found, aborting")
+            return 0
+        open_sessions = (
+            self.env['pos.session']
+            .with_context(allowed_company_ids=all_company_ids)
+            .sudo()
+            .search([('state', 'in', ('opened', 'opening_control'))])
+        )
         if not open_sessions:
             return 0
 
         notified = 0
+        all_product_ids = []
+
         for config in open_sessions.mapped('config_id'):
             sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
             params = sessions_in_config[0]._loader_params_product_product()
@@ -76,12 +92,18 @@ class PosSession(models.Model):
             domain = search_params.get('domain', [])
             if config.company_id:
                 domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
-            products = self.env['product.product'].sudo().search_read(
-                domain,
-                fields=search_params.get('fields', []),
-                limit=search_params.get('limit', False),
-                order=search_params.get('order', False),
+            products = (
+                self.env['product.product']
+                .with_context(allowed_company_ids=all_company_ids)
+                .sudo()
+                .search_read(
+                    domain,
+                    fields=search_params.get('fields', []),
+                    limit=search_params.get('limit', False),
+                    order=search_params.get('order', False),
+                )
             )
+            all_product_ids.extend(p['id'] for p in products)
             for session in sessions_in_config:
                 try:
                     session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
@@ -94,5 +116,15 @@ class PosSession(models.Model):
                     _logger.warning(
                         "[KASSA] Could not notify POS session %s: %s", session.name, exc
                     )
+
+        # Publish to the kassa_product_update bus channel so the POS JS handler
+        # can upsert new products into the reactive model and trigger a grid re-render.
+        unique_product_ids = list(dict.fromkeys(all_product_ids))
+        if unique_product_ids:
+            self.env['bus.bus'].sudo()._sendone(
+                'kassa_product_update',
+                'kassa_product_update',
+                {'product_ids': unique_product_ids},
+            )
 
         return notified

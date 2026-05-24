@@ -512,9 +512,11 @@ def test_company_customer_account_pending_flow():
     sent_ok = order["x_rabbitmq_sent"] is True
     invoice_ok = bool(order.get("x_invoice_message_id"))
     payment_ok = bool(order.get("x_payment_message_id"))
+    # For Customer Account (pay_later): consumption_order + payment_registered sent, but NO invoice_request
+    # Invoice is deferred to event_ended for bundling
     report_result(
         "Sender: Company Customer Account (pending)",
-        sent_ok and invoice_ok and payment_ok,
+        sent_ok and not invoice_ok and payment_ok,
         f"sent={order['x_rabbitmq_sent']}, invoice_msg={'set' if invoice_ok else 'missing'}, "
         f"payment_msg={'set' if payment_ok else 'missing'}"
     )

@@ -29,6 +29,9 @@ import { sprintf } from "@web/core/utils/strings";
 /** Bus channel published by pos.order.send_partner_bus_event. */
 const KASSA_BUS_CHANNEL = "kassa_partner_update";
 
+/** Bus channel published by pos.session.kassa_notify_product_update. */
+const KASSA_PRODUCT_CHANNEL = "kassa_product_update";
+
 /**
  * Parse x_session_title into a list of session title strings.
  * Handles three formats: JSON array, plain string (legacy), and empty.
@@ -86,6 +89,15 @@ patch(PosStore.prototype, {
                 (payload) => {
                     this._onKassaPartnerUpdate(payload).catch((err) =>
                         console.error("[Kassa] Bus handler error:", err)
+                    );
+                }
+            );
+            this.env.services.bus_service.addChannel(KASSA_PRODUCT_CHANNEL);
+            this.env.services.bus_service.subscribe(
+                KASSA_PRODUCT_CHANNEL,
+                (payload) => {
+                    this._onKassaProductUpdate(payload).catch((err) =>
+                        console.error("[Kassa] Product bus handler error:", err)
                     );
                 }
             );
@@ -262,6 +274,43 @@ patch(PosStore.prototype, {
             console.log("[Kassa] Partner updated from bus event:", partnerId);
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
+        }
+    },
+
+    /**
+     * Triggered by a "kassa_product_update" bus event published by
+     * pos.session.kassa_notify_product_update after new session products are
+     * created or updated.  Fetches the affected products via RPC and upserts
+     * them into the reactive model so the product grid re-renders without a
+     * manual session reload.
+     */
+    async _onKassaProductUpdate(payload) {
+        const productIds = payload && payload.product_ids;
+        if (!productIds || !productIds.length) return;
+
+        try {
+            const products = await this.env.services.orm.read(
+                "product.product",
+                productIds,
+                [
+                    "id", "name", "display_name", "list_price", "standard_price",
+                    "type", "taxes_id", "barcode", "default_code",
+                    "pos_categ_ids", "categ_id", "available_in_pos",
+                    "description_sale", "x_session_id",
+                ]
+            );
+            for (const product of products || []) {
+                if (this.models?.["product.product"]?.insert) {
+                    this.models["product.product"].insert(product);
+                } else if (this.products) {
+                    const idx = this.products.findIndex((p) => p.id === product.id);
+                    if (idx !== -1) Object.assign(this.products[idx], product);
+                    else this.products.push(product);
+                }
+            }
+            console.log("[Kassa] Synced %d product(s) from kassa_product_update bus event", (products || []).length);
+        } catch (err) {
+            console.error("[Kassa] Error syncing products from bus event:", err);
         }
     },
 });

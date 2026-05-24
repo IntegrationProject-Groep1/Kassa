@@ -19,9 +19,9 @@ if not all([url, db, user, password]):
     print("Error: ODOO_URL, ODOO_DB, ODOO_USER, and ODOO_PASS must be set in the environment.")
     sys.exit(1)
 
-# If running on the host, replace kassa-web with localhost
+# If running on the host, replace kassa-web with localhost, preserving protocol and port
 if "kassa-web" in url:
-    url = url.replace("kassa-web", "localhost")
+    url = url.replace("kassa-web", "127.0.0.1")
 
 print(f"Connecting to Odoo at: {url}")
 print(f"Database: {db}")

@@ -23,6 +23,7 @@ from typing import List, Dict, Any, Optional
 
 import identity_client
 from config_utils import require_env
+from monitoring import monitor
 
 defusedxml.xmlrpc.monkey_patch()
 
@@ -69,9 +70,11 @@ class PartnerIdentityPoller:
                 logger.info("✅ PartnerIdentityPoller: Odoo connection established")
                 return True
             logger.error("❌ PartnerIdentityPoller: Odoo authentication failed")
+            monitor.log("error", "identity", "Odoo authentication failed — partner identity poller cannot start")
             return False
         except Exception as e:
             logger.error("❌ PartnerIdentityPoller: Connection error: %s", e)
+            monitor.log("error", "identity", f"Odoo connection error: {e}")
             return False
 
     def _get_unlinked_partners(self) -> List[Dict[str, Any]]:
@@ -99,6 +102,7 @@ class PartnerIdentityPoller:
             )
         except Exception as e:
             logger.error("❌ Error fetching unlinked partners: %s", e)
+            monitor.log("error", "identity", f"Failed to fetch unlinked partners from Odoo: {e}")
             return []
 
     def _find_existing_link_in_odoo(self, email: str) -> Optional[str]:
@@ -119,6 +123,7 @@ class PartnerIdentityPoller:
             return None
         except Exception as e:
             logger.warning("⚠️ Error checking existing links in Odoo for %s: %s", email, e)
+            monitor.log("warning", "identity", f"Failed to check existing identity link for {email}: {e}")
             return None
 
     def process_partner(self, partner: Dict[str, Any]):
@@ -144,6 +149,8 @@ class PartnerIdentityPoller:
         # Validate email format before contacting Identity Service
         if not _EMAIL_RE.match(email):
             logger.error("Invalid email for partner %s: %r — marking as error", partner_id, email)
+            monitor.log("error", "identity",
+                        f"Partner {partner_id} has invalid email {email!r} — skipping identity link")
             self._update_partner(partner_id, None, "error", "Invalid email address")
             return
 
@@ -165,6 +172,7 @@ class PartnerIdentityPoller:
         existing_uuid = self._find_existing_link_in_odoo(email)
         if existing_uuid:
             logger.info("Reusing existing x_user_id %s for %s", existing_uuid, email)
+            monitor.log("info", "identity", f"Partner {email} linked via existing Odoo record (uuid={existing_uuid})")
             self._update_partner(partner_id, existing_uuid, "linked")
             return
 
@@ -175,6 +183,7 @@ class PartnerIdentityPoller:
                 # Try to create
                 master_uuid = identity_client.create_user(email, source_system="kassa")
                 logger.info("Created new Identity user for %s: %s", email, master_uuid)
+                monitor.log("info", "identity", f"New Identity user created for {email} (uuid={master_uuid})")
             except identity_client.IdentityEmailAlreadyExists:
                 # Fallback to lookup
                 logger.info("Email %s already exists in Identity, performing lookup", email)
@@ -182,21 +191,27 @@ class PartnerIdentityPoller:
                 if result and result.get("master_uuid"):
                     master_uuid = result["master_uuid"]
                     logger.info("Found existing master_uuid for %s: %s", email, master_uuid)
+                    monitor.log("info", "identity",
+                                f"Partner {email} resolved via Identity lookup (uuid={master_uuid})")
                 else:
                     logger.error("Identity lookup failed for existing email %s", email)
+                    monitor.log("error", "identity", f"Identity lookup failed for existing email {email}")
                     self._update_partner(partner_id, None, "error", "Identity lookup failed for existing email")
                     return
 
             if master_uuid:
                 self._update_partner(partner_id, master_uuid, "linked")
             else:
+                monitor.log("error", "identity", f"No master_uuid returned from Identity for {email}")
                 self._update_partner(partner_id, None, "error", "No master_uuid returned from Identity")
 
         except identity_client.IdentityUnavailableError:
             logger.warning("Identity Service unavailable, marking %s as pending", email)
+            monitor.log("warning", "identity", f"Identity Service unavailable — partner {email} marked pending")
             self._update_partner(partner_id, None, "pending")
         except Exception as e:
             logger.error("Unexpected error linking partner %s: %s", email, e)
+            monitor.log("error", "identity", f"Unexpected error linking partner {email}: {e}")
             self._update_partner(partner_id, None, "error", str(e))
 
     def _update_partner(self, partner_id: int, x_user_id: Optional[str], status: str, error_msg: Optional[str] = None):
@@ -228,6 +243,7 @@ class PartnerIdentityPoller:
             )
         except Exception as e:
             logger.error("❌ Failed to update partner %s in Odoo: %s", partner_id, e)
+            monitor.log("error", "identity", f"Failed to write identity status for partner {partner_id} in Odoo: {e}")
 
     def poll(self, interval: int = 10):
         """Main polling loop: find unlinked partners and call process_partner() for each.
