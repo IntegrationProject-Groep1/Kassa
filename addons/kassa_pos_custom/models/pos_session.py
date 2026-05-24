@@ -70,6 +70,9 @@ class PosSession(models.Model):
         # (desiderius) may only have one company in its context, so sessions
         # belonging to other companies would silently return empty.
         all_company_ids = self.env['res.company'].sudo().search([]).ids
+        if not all_company_ids:
+            _logger.warning("[KASSA] kassa_notify_product_update: no companies found, aborting")
+            return 0
         open_sessions = (
             self.env['pos.session']
             .with_context(allowed_company_ids=all_company_ids)
@@ -87,11 +90,16 @@ class PosSession(models.Model):
             domain = search_params.get('domain', [])
             if config.company_id:
                 domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
-            products = self.env['product.product'].sudo().search_read(
-                domain,
-                fields=search_params.get('fields', []),
-                limit=search_params.get('limit', False),
-                order=search_params.get('order', False),
+            products = (
+                self.env['product.product']
+                .with_context(allowed_company_ids=all_company_ids)
+                .sudo()
+                .search_read(
+                    domain,
+                    fields=search_params.get('fields', []),
+                    limit=search_params.get('limit', False),
+                    order=search_params.get('order', False),
+                )
             )
             for session in sessions_in_config:
                 try:
