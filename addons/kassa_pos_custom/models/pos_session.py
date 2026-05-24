@@ -68,28 +68,27 @@ class PosSession(models.Model):
         if not open_sessions:
             return 0
 
+        # Retrieve product loader field parameters from any session
+        params = open_sessions[0]._loader_params_product_product()
+        search_params = params.get('search_params', {})
+        products = self.env['product.product'].sudo().search_read(
+            [('available_in_pos', '=', True)],
+            fields=search_params.get('fields', []),
+            order=search_params.get('order', False),
+        )
+
         notified = 0
-        for config in open_sessions.mapped('config_id'):
-            sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
-            params = sessions_in_config[0]._loader_params_product_product()
-            search_params = params.get('search_params', {})
-            products = self.env['product.product'].search_read(
-                search_params.get('domain', []),
-                fields=search_params.get('fields', []),
-                limit=search_params.get('limit', False),
-                order=search_params.get('order', False),
-            )
-            for session in sessions_in_config:
-                try:
-                    session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
-                    notified += 1
-                    _logger.info(
-                        "[KASSA] Pushed SYNC_PRODUCT_UPDATED to POS session %s (%d products)",
-                        session.name, len(products),
-                    )
-                except Exception as exc:
-                    _logger.warning(
-                        "[KASSA] Could not notify POS session %s: %s", session.name, exc
-                    )
+        for session in open_sessions:
+            try:
+                session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
+                notified += 1
+                _logger.info(
+                    "[KASSA] Pushed SYNC_PRODUCT_UPDATED to POS session %s (%d products)",
+                    session.name, len(products),
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "[KASSA] Could not notify POS session %s: %s", session.name, exc
+                )
 
         return notified
