@@ -73,8 +73,11 @@ class PosSession(models.Model):
             sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
             params = sessions_in_config[0]._loader_params_product_product()
             search_params = params.get('search_params', {})
-            products = self.env['product.product'].search_read(
-                search_params.get('domain', []),
+            domain = search_params.get('domain', [])
+            if config.company_id:
+                domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
+            products = self.env['product.product'].sudo().search_read(
+                domain,
                 fields=search_params.get('fields', []),
                 limit=search_params.get('limit', False),
                 order=search_params.get('order', False),

@@ -97,9 +97,10 @@ class RabbitMQLogHandler(logging.Handler):
                         delivery_mode=2
                     )
                 )
+                print(f"[Monitoring] Sent log [action={action}, level={level}]: {message}", flush=True)
             finally:
                 connection.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[Monitoring] Failed to send log to RabbitMQ: {e}", flush=True)
         finally:
             self._recursion_guard = False
