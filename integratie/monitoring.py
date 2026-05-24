@@ -10,11 +10,6 @@ import threading
 import logging
 from typing import Literal
 
-from sender import (
-    build_log_xml,
-    send_typed_message
-)
-
 
 logger = logging.getLogger(__name__)
 

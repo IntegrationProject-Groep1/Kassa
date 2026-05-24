@@ -1314,7 +1314,11 @@ class OrderPoller:
                     badge_xml = sender.build_badge_assigned_xml(badge_id, identity_uuid)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
                         success_ids.append(p['id'])
-                        monitor.log("info", "badge", f"Published badge_assigned for partner_id={p['id']} | badge={badge_id} | uuid={identity_uuid}")
+                        monitor.log(
+                            "info", "badge",
+                            f"Published badge_assigned for partner_id={p['id']} | "
+                            f"badge={badge_id} | uuid={identity_uuid}"
+                        )
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
                     monitor.log(

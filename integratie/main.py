@@ -124,7 +124,6 @@ def main():
     except Exception as e:
         print(f"⚠️ Could not register RabbitMQLogHandler: {e}", flush=True)
 
-
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
 

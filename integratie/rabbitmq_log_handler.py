@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 import pika
 
+
 class RabbitMQLogHandler(logging.Handler):
     """
     Centralized Python logging handler that forwards formatted XML logs
