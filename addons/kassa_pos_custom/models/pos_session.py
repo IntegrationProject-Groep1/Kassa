@@ -83,6 +83,8 @@ class PosSession(models.Model):
             return 0
 
         notified = 0
+        all_product_ids = []
+
         for config in open_sessions.mapped('config_id'):
             sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
             params = sessions_in_config[0]._loader_params_product_product()
@@ -101,6 +103,7 @@ class PosSession(models.Model):
                     order=search_params.get('order', False),
                 )
             )
+            all_product_ids.extend(p['id'] for p in products)
             for session in sessions_in_config:
                 try:
                     session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
@@ -113,5 +116,15 @@ class PosSession(models.Model):
                     _logger.warning(
                         "[KASSA] Could not notify POS session %s: %s", session.name, exc
                     )
+
+        # Publish to the kassa_product_update bus channel so the POS JS handler
+        # can upsert new products into the reactive model and trigger a grid re-render.
+        unique_product_ids = list(dict.fromkeys(all_product_ids))
+        if unique_product_ids:
+            self.env['bus.bus'].sudo()._sendone(
+                'kassa_product_update',
+                'kassa_product_update',
+                {'product_ids': unique_product_ids},
+            )
 
         return notified
