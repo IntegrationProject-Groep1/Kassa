@@ -276,7 +276,7 @@ def test_cancellation():
     ]
     partner_results = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
-        [domain], {"fields": ["active"]}
+        [domain], {"fields": ["active", "x_outstanding_amount", "x_payment_status"]}
     )
 
     if not partner_results:
@@ -284,14 +284,16 @@ def test_cancellation():
         return
 
     partner = partner_results[0]
-    ok = partner["active"] is False
-    report_result("Receiver: cancel_registration (soft delete)", ok, f"Active: {partner['active']}")
-
-    # Reactivate for further tests
-    models.execute_kw(
-        ODOO_DB, uid, ODOO_PASS, "res.partner",
-        "write", [[partner["id"]], {"active": True}]
+    ok = (
+        partner["active"] is True and
+        abs(float(partner.get("x_outstanding_amount") or 0.0)) < 0.01 and
+        partner.get("x_payment_status") == "cancelled"
     )
+    status_msg = (
+        f"Active: {partner['active']}, Outstanding: {partner.get('x_outstanding_amount')}, "
+        f"Status: {partner.get('x_payment_status')}"
+    )
+    report_result("Receiver: cancel_registration (cancelled status set)", ok, status_msg)
 
 
 # ── TEST CATEGORY: SENDER (Outbound) ──────────────────────────────────────────
@@ -972,48 +974,56 @@ def test_session_product_in_sessions_category():
                               [pt_ids, {"active": False}])
 
 
-def test_lease_topup_rejected_without_active_lease():
-    """Remote top-up must be silently rejected when no active lease exists."""
-    section("TEST 14: Remote Top-up Rejected (no active lease)")
+def test_lease_topup_parked_without_active_lease():
+    """Remote top-up must be parked in pending balance when no active lease exists."""
+    section("TEST 14: Remote Top-up Parked (no active lease)")
     uid, models = get_rpc()
 
     result = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [[["x_user_id", "=", TEST_USER_ID]]],
-        {"fields": ["id", "x_wallet_balance"], "limit": 1},
+        {"fields": ["id", "x_wallet_balance", "x_pending_topup_balance"], "limit": 1},
     )
     if not result:
-        report_result("Lease: topup_rejected_no_lease", False, "Test partner not found")
+        report_result("Lease: topup_parked_no_lease", False, "Test partner not found")
         return
 
     partner_id = result[0]["id"]
     balance_before = float(result[0]["x_wallet_balance"] or 0.0)
+    pending_before = float(result[0]["x_pending_topup_balance"] or 0.0)
 
-    # Explicitly clear the lease so the topup must be rejected
+    # Explicitly clear the lease and pending balance
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
-        [[partner_id], {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}],
+        [[partner_id], {
+            "x_lease_active": False, "x_lease_id": "",
+            "x_lease_transaction_count": 0, "x_pending_topup_balance": 0.0,
+        }],
     )
 
     xml = (
         f"<identity_uuid>{TEST_USER_ID}</identity_uuid>"
         f'<add_amount currency="eur">50.00</add_amount>'
-        "<reason>should be rejected</reason>"
+        "<reason>should be parked</reason>"
     )
     publish(build_msg("wallet_remote_topup", xml), "kassa.incoming.lease")
-    wait(10, "receiver processing rejected topup")
+    wait(10, "receiver processing parked topup")
 
     after = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
         [[["x_user_id", "=", TEST_USER_ID]]],
-        {"fields": ["x_wallet_balance"], "limit": 1},
+        {"fields": ["x_wallet_balance", "x_pending_topup_balance"], "limit": 1},
     )
     balance_after = float(after[0]["x_wallet_balance"] or 0.0) if after else balance_before
-    ok = abs(balance_after - balance_before) < 0.01
-    report_result(
-        "Lease: topup_rejected_no_lease", ok,
-        f"balance unchanged at {balance_after:.2f} (rejected top-up of 50.00)"
+    pending_after = float(after[0]["x_pending_topup_balance"] or 0.0) if after else pending_before
+
+    wallet_ok = abs(balance_after - balance_before) < 0.01
+    pending_ok = abs(pending_after - 50.0) < 0.01
+    result_msg = (
+        f"wallet balance: {balance_before:.2f} -> {balance_after:.2f}, "
+        f"pending balance: {pending_before:.2f} -> {pending_after:.2f}"
     )
+    report_result("Lease: topup_parked_no_lease", wallet_ok and pending_ok, result_msg)
 
 
 # ── TEST CATEGORY: BADGE SCAN ─────────────────────────────────────────────────
@@ -1325,7 +1335,7 @@ def main():
         test_monitoring_log()
         test_lease_grant()
         test_lease_remote_topup()
-        test_lease_topup_rejected_without_active_lease()
+        test_lease_topup_parked_without_active_lease()
         test_session_created_creates_pos_product()
         test_user_sessions_response_creates_pos_product()
         test_kassa_notify_product_update_callable()

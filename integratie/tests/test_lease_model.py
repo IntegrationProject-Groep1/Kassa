@@ -423,11 +423,15 @@ class TestWalletRemoteTopup:
         mock_send.assert_called_once_with("wallet_balance_update", "<xml/>")
 
     @patch("receiver.send_typed_message")
-    def test_rejects_topup_when_no_active_lease(self, mock_send, odoo):
+    def test_parks_topup_when_no_active_lease(self, mock_send, odoo):
+        """Topup arriving before badge scan is parked in x_pending_topup_balance."""
         uid, models = odoo
-        models.execute_kw.return_value = [self._partner(lease_active=False)]
+        models.execute_kw.side_effect = [[self._partner(lease_active=False)], True]
         receiver.process_wallet_remote_topup(_topup_root(_UUID, "5.0"), uid, models)
-        assert models.execute_kw.call_count == 1  # only search_read, no action_add_wallet_amount
+        second_call = models.execute_kw.call_args_list[1]
+        assert second_call[0][3] == "res.partner"
+        assert second_call[0][4] == "write"
+        assert second_call[0][5][1] == {"x_pending_topup_balance": 5.0}
         mock_send.assert_not_called()
 
     @patch("receiver.send_typed_message")

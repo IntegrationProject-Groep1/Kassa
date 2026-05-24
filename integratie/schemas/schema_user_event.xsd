@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <!--
-    TYPE   : user_event (UserCreated)
+    TYPE   : user_event (UserCreated | UserDeleted)
     FLOW   : Identity Service → all teams (exchange: user.events, fanout)
     SOURCE : XML_XSD_Contract_v2.3_Centralized.md §15.5
     NOTE   : No <message><header> wrapper — flat XML exception per §15
@@ -13,6 +13,7 @@
           <xs:simpleType>
             <xs:restriction base="xs:string">
               <xs:enumeration value="UserCreated"/>
+              <xs:enumeration value="UserDeleted"/>
             </xs:restriction>
           </xs:simpleType>
         </xs:element>

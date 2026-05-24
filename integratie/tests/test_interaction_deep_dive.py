@@ -123,5 +123,16 @@ class TestSystemicInteractions:
         models.execute_kw.return_value = [{'id': 200}]
         cancel_xml = ET.fromstring("<message><body><identity_uuid>u1</identity_uuid></body></message>")
         receiver.process_cancel_registration(cancel_xml, 1, models)
-        # Verify partner deactivated
-        models.execute_kw.assert_any_call(ANY, ANY, ANY, 'res.partner', 'write', [[200], {'active': False}])
+        # Verify registration cancellation fields written
+        models.execute_kw.assert_any_call(
+            ANY, ANY, ANY, 'res.partner', 'write',
+            [[200], {
+                "x_outstanding_amount": 0.0,
+                "x_payment_status": "cancelled",
+            }]
+        )
+        # Verify bus event published
+        models.execute_kw.assert_any_call(
+            ANY, ANY, ANY, 'pos.order', 'send_partner_bus_event',
+            [200, 0.0, 'cancelled', ANY]
+        )
