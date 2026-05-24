@@ -19,15 +19,18 @@ class RabbitMQLogHandler(logging.Handler):
         if self._recursion_guard:
             return
 
-        # Filter out low-level noise
+        # Filter pika and internal noise
         if (
             record.name.startswith("pika") or
             record.name.startswith("rabbitmq") or
-            record.name == __name__ or
-            (record.msg and any(noise in str(record.msg) for noise in [
-                "pika", "connection", "channel", "AMQP", "heartbeat", "log_handler"
-            ]))
+            record.name == __name__
         ):
+            return
+
+        # Records without an explicit action are internal/debug logs.
+        # Print to stdout only — do NOT publish to monitoring.
+        if not hasattr(record, "action"):
+            print(f"[{record.levelname}] {self.format(record)}", flush=True)
             return
 
         self._recursion_guard = True
@@ -97,10 +100,9 @@ class RabbitMQLogHandler(logging.Handler):
                         delivery_mode=2
                     )
                 )
-                print(f"[Monitoring] Sent log [action={action}, level={level}]: {message}", flush=True)
             finally:
                 connection.close()
         except Exception as e:
-            print(f"[Monitoring] Failed to send log to RabbitMQ: {e}", flush=True)
+            print(f"[Monitoring] OFFLINE [{level.upper()}] [action={action}]: {message}", flush=True)
         finally:
             self._recursion_guard = False
