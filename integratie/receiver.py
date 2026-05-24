@@ -1603,8 +1603,8 @@ def start_listening():
 
     try:
         setup_exchange(channel)
-        # Optional subscription to user.events fanout for minimal user notifications.
-        if os.environ.get("SUBSCRIBE_USER_EVENTS", "False").lower() in ("1", "true", "yes"):
+        # Subscribe to user.events fanout — handles UserCreated and UserDeleted
+        if os.environ.get("SUBSCRIBE_USER_EVENTS", "True").lower() not in ("0", "false", "no"):
             try:
                 channel.exchange_declare(exchange="user.events", exchange_type="fanout", durable=True)
                 ue_queue = f"{QUEUE_NAME}.user.events"
@@ -1615,9 +1615,35 @@ def start_listening():
                     try:
                         txt = body2.decode("utf-8")
                         validate_xml(txt, "user_event")
-                        logger.info("[USER_EVENTS] Received user event: %s", txt[:200])
+                        import xml.etree.ElementTree as _ET
+                        _root = _ET.fromstring(txt)
+                        event_type  = (_root.findtext("event") or "").strip()
+                        master_uuid = (_root.findtext("master_uuid") or "").strip()
+                        if event_type == "UserDeleted" and master_uuid:
+                            _uid2, _models2 = get_odoo_connection()
+                            _existing = _models2.execute_kw(
+                                ODOO_DB, _uid2, ODOO_PASS,
+                                "res.partner", "search_read",
+                                [[[["x_user_id", "=", master_uuid]]]],
+                                {"fields": ["id", "name"], "limit": 1},
+                            )
+                            if _existing:
+                                _pid = _existing[0]["id"]
+                                _models2.execute_kw(
+                                    ODOO_DB, _uid2, ODOO_PASS,
+                                    "res.partner", "write",
+                                    [[_pid], {"x_wallet_balance": 0.0, "x_outstanding_amount": 0.0, "x_payment_status": "deleted"}],
+                                )
+                                logger.info(
+                                    "[USER_EVENTS] UserDeleted: wallet zeroed for partner=%s uuid=%s",
+                                    _existing[0]["name"], master_uuid,
+                                )
+                            else:
+                                logger.info("[USER_EVENTS] UserDeleted: no Odoo partner found for uuid=%s — skipped", master_uuid)
+                        else:
+                            logger.info("[USER_EVENTS] Received user event type=%s uuid=%s", event_type, master_uuid)
                     except Exception as _ue_exc:
-                        logger.warning("[USER_EVENTS] Malformed or invalid user event: %s", _ue_exc)
+                        logger.warning("[USER_EVENTS] Error processing user event: %s", _ue_exc)
                     ch2.basic_ack(delivery_tag=method2.delivery_tag)
 
                 channel.basic_consume(queue=ue_queue, on_message_callback=_user_events_callback)
