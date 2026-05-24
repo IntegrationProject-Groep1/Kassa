@@ -282,6 +282,7 @@ export class QrScanButton extends Component {
                     this.pos.partners.push(partner);
                 }
             }
+            this.pos.kassaRegisterScannedPartner?.(partnerId);
 
             const order = this.pos.selectedOrder;
             if (order) {

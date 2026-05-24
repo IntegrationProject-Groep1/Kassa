@@ -21,6 +21,7 @@ import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
+import { PartnerList } from "@point_of_sale/app/screens/partner_list/partner_list";
 import { Component, useState, effect } from "@odoo/owl";
 import { Dialog } from "@web/core/dialog/dialog";
 import { _t } from "@web/core/l10n/translation";
@@ -68,8 +69,17 @@ patch(PosStore.prototype, {
      */
     async setup() {
         await super.setup(...arguments);
+        this._kassaScannedPartnerIds = new Set();
         this._subscribeKassaBusEvents();
         this._watchKassaPartnerSelection();
+    },
+
+    /**
+     * Register a partner ID as "recently scanned via QR or bus update".
+     * PartnerList uses this set to sort these partners to the top of the list.
+     */
+    kassaRegisterScannedPartner(id) {
+        if (id) this._kassaScannedPartnerIds.add(id);
     },
 
     /**
@@ -125,6 +135,11 @@ patch(PosStore.prototype, {
                 const partner =
                     order.partner_id ||
                     (order.get_partner ? order.get_partner() : null);
+
+                // Read x_session_title explicitly so OWL re-fires this effect
+                // when session titles arrive asynchronously via the bus event
+                // (user_sessions_response is resolved after the QR scan returns).
+                void partner?.x_session_title;
 
                 if (partner && (partner.x_outstanding_amount || 0) > 0) {
                     this._kassaAddSessionProducts(order, partner).catch(
@@ -271,6 +286,7 @@ patch(PosStore.prototype, {
                     this.partners.push(updated);
                 }
             }
+            this.kassaRegisterScannedPartner(partnerId);
             console.log("[Kassa] Partner updated from bus event:", partnerId);
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
@@ -603,9 +619,37 @@ patch(PaymentScreen.prototype, {
 
 });
 
+// ── PartnerList patch — sort recently-scanned partners to the top ─────────────
+
+patch(PartnerList.prototype, {
+    /**
+     * Override partners getter to sort recently-scanned (QR / bus event) partners
+     * to the top of the list so cashiers can find them immediately after deselect.
+     * Falls back to super cleanly if the base class changes its API.
+     */
+    get partners() {
+        try {
+            const all = super.partners;
+            const scanned = this.pos._kassaScannedPartnerIds;
+            if (!scanned?.size) return all;
+            return [
+                ...all.filter((p) => scanned.has(p.id)),
+                ...all.filter((p) => !scanned.has(p.id)),
+            ];
+        } catch {
+            return super.partners;
+        }
+    },
+});
+
 // ── PartnerLine patch ─────────────────────────────────────────────────────────
 
 patch(PartnerLine.prototype, {
+    /** True when this partner was recently scanned via QR or updated via bus. */
+    get kassaIsRecentlyScanned() {
+        return this.env.pos._kassaScannedPartnerIds?.has(this.props.partner.id) ?? false;
+    },
+
     /** True when the partner has an outstanding registration amount. */
     get kassaHasOutstanding() {
         return (this.props.partner.x_outstanding_amount || 0) > 0;
