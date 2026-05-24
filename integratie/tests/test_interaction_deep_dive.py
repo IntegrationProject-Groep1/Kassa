@@ -131,3 +131,8 @@ class TestSystemicInteractions:
                 "x_payment_status": "cancelled",
             }]
         )
+        # Verify bus event published
+        models.execute_kw.assert_any_call(
+            ANY, ANY, ANY, 'pos.order', 'send_partner_bus_event',
+            [200, 0.0, 'cancelled', ANY]
+        )
