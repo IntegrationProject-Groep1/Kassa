@@ -289,8 +289,11 @@ def test_cancellation():
         abs(float(partner.get("x_outstanding_amount") or 0.0)) < 0.01 and
         partner.get("x_payment_status") == "cancelled"
     )
-    report_result("Receiver: cancel_registration (cancelled status set)", ok,
-                  f"Active: {partner['active']}, Outstanding: {partner.get('x_outstanding_amount')}, Status: {partner.get('x_payment_status')}")
+    status_msg = (
+        f"Active: {partner['active']}, Outstanding: {partner.get('x_outstanding_amount')}, "
+        f"Status: {partner.get('x_payment_status')}"
+    )
+    report_result("Receiver: cancel_registration (cancelled status set)", ok, status_msg)
 
 
 # ── TEST CATEGORY: SENDER (Outbound) ──────────────────────────────────────────
@@ -992,7 +995,10 @@ def test_lease_topup_parked_without_active_lease():
     # Explicitly clear the lease and pending balance
     models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "res.partner", "write",
-        [[partner_id], {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0, "x_pending_topup_balance": 0.0}],
+        [[partner_id], {
+            "x_lease_active": False, "x_lease_id": "",
+            "x_lease_transaction_count": 0, "x_pending_topup_balance": 0.0,
+        }],
     )
 
     xml = (
@@ -1013,10 +1019,11 @@ def test_lease_topup_parked_without_active_lease():
 
     wallet_ok = abs(balance_after - balance_before) < 0.01
     pending_ok = abs(pending_after - 50.0) < 0.01
-    report_result(
-        "Lease: topup_parked_no_lease", wallet_ok and pending_ok,
-        f"wallet balance: {balance_before:.2f} -> {balance_after:.2f}, pending balance: {pending_before:.2f} -> {pending_after:.2f}"
+    result_msg = (
+        f"wallet balance: {balance_before:.2f} -> {balance_after:.2f}, "
+        f"pending balance: {pending_before:.2f} -> {pending_after:.2f}"
     )
+    report_result("Lease: topup_parked_no_lease", wallet_ok and pending_ok, result_msg)
 
 
 # ── TEST CATEGORY: BADGE SCAN ─────────────────────────────────────────────────

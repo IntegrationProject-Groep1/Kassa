@@ -856,7 +856,6 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
 
     partner = existing[0]
 
-
     # If the badge was scanned (x_lease_active=True) but the CRM grant has not
     # yet arrived (x_lease_id is empty), applying the topup directly would lose
     # it: the incoming lease_grant overwrites x_wallet_balance with the CRM
