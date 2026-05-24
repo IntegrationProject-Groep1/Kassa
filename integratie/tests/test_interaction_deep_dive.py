@@ -103,7 +103,8 @@ class TestSystemicInteractions:
 
         mock_build.assert_called_with(
             items=ANY, customer_id=None, identity_uuid=None,
-            customer_type="anonymous", email=None, address=None, is_anonymous=True
+            customer_type="anonymous", email=None, address=None, is_anonymous=True,
+            company_name=None, vat_number=None
         )
 
     @patch('order_poller.sender.send_typed_message', return_value=True)

@@ -561,9 +561,17 @@ class OrderPoller:
                               and not is_registration)
 
             if should_invoice and (order.get('to_invoice') or order.get('account_move')):
+                # Skip invoice_request for Customer Account (company_link) payments.
+                # Facturatie will bundle all consumptions for the company at event_ended time
+                # when they can group by VAT number. See Facturatie consumption_order_flow.md.
+                if _invoice_payment_method == "company_link":
+                    logger.info(
+                        f"ℹ️  Skipping invoice_request for order {order_id}: "
+                        "Customer Account payment will be bundled at event_ended"
+                    )
                 # De-duplication: Check if invoice_request was already sent for this order
                 # (indicated by x_invoice_message_id field)
-                if order.get('x_invoice_message_id'):
+                elif order.get('x_invoice_message_id'):
                     logger.info(
                         f"ℹ️  Invoice request already sent for order {order_id} "
                         f"(msg_id: {order.get('x_invoice_message_id')})"
@@ -1077,7 +1085,9 @@ class OrderPoller:
             customer_type=customer_type,
             email=customer_info.get('email') or None if customer_info else None,
             address=address,
-            is_anonymous=is_anonymous)
+            is_anonymous=is_anonymous,
+            company_name=customer_info.get('name') if (customer_info and customer_type == 'company') else None,
+            vat_number=customer_info.get('vat') if (customer_info and customer_type == 'company') else None)
 
         order_id = order['id']
         ok_consumption = sender.send_typed_message('consumption_order', xml_message, record_id=order_id)

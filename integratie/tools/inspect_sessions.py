@@ -21,7 +21,7 @@ if not all([url, db, user, password]):
 
 # If running on the host, replace kassa-web with localhost
 if "kassa-web" in url:
-    url = url.replace("kassa-web", "localhost")
+    url = "http://127.0.0.1:8069"
 
 print(f"Connecting to Odoo at: {url}")
 print(f"Database: {db}")

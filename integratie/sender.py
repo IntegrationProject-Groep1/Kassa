@@ -518,7 +518,8 @@ def _to_xml(root) -> str:
 def build_consumption_order_xml(
     items, customer_id=None, identity_uuid=None,
     customer_type="private",
-    email=None, address=None, is_anonymous=False
+    email=None, address=None, is_anonymous=False,
+    company_name=None, vat_number=None
 ) -> str:
     """
     Build a consumption_order XML message for a completed POS sale.
@@ -533,6 +534,8 @@ def build_consumption_order_xml(
         address:           Dict of address fields (street, city, zip, country).
         is_anonymous:      True for walk-in / badge-not-found sales. When True
                            the <customer> block is omitted from the XML entirely.
+        company_name:      Company name (optional, for company customers on Customer Account).
+        vat_number:        VAT number (optional, for company customers on Customer Account).
     """
     root = ET.Element("message")
     _make_header(root, "consumption_order")
@@ -545,12 +548,16 @@ def build_consumption_order_xml(
         ET.SubElement(cust, "identity_uuid").text = str(identity_uuid) if identity_uuid else ""
         ET.SubElement(cust, "type").text = customer_type
         ET.SubElement(cust, "email").text = str(email) if email else ""
-    if address:
-        addr = ET.SubElement(cust, "address")
-        for key in ["street", "number", "postal_code", "city", "country"]:
-            value = address.get(key)
-            if value is not None:
-                ET.SubElement(addr, key).text = str(value)
+        if address:
+            addr = ET.SubElement(cust, "address")
+            for key in ["street", "number", "postal_code", "city", "country"]:
+                value = address.get(key)
+                if value is not None:
+                    ET.SubElement(addr, key).text = str(value)
+        if company_name:
+            ET.SubElement(cust, "company_name").text = str(company_name)
+        if vat_number:
+            ET.SubElement(cust, "vat_number").text = str(vat_number)
 
     items_el = ET.SubElement(body, "items")
     for i in (items or []):
