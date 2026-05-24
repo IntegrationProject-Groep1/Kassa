@@ -118,6 +118,13 @@ def main():
     )
     logging.getLogger("pika").setLevel(logging.WARNING)
 
+    try:
+        from rabbitmq_log_handler import RabbitMQLogHandler
+        logging.getLogger().addHandler(RabbitMQLogHandler(source_system="kassa"))
+    except Exception as e:
+        print(f"⚠️ Could not register RabbitMQLogHandler: {e}", flush=True)
+
+
     print("🚀 Kassa Integration Service Started", flush=True)
     print("📋 Flow: Odoo POS → Order Poller → Sender → RabbitMQ (+ outbox fallback)", flush=True)
 

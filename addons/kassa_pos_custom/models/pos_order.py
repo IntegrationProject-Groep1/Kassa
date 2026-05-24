@@ -32,16 +32,16 @@ class PosOrder(models.Model):
         Atomically deducts the wallet balance from the partner and marks the order as processed.
         Executed in a single PostgreSQL transaction by the Odoo ORM.
         """
-        order = self.browse(order_id)
+        order = self.sudo().browse(order_id)
         if not order.exists():
             raise ValueError(f"Order {order_id} does not exist.")
 
         # If already flagged, return current balance immediately (idempotency check)
         if order.x_wallet_updated:
-            partner = self.env['res.partner'].browse(partner_id)
+            partner = self.env['res.partner'].sudo().browse(partner_id)
             return round(float(partner.x_wallet_balance or 0.0), 2)
 
-        partner = self.env['res.partner'].browse(partner_id)
+        partner = self.env['res.partner'].sudo().browse(partner_id)
         if not partner.exists():
             raise ValueError(f"Partner {partner_id} does not exist.")
 
@@ -88,7 +88,7 @@ class PosOrder(models.Model):
         (e.g. a remote top-up arriving while a bar purchase is being processed).
         Pass a negative delta to deduct.
         """
-        partner = self.env['res.partner'].browse(partner_id)
+        partner = self.env['res.partner'].sudo().browse(partner_id)
         if not partner.exists():
             raise ValueError(f"Partner {partner_id} does not exist.")
         self.env.cr.execute(
@@ -140,7 +140,7 @@ class PosOrder(models.Model):
         """
         # Odoo 17 _sendone signature: (target, notification_type, message)
         # target is the channel name string for broadcast events.
-        self.env['bus.bus']._sendone(
+        self.env['bus.bus'].sudo()._sendone(
             'kassa_partner_update',
             'kassa_partner_update',
             {

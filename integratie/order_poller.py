@@ -757,6 +757,8 @@ class OrderPoller:
 
         # Send the message and return result with message_id
         success = sender.send_typed_message("invoice_request", xml_str, record_id=order['id'])
+        if success:
+            monitor.log("info", "invoice", f"Published invoice_request for order_id={order['id']}")
         return success, invoice_msg_id
 
     def _increment_lease_tx_count(self, customer_info: dict) -> None:
@@ -836,6 +838,8 @@ class OrderPoller:
                 status="active" if lease_active else None,
             )
             ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+            if ok_wallet:
+                monitor.log("info", "wallet", f"Published wallet_balance_update for order_id={order_id}")
             if lease_active:
                 self._increment_lease_tx_count(customer_info)
 
@@ -950,6 +954,8 @@ class OrderPoller:
             items=refund_items or None,
         )
         ok_refund = sender.send_typed_message('refund_processed', refund_xml, record_id=order_id)
+        if ok_refund:
+            monitor.log("info", "refund", f"Published refund_processed for order_id={order_id}")
         refund_msg_id = self._extract_message_id(refund_xml)
         return (ok_wallet and ok_refund), refund_msg_id
 
@@ -1075,6 +1081,8 @@ class OrderPoller:
 
         order_id = order['id']
         ok_consumption = sender.send_typed_message('consumption_order', xml_message, record_id=order_id)
+        if ok_consumption:
+            monitor.log("info", "payment", f"Published consumption_order for order_id={order_id}")
         correlation_id = self._extract_message_id(xml_message)
 
         payment_ids = order.get('payment_ids', [])
@@ -1108,6 +1116,8 @@ class OrderPoller:
                     status="active" if lease_active else None,
                 )
                 ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+                if ok_wallet:
+                    monitor.log("info", "wallet", f"Published wallet_balance_update for order_id={order_id}")
                 if lease_active:
                     self._increment_lease_tx_count(customer_info)
                 # Notify open POS terminals so cashiers see the updated balance immediately.
@@ -1160,6 +1170,8 @@ class OrderPoller:
             correlation_id=correlation_id,
         )
         ok_payment = sender.send_typed_message('payment_registered_consumption', payment_xml, record_id=order_id)
+        if ok_payment:
+            monitor.log("info", "payment", f"Published payment_registered_consumption for order_id={order_id}")
         payment_msg_id = self._extract_message_id(payment_xml)
 
         ok = ok_consumption and ok_payment and ok_wallet
@@ -1239,6 +1251,8 @@ class OrderPoller:
         ok_payment = sender.send_typed_message(
             'payment_registered_registration', payment_xml, record_id=order_id
         )
+        if ok_payment:
+            monitor.log("info", "payment", f"Published payment_registered_registration for order_id={order_id}")
         payment_msg_id = self._extract_message_id(payment_xml)
 
         status_xml = sender.build_payment_status_xml(
@@ -1246,6 +1260,8 @@ class OrderPoller:
             status='paid',
         )
         ok_status = sender.send_typed_message('payment_status', status_xml, record_id=order_id)
+        if ok_status:
+            monitor.log("info", "payment", f"Published payment_status for order_id={order_id}")
 
         self._update_partner_registration_paid(customer_info['id'], customer_info.get('name', ''))
 
@@ -1298,6 +1314,7 @@ class OrderPoller:
                     badge_xml = sender.build_badge_assigned_xml(badge_id, identity_uuid)
                     if sender.send_typed_message('badge_assigned', badge_xml, record_id=p['id'], model="res.partner"):
                         success_ids.append(p['id'])
+                        monitor.log("info", "badge", f"Published badge_assigned for partner_id={p['id']} | badge={badge_id} | uuid={identity_uuid}")
                 except sender.XSDValidationError as ve:
                     logger.error(f"❌ XSD Validation error for badge assignment (Partner {p['id']}): {ve}")
                     monitor.log(

@@ -36,19 +36,32 @@ def test_build_log_xml_error_level():
     assert "<level>error</level>" in xml
 
 
-@patch("monitoring.send_typed_message")
-def test_monitoring_log_call_params(mock_send):
-    """Verify monitor.log calls send_typed_message with EXACT conformant parameters."""
-    monitor.log("warning", "xml_validation", "Broken XML from CRM")
+@patch("rabbitmq_log_handler.pika.BlockingConnection")
+def test_monitoring_log_call_params(mock_blocking_connection):
+    """Verify monitor.log routes through standard logger and RabbitMQLogHandler publishes correct XML."""
+    from rabbitmq_log_handler import RabbitMQLogHandler
+    import logging
 
-    mock_send.assert_called_once()
-    args, kwargs = mock_send.call_args
-    assert kwargs["msg_type"] == "log"
-    assert kwargs["exchange"] == ""  # MUST go to default exchange
-    assert kwargs["buffer_on_fail"] is False  # MUST NOT buffer (transient)
-    assert "<level>warning</level>" in kwargs["message_xml"]
-    assert "<action>xml_validation</action>" in kwargs["message_xml"]
-    assert "Broken XML from CRM" in kwargs["message_xml"]
+    logger = logging.getLogger("kassa.monitoring")
+    handler = RabbitMQLogHandler(source_system="kassa")
+    logger.addHandler(handler)
+    try:
+        mock_conn = mock_blocking_connection.return_value
+        mock_chan = mock_conn.channel.return_value
+
+        monitor.log("warning", "xml_validation", "Broken XML from CRM")
+
+        mock_blocking_connection.assert_called_once()
+        mock_chan.basic_publish.assert_called_once()
+        kwargs = mock_chan.basic_publish.call_args[1]
+        assert kwargs["routing_key"] == "logs"
+        assert kwargs["exchange"] == ""
+        xml_body = kwargs["body"].decode("utf-8")
+        assert "<level>warning</level>" in xml_body
+        assert "<action>xml_validation</action>" in xml_body
+        assert "Broken XML from CRM" in xml_body
+    finally:
+        logger.removeHandler(handler)
 
 
 def test_invalid_log_action_fails_xsd():
@@ -60,14 +73,21 @@ def test_invalid_log_action_fails_xsd():
         _validate_outgoing("log", xml)
 
 
-@patch("monitoring.send_typed_message")
-def test_monitor_log_exception_handling(mock_send):
+@patch("rabbitmq_log_handler.pika.BlockingConnection")
+def test_monitor_log_exception_handling(mock_blocking_connection):
     """Verify that a failure in sending a log does NOT raise an exception (non-blocking)."""
-    mock_send.side_effect = Exception("RabbitMQ Down")
+    from rabbitmq_log_handler import RabbitMQLogHandler
+    import logging
 
-    # This should NOT raise even if RabbitMQ is down, just log a warning locally
-    monitor.log("info", "payment", "This should not crash the app")
-    mock_send.assert_called_once()
+    mock_blocking_connection.side_effect = Exception("RabbitMQ Down")
+    logger = logging.getLogger("kassa.monitoring")
+    handler = RabbitMQLogHandler(source_system="kassa")
+    logger.addHandler(handler)
+    try:
+        # This should NOT raise even if RabbitMQ is down
+        monitor.log("info", "payment", "This should not crash the app")
+    finally:
+        logger.removeHandler(handler)
 
 
 @patch("sender._publish_or_raise")

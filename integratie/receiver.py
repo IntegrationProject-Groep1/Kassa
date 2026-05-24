@@ -80,11 +80,6 @@ RETRY_QUEUE = f"{QUEUE_NAME}.retry"
 RETRY_DELAY_MS = 5000  # 5 seconds
 MAX_RETRIES = 3
 
-# Performance optimization: Toggle success-level monitoring logs (high frequency)
-# This prevents bloating the monitoring queue during high-traffic events.
-_monitor_logs_env = get_env("MONITOR_SUCCESS_LOGS", "True") or "True"
-MONITOR_SUCCESS_LOGS = _monitor_logs_env.lower() == "true"
-
 # ── XSD schema mapping ─────────────────────────────────────────────────────────
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 
@@ -398,8 +393,7 @@ def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -
         logger.info("[NEW_REGISTRATION] ✓ New customer created: Odoo ID=%s", partner_id)
 
     logger.info("[NEW_REGISTRATION]   Payment due status: %s", status)
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "registration",
+    monitor.log("info", "registration",
                     f"new_registration processed: Odoo ID={partner_id} | status={status}")
 
     if session_title:
@@ -480,8 +474,7 @@ def process_profile_update(root: Element, uid: int, models: OdooModelsProxy) -> 
             [[partner_id], update_vals],
         )
         logger.info("[PROFILE_UPDATE] ✓ Profile updated: Odoo ID=%s", partner_id)
-        if MONITOR_SUCCESS_LOGS:
-            monitor.log("info", "registration",
+        monitor.log("info", "registration",
                         f"profile_update processed: Odoo ID={partner_id}")
     else:
         update_vals["x_user_id"] = identity_uuid
@@ -596,8 +589,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
                 [[partner["id"]], {"x_lease_active": True, "x_lease_id": "", "x_lease_transaction_count": 0}],
             )
             logger.info("[BADGE_SCANNED] ✅ Lease requested for %s", identity_uuid)
-            if MONITOR_SUCCESS_LOGS:
-                monitor.log("info", "badge",
+            monitor.log("info", "badge",
                             f"badge_scanned: wallet_lease_request sent | identity_uuid={identity_uuid}"
                             f" | location={location}")
         else:
@@ -619,8 +611,7 @@ def process_badge_scan(root: Element, uid: int, models: OdooModelsProxy) -> None
                 "[USER_SESSIONS_REQUEST] ✅ Sent to kassa.exchange | identity_uuid=%s | correlation_id=%s",
                 identity_uuid, message_id,
             )
-            if MONITOR_SUCCESS_LOGS:
-                monitor.log("info", "session",
+            monitor.log("info", "session",
                             f"user_sessions_request sent | identity_uuid={identity_uuid}"
                             f" | correlation_id={message_id}")
     else:
@@ -674,6 +665,7 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
     )
     send_typed_message("wallet_lease_return", xml, record_id=partner_id, model="res.partner")
     logger.info("[LEASE_RETURN] ✅ Lease returned for %s (balance=%.2f, tx=%d)", identity_uuid, final_balance, tx_count)
+    monitor.log("info", "wallet", f"Published wallet_lease_return | identity_uuid={identity_uuid} | balance={final_balance:.2f} | tx={tx_count}")
 
 
 def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -777,8 +769,7 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         "[LEASE_GRANT] ✅ wallet_balance_update sent to frontend for %s (balance=%.2f)",
         identity_uuid, final_balance
     )
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "wallet",
+    monitor.log("info", "wallet",
                     f"wallet_lease_grant processed | identity_uuid={identity_uuid} | balance={final_balance:.2f}")
 
     # When payment_due is absent (Planning was available and CRM didn't send a total),
@@ -901,8 +892,7 @@ def process_wallet_remote_topup(root: Element, uid: int, models: OdooModelsProxy
     )
     logger.info("[REMOTE_TOPUP] ✅ Balance updated for %s: +%.2f → %.2f (reason=%s)",
                 identity_uuid, add_amount, new_balance, reason)
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "wallet",
+    monitor.log("info", "wallet",
                     f"wallet_remote_topup processed | identity_uuid={identity_uuid}"
                     f" | +{add_amount:.2f} → {new_balance:.2f}")
 
@@ -940,8 +930,10 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
             )
             send_typed_message("wallet_lease_return", xml)
             cleared_ids.append(partner["id"])
+            monitor.log("info", "wallet", f"Published wallet_lease_return for identity_uuid={identity_uuid} (event_ended batch)")
         except Exception as exc:
             logger.error("[EVENT_ENDED] Failed to send lease_return for partner %s: %s", partner.get("id"), exc)
+            monitor.log("error", "wallet", f"event_ended: wallet_lease_return failed for partner_id={partner.get('id')}: {str(exc)[:300]}")
 
     if cleared_ids:
         models.execute_kw(
@@ -951,8 +943,7 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
         )
 
     logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "wallet",
+    monitor.log("info", "wallet",
                     f"event_ended: returned {len(cleared_ids)}/{len(active_partners)} active leases to CRM")
 
 
@@ -1013,8 +1004,7 @@ def process_cancel_registration(root: Element, uid: int, models: OdooModelsProxy
             session_id,
             reason,
         )
-        if MONITOR_SUCCESS_LOGS:
-            monitor.log("info", "registration",
+        monitor.log("info", "registration",
                         f"cancel_registration processed: Odoo ID={partner_id} | reason={reason}")
     else:
         logger.warning("[CANCEL_REGISTRATION] ⚠ Customer not found – no action")
@@ -1092,8 +1082,7 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
         " | correlation_id=%s",
         session_count, correlation_id,
     )
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "session",
+    monitor.log("info", "session",
                     f"user_sessions_response processed | {session_count} session(s) ensured"
                     f" | correlation_id={correlation_id}")
 
@@ -1218,8 +1207,7 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
         "[USER_REGISTERED] ✓ Session added | Odoo ID=%s | session_id=%s | price=%s | outstanding=%.2f",
         partner_id, session_id, price, new_outstanding,
     )
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "registration",
+    monitor.log("info", "registration",
                     f"user_registered: session added | partner={partner_id} | session_id={session_id}")
 
 
@@ -1292,8 +1280,7 @@ def process_user_unregistered(root: Element, uid: int, models: OdooModelsProxy) 
         "[USER_UNREGISTERED] ✓ Session removed | Odoo ID=%s | session_id=%s | outstanding=%.2f",
         partner_id, session_id, new_outstanding,
     )
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "registration",
+    monitor.log("info", "registration",
                     f"user_unregistered: session removed | partner={partner_id} | session_id={session_id}")
 
 
@@ -1324,8 +1311,7 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
 
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_CREATED] ✓ POS product ensured for session '%s' (id=%s)", title, session_id)
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "session",
+    monitor.log("info", "session",
                     f"session_created: POS product ensured | session_id={session_id} | title={title}")
 
     try:
@@ -1365,8 +1351,7 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
 
     _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "session",
+    monitor.log("info", "session",
                     f"session_updated: POS product updated | session_id={session_id} | title={title}")
 
     try:
@@ -1401,8 +1386,7 @@ def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) ->
         session_id, f" (reason: {reason})" if reason else "",
     )
     reason_suffix = f" | reason={reason}" if reason else ""
-    if MONITOR_SUCCESS_LOGS:
-        monitor.log("info", "session",
+    monitor.log("info", "session",
                     f"session_deleted received | session_id={session_id} | POS product kept{reason_suffix}")
 
 
@@ -1464,6 +1448,12 @@ def process_message(ch, method, properties, body):
             send_error_to_queue("invalid_xml_format", related_message_id, str(e))
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
+
+        source = header.findtext("source") if header is not None else "unknown"
+        monitor.log(
+            "info", "xml_validation",
+            f"Received {msg_type} from {source} (ID: {related_message_id or 'unknown'}). Validation: Success."
+        )
 
         if msg_type not in SCHEMA_MAP:
             raise ValueError(f"Unknown message type: '{msg_type}'")
