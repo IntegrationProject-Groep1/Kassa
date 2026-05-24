@@ -1615,9 +1615,9 @@ def start_listening():
                     try:
                         txt = body2.decode("utf-8")
                         validate_xml(txt, "user_event")
-                        import xml.etree.ElementTree as _ET
+                        import defusedxml.ElementTree as _ET
                         _root = _ET.fromstring(txt)
-                        event_type  = (_root.findtext("event") or "").strip()
+                        event_type = (_root.findtext("event") or "").strip()
                         master_uuid = (_root.findtext("master_uuid") or "").strip()
                         if event_type == "UserDeleted" and master_uuid:
                             _uid2, _models2 = get_odoo_connection()
@@ -1632,14 +1632,21 @@ def start_listening():
                                 _models2.execute_kw(
                                     ODOO_DB, _uid2, ODOO_PASS,
                                     "res.partner", "write",
-                                    [[_pid], {"x_wallet_balance": 0.0, "x_outstanding_amount": 0.0, "x_payment_status": "deleted"}],
+                                    [[_pid], {
+                                        "x_wallet_balance": 0.0,
+                                        "x_outstanding_amount": 0.0,
+                                        "x_payment_status": "deleted",
+                                    }],
                                 )
                                 logger.info(
                                     "[USER_EVENTS] UserDeleted: wallet zeroed for partner=%s uuid=%s",
                                     _existing[0]["name"], master_uuid,
                                 )
                             else:
-                                logger.info("[USER_EVENTS] UserDeleted: no Odoo partner found for uuid=%s — skipped", master_uuid)
+                                logger.info(
+                                    "[USER_EVENTS] UserDeleted: no Odoo partner found for uuid=%s — skipped",
+                                    master_uuid,
+                                )
                         else:
                             logger.info("[USER_EVENTS] Received user event type=%s uuid=%s", event_type, master_uuid)
                     except Exception as _ue_exc:

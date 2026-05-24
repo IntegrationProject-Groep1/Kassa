@@ -635,11 +635,11 @@ def set_wallet_balance(
         partner = partners[0]
         old_balance = float(partner.get("x_wallet_balance") or 0.0)
         _odoo("res.partner", "write", [[partner["id"]], {"x_wallet_balance": amount}])
-        monitor.log(
-            "info", "wallet",
+        msg = (
             f"Admin set wallet balance for {partner['name']} (uuid={master_uuid}): "
-            f"€{old_balance:.2f} → €{amount:.2f}. Reason: {reason[:200]}",
+            f"€{old_balance:.2f} → €{amount:.2f}. Reason: {reason[:200]}"
         )
+        monitor.log("info", "wallet", msg)
         return {
             "success":      True,
             "master_uuid":  master_uuid,
