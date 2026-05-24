@@ -110,12 +110,9 @@ def main():
     Without daemon=True, a blocked pika connection would keep the process alive
     indefinitely after the main thread has exited.
     """
-    # Configure root logging first — before any module emits log lines.
-    # All loggers (receiver, order_poller, sender, …) inherit this configuration.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    # Configure root logging — level only; no StreamHandler.
+    # The RabbitMQLogHandler below is the sole stdout/monitoring sink.
+    logging.getLogger().setLevel(logging.INFO)
     logging.getLogger("pika").setLevel(logging.WARNING)
 
     try:

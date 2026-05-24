@@ -22,6 +22,20 @@ sys.path.insert(0, os.path.abspath(INTEGRATIE_DIR))
 
 
 @pytest.fixture(autouse=True)
+def isolate_outbox(tmp_path):
+    """Redirect sender's outbox buffer to an empty temp dir for each test.
+
+    Prevents the real outbox/outbox.json (which may be full from production
+    use) from causing BufferFullError in tests that trigger RabbitMQ sends.
+    """
+    import sender
+    original = sender.BUFFER_FILE
+    sender.BUFFER_FILE = tmp_path / "outbox.json"
+    yield
+    sender.BUFFER_FILE = original
+
+
+@pytest.fixture(autouse=True)
 def cleanup_env():
     """Clean up important env vars before/after each test for isolation."""
     env_vars = [
