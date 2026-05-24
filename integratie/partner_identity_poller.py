@@ -149,7 +149,8 @@ class PartnerIdentityPoller:
         # Validate email format before contacting Identity Service
         if not _EMAIL_RE.match(email):
             logger.error("Invalid email for partner %s: %r — marking as error", partner_id, email)
-            monitor.log("error", "identity", f"Partner {partner_id} has invalid email {email!r} — skipping identity link")
+            monitor.log("error", "identity",
+                        f"Partner {partner_id} has invalid email {email!r} — skipping identity link")
             self._update_partner(partner_id, None, "error", "Invalid email address")
             return
 
@@ -190,7 +191,8 @@ class PartnerIdentityPoller:
                 if result and result.get("master_uuid"):
                     master_uuid = result["master_uuid"]
                     logger.info("Found existing master_uuid for %s: %s", email, master_uuid)
-                    monitor.log("info", "identity", f"Partner {email} resolved via Identity lookup (uuid={master_uuid})")
+                    monitor.log("info", "identity",
+                                f"Partner {email} resolved via Identity lookup (uuid={master_uuid})")
                 else:
                     logger.error("Identity lookup failed for existing email %s", email)
                     monitor.log("error", "identity", f"Identity lookup failed for existing email {email}")

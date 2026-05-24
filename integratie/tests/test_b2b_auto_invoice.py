@@ -1,8 +1,10 @@
 """B2B Invoice Tests
 
 For company customers, Odoo auto-activates to_invoice=True and Customer Account on validate.
-For private persons, the cashier manually activates to_invoice at the bar.
-invoice_request is sent whenever to_invoice=True or account_move is set, for all customer types.
+For private persons, the cashier manually activates to_invoke at the bar.
+invoice_request is sent whenever to_invoice=True or account_move is set, UNLESS the payment
+method is Customer Account (company_link) — in that case Facturatie bundles the invoice at
+event_ended using the vat_number from consumption_order.
 """
 import os
 import uuid
@@ -264,3 +266,47 @@ class TestB2BAutoInvoice:
             poller.process_order(order)
             # VAT check is tested in test_vat_validation.py
             # This test just verifies the auto-invoice logic doesn't break when VAT is missing
+
+    def test_company_customer_account_suppresses_invoice_request(self, poller, mock_odoo, mock_sender):
+        """
+        GIVEN a company order paid via Customer Account (company_link)
+        WHEN process_order is called
+        THEN invoice_request must NOT be sent — Facturatie bundles at event_ended using
+             the vat_number that is already present in consumption_order.
+        AND  x_invoice_message_id must NOT be written (no sentinel, field stays empty).
+        """
+        order = {
+            'id': 200,
+            'partner_id': 20,
+            'amount_total': 150.0,
+            'to_invoice': True,   # Odoo auto-sets this when Customer Account is used
+            'account_move': None,
+            'x_invoice_message_id': None,
+            'lines': [],
+            'payment_ids': [],
+            'state': 'invoiced',
+            'create_date': '2026-05-24 09:00:00',
+            'session_id': [1, 'Session 1'],
+            'x_payment_message_id': str(uuid.uuid4()),
+        }
+
+        customer_data = make_company_customer(20, 'BE0123456789')
+        mock_odoo.execute_kw.side_effect = make_execute_kw_side_effect(customer_data)
+
+        # _process_consumption returns company_link (Customer Account payment)
+        _rv = (True, str(uuid.uuid4()), str(uuid.uuid4()), "pending", "company_link")
+        with patch.object(poller, '_process_consumption', return_value=_rv), \
+             patch.object(poller, '_process_invoice_request') as mock_invoice:
+            poller.process_order(order)
+
+            mock_invoice.assert_not_called()
+
+        # x_invoice_message_id must NOT have been written (no sentinel)
+        write_calls = [
+            c for c in mock_odoo.execute_kw.call_args_list
+            if len(c[0]) >= 4 and c[0][3] == 'write'
+            and 'x_invoice_message_id' in str(c)
+        ]
+        assert not write_calls, (
+            "x_invoice_message_id must not be written for Customer Account orders"
+        )

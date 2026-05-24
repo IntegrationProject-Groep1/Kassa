@@ -569,24 +569,12 @@ class OrderPoller:
                         f"ℹ️  Skipping invoice_request for order {order_id}: "
                         "Customer Account payment will be bundled at event_ended"
                     )
-                    try:
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'pos.order', 'write',
-                            [[order_id], {'x_invoice_message_id': 'DEFERRED_COMPANY_LINK'}]
-                        )
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not set deferred sentinel on order {order_id}: {e}")
-                # De-duplication: Check if invoice_request was already sent (or deferred) for this order
+                # De-duplication: Check if invoice_request was already sent for this order
                 elif order.get('x_invoice_message_id'):
-                    msg_id = order.get('x_invoice_message_id')
-                    if msg_id == 'DEFERRED_COMPANY_LINK':
-                        logger.debug(f"ℹ️  Invoice deferred for order {order_id} (company_link, bundled at event_ended)")
-                    else:
-                        logger.info(
-                            f"ℹ️  Invoice request already sent for order {order_id} "
-                            f"(msg_id: {msg_id})"
-                        )
+                    logger.info(
+                        f"ℹ️  Invoice request already sent for order {order_id} "
+                        f"(msg_id: {order.get('x_invoice_message_id')})"
+                    )
                 else:
                     # Use consumption_msg_id as correlation_id per Flow 10 docs.
                     # This keeps invoice_request correlated to the original consumption_order.
@@ -1098,7 +1086,8 @@ class OrderPoller:
             elif customer_info.get('parent_id'):
                 # Contact person with company parent — fetch parent's name for consistency with VAT
                 try:
-                    parent_id = customer_info['parent_id'][0] if isinstance(customer_info['parent_id'], (list, tuple)) else customer_info['parent_id']
+                    pid = customer_info['parent_id']
+                    parent_id = pid[0] if isinstance(pid, (list, tuple)) else pid
                     parent_record = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
                         'res.partner', 'read',
