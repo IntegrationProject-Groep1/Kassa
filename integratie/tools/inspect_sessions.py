@@ -1,6 +1,6 @@
 import os
 import sys
-import xmlrpc.client
+import xmlrpc.client  # nosec
 import defusedxml.xmlrpc
 from dotenv import load_dotenv
 
