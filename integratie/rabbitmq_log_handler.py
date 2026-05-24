@@ -102,7 +102,7 @@ class RabbitMQLogHandler(logging.Handler):
                 )
             finally:
                 connection.close()
-        except Exception as e:
+        except Exception:
             print(f"[Monitoring] OFFLINE [{level.upper()}] [action={action}]: {message}", flush=True)
         finally:
             self._recursion_guard = False

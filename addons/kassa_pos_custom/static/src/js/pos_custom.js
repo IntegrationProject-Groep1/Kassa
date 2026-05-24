@@ -628,17 +628,17 @@ patch(PartnerList.prototype, {
      * Falls back to super cleanly if the base class changes its API.
      */
     get partners() {
-        try {
-            const all = super.partners;
-            const scanned = this.pos._kassaScannedPartnerIds;
-            if (!scanned?.size) return all;
-            return [
-                ...all.filter((p) => scanned.has(p.id)),
-                ...all.filter((p) => !scanned.has(p.id)),
-            ];
-        } catch {
-            return super.partners;
+        const all = super.partners;
+        const scanned = this.pos?._kassaScannedPartnerIds;
+        if (!scanned?.size) {
+            return all;
         }
+        const scannedParties = [];
+        const otherParties = [];
+        for (const p of all) {
+            (scanned.has(p.id) ? scannedParties : otherParties).push(p);
+        }
+        return [...scannedParties, ...otherParties];
     },
 });
 
