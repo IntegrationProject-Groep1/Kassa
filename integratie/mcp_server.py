@@ -611,7 +611,7 @@ def set_wallet_balance(
     ],
     reason: Annotated[
         str,
-        Field(description="Written reason for the balance correction (required). Example: 'Admin correction — refund processed externally'."),
+        Field(description="Written reason for the balance correction (required)."),
     ],
 ) -> dict[str, Any]:
     """
