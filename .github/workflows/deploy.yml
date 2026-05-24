@@ -52,7 +52,7 @@ jobs:
 
           if [[ "$BRANCH" == "dev" ]]; then
             echo "should_deploy=true" >> $GITHUB_OUTPUT
-            echo "tag=latest-dev"     >> $GITHUB_OUTPUT
+            echo "tag=dev"             >> $GITHUB_OUTPUT
             echo "extra_tag="         >> $GITHUB_OUTPUT
           elif [[ -n "$V_TAG" ]]; then
             echo "should_deploy=true" >> $GITHUB_OUTPUT
@@ -83,14 +83,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image (dev)
-        if: steps.vars.outputs.tag == 'latest-dev'
+        if: steps.vars.outputs.tag == 'dev'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           provenance: false
           tags: |
-            ghcr.io/${{ steps.repo_name.outputs.value }}:latest-dev
+            ghcr.io/${{ steps.repo_name.outputs.value }}:dev
             ghcr.io/${{ steps.repo_name.outputs.value }}:${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Build and push Docker image (prod release)
