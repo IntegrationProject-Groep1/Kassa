@@ -1088,21 +1088,8 @@ class OrderPoller:
                 # Partner is directly a company
                 company_name_value = customer_info.get('name')
             elif customer_info.get('parent_id'):
-                # Contact person with company parent — fetch parent's name for consistency with VAT
-                try:
-                    pid = customer_info['parent_id']
-                    parent_id = pid[0] if isinstance(pid, (list, tuple)) else pid
-                    parent_record = self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'read',
-                        [parent_id, ['name']]
-                    )
-                    if parent_record:
-                        company_name_value = parent_record[0].get('name')
-                except Exception as e:
-                    logger.warning(f"Could not fetch parent company name for contact person {customer_info['id']}: {e}")
-                    # Fallback to contact's name if parent fetch fails
-                    company_name_value = customer_info.get('name')
+                pid = customer_info['parent_id']
+                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 else customer_info.get('name')
             else:
                 company_name_value = customer_info.get('name')
 
@@ -1322,21 +1309,8 @@ class OrderPoller:
             if customer_info.get('is_company'):
                 company_name_value = customer_info.get('name')
             elif customer_info.get('parent_id'):
-                try:
-                    pid = customer_info['parent_id']
-                    parent_id = pid[0] if isinstance(pid, (list, tuple)) else pid
-                    parent_record = self.models.execute_kw(
-                        self.odoo_db, self.odoo_uid, self.odoo_pass,
-                        'res.partner', 'read',
-                        [parent_id, ['name']]
-                    )
-                    if parent_record:
-                        company_name_value = parent_record[0].get('name')
-                except Exception as e:
-                    logger.warning(
-                        f"Could not fetch parent company name for contact {customer_info['id']}: {e}"
-                    )
-                    company_name_value = customer_info.get('name')
+                pid = customer_info['parent_id']
+                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 else customer_info.get('name')
             else:
                 company_name_value = customer_info.get('name')
 
