@@ -960,7 +960,10 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
-            [cleared_ids, {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0, "x_wallet_balance": 0.0}],
+            [cleared_ids, {
+                "x_lease_active": False, "x_lease_id": "",
+                "x_lease_transaction_count": 0, "x_wallet_balance": 0.0,
+            }],
         )
 
     logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
