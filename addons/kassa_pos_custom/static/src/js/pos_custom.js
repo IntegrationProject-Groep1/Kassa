@@ -21,7 +21,7 @@ import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
-import { PartnerList } from "@point_of_sale/app/screens/partner_list/partner_list";
+import { PartnerListScreen } from "@point_of_sale/app/screens/partner_list/partner_list";
 import { Component, useState, effect } from "@odoo/owl";
 import { Dialog } from "@web/core/dialog/dialog";
 import { _t } from "@web/core/l10n/translation";
@@ -621,7 +621,7 @@ patch(PaymentScreen.prototype, {
 
 // ── PartnerList patch — sort recently-scanned partners to the top ─────────────
 
-patch(PartnerList.prototype, {
+patch(PartnerListScreen.prototype, {
     /**
      * Override partners getter to sort recently-scanned (QR / bus event) partners
      * to the top of the list so cashiers can find them immediately after deselect.
