@@ -8,7 +8,7 @@
  *    local partners list — no full reload, no transaction interruption.
  *
  * 2. Registers a reactive OWL effect that fires whenever the current order's
- *    partner changes.  If x_outstanding_amount > 0 and x_session_title is set,
+ *    partner changes.  If x_session_title is set,
  *    the session-specific product is automatically added to the order at the
  *    outstanding price.  Without a session title no product is auto-added
  *    (cashier handles manually; outstanding-amount badge is still visible).
@@ -141,7 +141,7 @@ patch(PosStore.prototype, {
                 // (user_sessions_response is resolved after the QR scan returns).
                 void partner?.x_session_title;
 
-                if (partner && (partner.x_outstanding_amount || 0) > 0) {
+                if (partner && partner.x_session_title) {
                     this._kassaAddSessionProducts(order, partner).catch(
                         (err) => console.error("[Kassa] Session product auto-add error:", err)
                     );
@@ -216,6 +216,7 @@ patch(PosStore.prototype, {
                         "id", "name", "display_name", "list_price", "standard_price",
                         "type", "taxes_id", "barcode", "default_code",
                         "pos_categ_ids", "categ_id", "available_in_pos", "description_sale",
+                        "uom_id",
                     ],
                     { limit: 1 }
                 );
@@ -312,7 +313,7 @@ patch(PosStore.prototype, {
                     "id", "name", "display_name", "list_price", "standard_price",
                     "type", "taxes_id", "barcode", "default_code",
                     "pos_categ_ids", "categ_id", "available_in_pos",
-                    "description_sale", "x_session_id",
+                    "description_sale", "x_session_id", "uom_id",
                 ]
             );
             for (const product of products || []) {
@@ -336,7 +337,7 @@ patch(PosStore.prototype, {
         if (this.config?.name === "Inschrijvingskassa") {
             const order = this.selectedOrder;
             const partner = order?.partner_id || (order?.get_partner?.() ?? null);
-            if (partner && (partner.x_outstanding_amount || 0) > 0 && partner.x_session_title) {
+            if (partner && partner.x_session_title) {
                 this._kassaAddSessionProducts(order, partner).catch(
                     (err) => console.error("[Kassa] Session re-trigger after product sync error:", err)
                 );
