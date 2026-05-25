@@ -323,7 +323,10 @@ class TestReturnLease:
         receiver._return_lease(99, uid, models)
         write_call = models.execute_kw.call_args_list[1]
         vals = write_call[0][5][1]
-        assert vals == {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}
+        assert vals == {
+            "x_lease_active": False, "x_lease_id": "",
+            "x_lease_transaction_count": 0, "x_wallet_balance": 0.0,
+        }
 
     @patch("receiver.send_typed_message")
     def test_noop_if_partner_not_found(self, mock_send, odoo):
@@ -511,7 +514,10 @@ class TestEventEnded:
         cleared_ids = write_call[0][5][0]
         assert set(cleared_ids) == {1, 2}
         vals = write_call[0][5][1]
-        assert vals == {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}
+        assert vals == {
+            "x_lease_active": False, "x_lease_id": "",
+            "x_lease_transaction_count": 0, "x_wallet_balance": 0.0,
+        }
 
     @patch("receiver.send_typed_message")
     def test_no_write_when_no_active_leases(self, mock_send, odoo):

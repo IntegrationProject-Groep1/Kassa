@@ -1388,7 +1388,13 @@ class TestProcessUserRegistered:
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 0.0}],
-            True,
+            True,   # partner write
+            [],     # _ensure_session_product: search by x_session_id → not found
+            [],     # _ensure_session_product: search by name → not found
+            [],     # _ensure_session_product: pos.category search
+            1,      # _ensure_session_product: product create
+            1,      # kassa_notify_product_update
+            True,   # send_partner_bus_event
         ]
         receiver.process_user_registered(self._root(), uid, models)
 
@@ -1408,7 +1414,13 @@ class TestProcessUserRegistered:
         existing = json.dumps([{"session_id": "sess-000", "title": "Existing", "price": 10.0}])
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 10.0}],
-            True,
+            True,   # partner write
+            [],     # _ensure_session_product: search by x_session_id → not found
+            [],     # _ensure_session_product: search by name → not found
+            [],     # _ensure_session_product: pos.category search
+            1,      # _ensure_session_product: product create
+            1,      # kassa_notify_product_update
+            True,   # send_partner_bus_event
         ]
         receiver.process_user_registered(self._root(session_id="sess-001", price="25.00"), uid, models)
 
@@ -1453,7 +1465,13 @@ class TestProcessUserRegistered:
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 0.0}],
-            True,
+            True,   # partner write
+            [],     # _ensure_session_product: search by x_session_id → not found
+            [],     # _ensure_session_product: search by name → not found
+            [],     # _ensure_session_product: pos.category search
+            1,      # _ensure_session_product: product create
+            1,      # kassa_notify_product_update
+            True,   # send_partner_bus_event
         ]
         receiver.process_user_registered(self._root(price=None), uid, models)
 
@@ -1466,7 +1484,13 @@ class TestProcessUserRegistered:
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Jan", "x_session_title": "[]", "x_outstanding_amount": 50.0}],
-            True,
+            True,   # partner write
+            [],     # _ensure_session_product: search by x_session_id → not found
+            [],     # _ensure_session_product: search by name → not found
+            [],     # _ensure_session_product: pos.category search
+            1,      # _ensure_session_product: product create
+            1,      # kassa_notify_product_update
+            True,   # send_partner_bus_event
         ]
         receiver.process_user_registered(self._root(price=None), uid, models)
 
@@ -1482,7 +1506,13 @@ class TestProcessUserRegistered:
         existing = json.dumps([{"session_id": "sess-000", "title": "Legacy", "price": None}])
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Jan", "x_session_title": existing, "x_outstanding_amount": 40.0}],
-            True,
+            True,   # partner write
+            [],     # _ensure_session_product: search by x_session_id → not found
+            [],     # _ensure_session_product: search by name → not found
+            [],     # _ensure_session_product: pos.category search
+            1,      # _ensure_session_product: product create
+            1,      # kassa_notify_product_update
+            True,   # send_partner_bus_event
         ]
         receiver.process_user_registered(self._root(session_id="sess-001", price="25.00"), uid, models)
 

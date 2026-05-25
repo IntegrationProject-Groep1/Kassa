@@ -662,6 +662,7 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
             "x_lease_active": False,
             "x_lease_id": "",
             "x_lease_transaction_count": 0,
+            "x_wallet_balance": 0.0,
         }],
     )
 
@@ -959,7 +960,10 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
         models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "res.partner", "write",
-            [cleared_ids, {"x_lease_active": False, "x_lease_id": "", "x_lease_transaction_count": 0}],
+            [cleared_ids, {
+                "x_lease_active": False, "x_lease_id": "",
+                "x_lease_transaction_count": 0, "x_wallet_balance": 0.0,
+            }],
         )
 
     logger.info("[EVENT_ENDED] ✅ Returned %d/%d active leases", len(cleared_ids), len(active_partners))
@@ -1130,6 +1134,34 @@ def process_user_sessions_response(root: Element, uid: int, models: OdooModelsPr
     except Exception as exc:
         logger.warning("[USER_SESSIONS_RESPONSE] Could not push bus notification: %s", exc)
 
+    # Publish a partner bus event so the POS OWL effect re-fires after products are
+    # available in the catalogue.  Products are guaranteed to exist in Odoo at this
+    # point (ensured above), so the POS RPC fallback in _kassaAddSessionProduct will
+    # find them when the effect fires.
+    identity_uuid_body = (body.findtext("identity_uuid") or "").strip() if body is not None else ""
+    if identity_uuid_body:
+        try:
+            partner_rec: List[OdooRecord] = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "res.partner", "search_read",
+                [[["x_user_id", "=", identity_uuid_body]]],
+                {"fields": ["id", "name", "x_outstanding_amount", "x_payment_status"], "limit": 1},
+            )
+            if partner_rec:
+                p = partner_rec[0]
+                _publish_partner_bus_event(
+                    uid, models, p["id"],
+                    float(p.get("x_outstanding_amount") or 0.0),
+                    p.get("x_payment_status") or "pending",
+                    p.get("name") or "Unknown",
+                )
+                logger.info(
+                    "[USER_SESSIONS_RESPONSE] ✓ Partner bus event published | partner_id=%s",
+                    p["id"],
+                )
+        except Exception as exc:
+            logger.warning("[USER_SESSIONS_RESPONSE] Could not publish partner bus event: %s", exc)
+
 
 def _parse_session_list(raw: str) -> List[Dict[str, Any]]:
     """Parse x_session_title JSON; normalise plain-string entries to dict format."""
@@ -1232,6 +1264,16 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
             "x_payment_status": payment_status,
         }],
     )
+
+    # Ensure the session product exists before publishing the partner bus event so
+    # the POS auto-add OWL effect can find it immediately when it fires.
+    if session_title and is_new:
+        _ensure_session_product(uid, models, session_title, price=price, session_id=session_id)
+        try:
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "pos.session", "kassa_notify_product_update", [[]])
+        except Exception as exc:
+            logger.warning("[USER_REGISTERED] Could not notify POS of product update: %s", exc)
+
     _publish_partner_bus_event(
         uid, models, partner_id,
         new_outstanding, payment_status, existing[0].get("name") or "",
