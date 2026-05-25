@@ -78,7 +78,7 @@ export class QrScanButton extends Component {
         this._stream   = null;
         this._scanning = false;
         this._canvas   = document.createElement("canvas");
-        this._ctx      = this._canvas.getContext("2d");
+        this._ctx      = this._canvas.getContext("2d", { willReadFrequently: true });
 
         onMounted(() => {
             const el = this.overlayRef.el;
