@@ -148,11 +148,13 @@ class TestStory6LeaseIntegration:
         Scenario: visitor pays registration + top-up but no lease is active yet
         (visitor has NOT scanned their QR code before paying).
 
-        NEW BEHAVIOUR (lease-aware top-up):
+        Expected behaviour (pre-scan path):
         - payment_registered_registration + payment_status are sent (Story 6).
-        - Top-up amount is PARKED in x_pending_topup_balance — NOT applied yet.
+        - Top-up is NOT parked in x_pending_topup_balance — CRM owns the wallet,
+          payment_registered credited Wallet_Balance__c, so wallet_lease_grant will
+          carry the correct balance when the visitor eventually scans.
         - wallet_balance_update is NOT sent (we don't own the balance yet).
-        - The balance update will happen when wallet_lease_grant arrives from CRM.
+        - x_wallet_updated is written on the order to prevent reprocessing.
         """
         customer = _make_customer(balance=0.0, lease=False)
         order = _make_order(order_id=201, total=30.0)
@@ -165,8 +167,7 @@ class TestStory6LeaseIntegration:
             [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],
             True,   # res.partner write x_outstanding_amount
             True,   # pos.order send_partner_bus_event
-            True,   # res.partner write x_pending_topup_balance  ← parked, not applied
-            True,   # pos.order write x_wallet_updated
+            True,   # pos.order write x_wallet_updated  ← order marked, no partner write
             True,   # pos.order write x_payment_message_id
             True,   # pos.order write x_rabbitmq_sent
         ]
@@ -184,14 +185,14 @@ class TestStory6LeaseIntegration:
         ]
         assert 'action_add_wallet_amount' not in odoo_methods
 
-        # x_pending_topup_balance must have been written
+        # x_pending_topup_balance must NOT be written — CRM credits Wallet_Balance__c
         pending_writes = [
             c for c in poller.models.execute_kw.call_args_list
             if len(c[0]) > 4 and c[0][4] == 'write'
             and c[0][3] == 'res.partner'
             and 'x_pending_topup_balance' in (c[0][5][1] if len(c[0][5]) > 1 else {})
         ]
-        assert len(pending_writes) == 1
+        assert len(pending_writes) == 0
 
     @patch('sender.send_typed_message', return_value=True)
     def test_registration_without_topup_does_not_send_wallet_update(self, mock_send, poller):

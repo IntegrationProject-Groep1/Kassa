@@ -504,45 +504,50 @@ class OrderPoller:
                             topup_amount, customer_info['id'], new_balance
                         )
                     else:
-                        # ── Race condition / pre-lease path ───────────────────────────────
-                        # Visitor scanned QR (x_lease_active=True) but wallet_lease_grant
-                        # from CRM has not yet arrived (x_lease_id still empty), OR the
-                        # visitor has not scanned yet (x_lease_active=False).
-                        #
-                        # We do NOT update x_wallet_balance yet — that value will be SET
-                        # (not added) when wallet_lease_grant arrives with the CRM's
-                        # authoritative balance, which would wipe our addition.
-                        #
-                        # Instead, we park the top-up amount in x_pending_topup_balance.
-                        # The wallet_lease_grant handler (receiver.py) reads this field,
-                        # merges it with the CRM balance, clears it, and then sends the
-                        # correct wallet_balance_update to the frontend.
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'res.partner', 'write',
-                            [[customer_info['id']], {
-                                'x_pending_topup_balance': (
-                                    float(customer_info.get('x_pending_topup_balance') or 0.0)
-                                    + topup_amount
-                                )
-                            }]
-                        )
-                        self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'pos.order', 'write',
-                            [[order_id], {'x_wallet_updated': True}]
-                        )
                         if lease_active:
+                            # ── Race-condition window ──────────────────────────────────────
+                            # Visitor scanned (x_lease_active=True) but wallet_lease_grant
+                            # not yet received (x_lease_id still empty). CRM already set
+                            # Wallet_Status__c='Leased' so payment_registered won't update
+                            # Wallet_Balance__c there. Park here so process_wallet_lease_grant
+                            # can merge this amount with the CRM's authoritative balance.
+                            self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'res.partner', 'write',
+                                [[customer_info['id']], {
+                                    'x_pending_topup_balance': (
+                                        float(customer_info.get('x_pending_topup_balance') or 0.0)
+                                        + topup_amount
+                                    )
+                                }]
+                            )
+                            self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'write',
+                                [[order_id], {'x_wallet_updated': True}]
+                            )
                             logger.info(
                                 "⏳ Top-up €%.2f parked as pending for partner %s "
                                 "(lease requested, awaiting wallet_lease_grant from CRM).",
                                 topup_amount, customer_info['id']
                             )
                         else:
+                            # ── Pre-scan path ──────────────────────────────────────────────
+                            # Visitor has not scanned yet (x_lease_active=False). CRM owns
+                            # the wallet balance. payment_registered was already sent; CRM
+                            # credits Wallet_Balance__c directly (Wallet_Status__c != 'Leased').
+                            # wallet_lease_grant.current_balance will include this top-up when
+                            # the visitor eventually scans. Do NOT park in x_pending_topup_balance
+                            # — that would cause double-counting in process_wallet_lease_grant.
+                            self.models.execute_kw(
+                                self.odoo_db, self.odoo_uid, self.odoo_pass,
+                                'pos.order', 'write',
+                                [[order_id], {'x_wallet_updated': True}]
+                            )
                             logger.warning(
-                                "⚠️ Top-up €%.2f parked as pending for partner %s "
-                                "(no active lease — visitor has not scanned yet). "
-                                "Balance will be reconciled when lease is granted.",
+                                "⚠️ Top-up €%.2f recorded for partner %s (visitor has not scanned yet). "
+                                "CRM credited Wallet_Balance__c via payment_registered; "
+                                "wallet_lease_grant will carry the correct balance on badge scan.",
                                 topup_amount, customer_info['id']
                             )
                 except Exception as e:

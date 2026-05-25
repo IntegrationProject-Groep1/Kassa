@@ -731,11 +731,13 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
 
     partner = existing[0]
 
-    # ── Apply any pending top-ups that arrived before the lease grant ──────────
-    # If the cashier processed a top-up between the visitor's QR scan and this
-    # lease grant, the amount was parked in x_pending_topup_balance instead of
-    # being added to x_wallet_balance (which would have been overwritten here).
-    # Now we know CRM's authoritative balance — merge and clear the pending field.
+    # ── Apply pending top-up from the scan-race-condition window ───────────────
+    # Applies only when: visitor scanned (x_lease_active set) → top-up processed
+    # before wallet_lease_grant arrived → amount was parked in x_pending_topup_balance.
+    # CRM's Wallet_Balance__c was already 'Leased' at that point, so payment_registered
+    # did not update it; current_balance here is therefore the pre-top-up value.
+    # Pre-scan top-ups are NOT parked (see order_poller) — CRM credits them to
+    # Wallet_Balance__c directly, so current_balance already includes them.
     pending_topup = float(partner.get("x_pending_topup_balance") or 0.0)
     final_balance = round(current_balance + pending_topup, 2)
 
