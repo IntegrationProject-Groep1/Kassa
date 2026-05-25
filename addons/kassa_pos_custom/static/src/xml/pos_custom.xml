@@ -51,30 +51,36 @@
         Renders as a compact horizontal bar with wallet and outstanding badges
         side by side.
     -->
+    <!--
+        Wallet strip — product screen, above Refund/CustomerNote/ScanQR tabs.
+        Uses rounded-pill spans instead of Bootstrap .badge so text stays at
+        full readable size (badge forces 0.75em; small forces 0.875em — both
+        too tiny for a cashier glancing at a screen).
+    -->
     <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('control-buttons')]" position="before">
             <t t-set="kassaPartner" t-value="currentOrder.get_partner()"/>
             <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
             <t t-set="kassaLeaseActivating" t-value="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; !kassaPartner.x_lease_id"/>
             <t t-if="kassaLeaseActivating">
-                <div class="kassa-wallet-strip d-flex align-items-center gap-2 px-2 py-1 bg-warning-subtle text-warning-emphasis border-bottom border-warning small fw-semibold">
-                    <i class="fa fa-spinner fa-spin"/>
+                <div class="kassa-wallet-strip d-flex align-items-center gap-2 px-3 py-2 border-bottom bg-warning-subtle text-warning-emphasis fw-semibold">
+                    <i class="fa fa-fw fa-spinner fa-spin"/>
                     Wallet wordt geactiveerd...
                 </div>
             </t>
             <t t-elif="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; kassaPartner.x_lease_id">
                 <t t-set="kassaSufficient" t-value="Math.round((kassaBalance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
-                <div class="kassa-wallet-strip d-flex align-items-center gap-2 px-2 py-1 border-bottom small">
-                    <i class="fa fa-credit-card text-muted"/>
-                    <span t-att-class="'badge fw-semibold ' + (kassaSufficient ? 'bg-success' : 'bg-danger')">
-                        Wallet €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
+                <div class="kassa-wallet-strip d-flex align-items-center gap-3 px-3 py-2 border-bottom" style="background:#f5f5f5;">
+                    <i class="fa fa-fw fa-credit-card text-secondary"/>
+                    <span t-att-class="'rounded-pill px-3 py-1 fw-semibold lh-base ' + (kassaSufficient ? 'bg-success text-white' : 'bg-danger text-white')">
+                        Wallet  €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
                     </span>
                     <t t-if="!kassaSufficient">
-                        <span class="text-danger fw-semibold">Onvoldoende saldo</span>
+                        <span class="fw-semibold text-danger">Onvoldoende saldo</span>
                     </t>
                     <t t-if="(kassaPartner.x_outstanding_amount || 0) > 0">
-                        <span class="badge bg-warning text-dark fw-semibold">
-                            Openstaand €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
+                        <span class="rounded-pill px-3 py-1 fw-semibold lh-base bg-warning text-dark">
+                            Openstaand  €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
                         </span>
                     </t>
                 </div>
@@ -83,9 +89,8 @@
     </t>
 
     <!--
-        Wallet strip on the payment screen — shown as a compact info bar
-        at the top of the payment buttons area.
-        Green border = wallet sufficient; red border = insufficient.
+        Wallet strip — payment screen, top of payment-buttons area.
+        Larger and more prominent here since the cashier is about to charge the wallet.
     -->
     <t t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('payment-buttons')]" position="inside">
@@ -93,26 +98,28 @@
             <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
             <t t-set="kassaLeaseActivating" t-value="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; !kassaPartner.x_lease_id"/>
             <t t-if="kassaLeaseActivating">
-                <div class="kassa-wallet-strip d-flex align-items-center gap-2 px-2 py-2 mb-2 rounded bg-warning-subtle text-warning-emphasis border border-warning small fw-semibold">
-                    <i class="fa fa-spinner fa-spin"/>
+                <div class="kassa-wallet-strip d-flex align-items-center gap-2 px-3 py-2 mb-2 rounded fw-semibold bg-warning-subtle text-warning-emphasis border border-warning">
+                    <i class="fa fa-fw fa-spinner fa-spin"/>
                     Wallet wordt geactiveerd...
                 </div>
             </t>
             <t t-elif="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; kassaPartner.x_lease_id">
                 <t t-set="kassaSufficient" t-value="Math.round((kassaBalance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
-                <div t-att-class="'kassa-wallet-strip d-flex align-items-center justify-content-between gap-2 px-3 py-2 mb-2 rounded fw-semibold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
-                    <span>
-                        <i class="fa fa-credit-card me-1"/>
-                        Wallet €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
+                <div t-att-class="'kassa-wallet-strip d-flex align-items-center justify-content-between gap-3 px-3 py-2 mb-2 rounded border fw-semibold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border-success' : 'bg-danger-subtle text-danger-emphasis border-danger')">
+                    <span class="d-flex align-items-center gap-2">
+                        <i class="fa fa-fw fa-credit-card"/>
+                        Wallet  €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
                     </span>
-                    <t t-if="(kassaPartner.x_outstanding_amount || 0) > 0">
-                        <span class="badge bg-warning text-dark">
-                            Openstaand €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
-                        </span>
-                    </t>
-                    <t t-if="!kassaSufficient">
-                        <span class="small fw-normal">Onvoldoende saldo</span>
-                    </t>
+                    <span class="d-flex align-items-center gap-2">
+                        <t t-if="!kassaSufficient">
+                            <span class="fw-normal opacity-75">Onvoldoende saldo</span>
+                        </t>
+                        <t t-if="(kassaPartner.x_outstanding_amount || 0) > 0">
+                            <span class="rounded-pill px-3 py-1 bg-warning text-dark fw-semibold lh-base">
+                                Openstaand  €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
+                            </span>
+                        </t>
+                    </span>
                 </div>
             </t>
         </xpath>
