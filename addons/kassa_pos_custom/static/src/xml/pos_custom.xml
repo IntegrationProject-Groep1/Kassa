@@ -51,7 +51,7 @@
         Renders as a compact horizontal bar with wallet and outstanding badges
         side by side.
     -->
-    <t t-inherit="point_of_sale.ActionpadWidget" t-inherit-mode="extension">
+    <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('control-buttons')]" position="before">
             <t t-set="kassaPartner" t-value="currentOrder.get_partner()"/>
             <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
