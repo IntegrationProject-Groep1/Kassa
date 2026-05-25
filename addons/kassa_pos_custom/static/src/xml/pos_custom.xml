@@ -65,11 +65,11 @@
                     Wallet wordt geactiveerd...
                 </div>
             </t>
-            <t t-elif="kassaBalance > 0">
-                <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
+            <t t-elif="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; kassaPartner.x_lease_id">
+                <t t-set="kassaSufficient" t-value="Math.round((kassaBalance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification mt-1 p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>
-                    Wallet: €<t t-esc="kassaBalance.toFixed(2)"/>
+                    Wallet: €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
                     <t t-if="!kassaSufficient">
                         <span class="d-block small fw-normal">Onvoldoende saldo</span>
                     </t>
@@ -93,11 +93,11 @@
                     Wallet wordt geactiveerd...
                 </div>
             </t>
-            <t t-elif="kassaBalance > 0">
-                <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
+            <t t-elif="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; kassaPartner.x_lease_id">
+                <t t-set="kassaSufficient" t-value="Math.round((kassaBalance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>
-                    Wallet: €<t t-esc="kassaBalance.toFixed(2)"/>
+                    Wallet: €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
                     <t t-if="!kassaSufficient">
                         <span class="d-block small fw-normal">Onvoldoende saldo</span>
                     </t>
