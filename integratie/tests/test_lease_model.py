@@ -300,7 +300,8 @@ class TestReturnLease:
         mock_send.side_effect = lambda *a, **kw: call_order.append("send")
         models.execute_kw.side_effect = track_kw
         receiver._return_lease(99, uid, models)
-        assert call_order == ["write", "send"]
+        # Odoo write must happen before both sends (wallet_balance_update + wallet_lease_return)
+        assert call_order == ["write", "send", "send"]
 
     @patch("receiver.send_typed_message")
     def test_sends_fresh_balance_lease_id_and_tx_count(self, mock_send, odoo):
@@ -335,6 +336,20 @@ class TestReturnLease:
         receiver._return_lease(99, uid, models)
         mock_send.assert_not_called()
         assert models.execute_kw.call_count == 1  # only the search_read
+
+    @patch("receiver.send_typed_message")
+    def test_sends_wallet_balance_update_with_final_balance(self, mock_send, odoo):
+        """Frontend must receive the remaining balance so it doesn't stay stale after checkout."""
+        uid, models = odoo
+        models.execute_kw.side_effect = [[self._fresh_partner()], True]
+        receiver._return_lease(99, uid, models)
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert "wallet_balance_update" in sent_types
+        # Find the wallet_balance_update call and confirm it carries the final balance
+        for call in mock_send.call_args_list:
+            if call[0][0] == "wallet_balance_update":
+                assert "30.00" in call[0][1]  # final_balance from _fresh_partner
+                break
 
 
 # ── process_wallet_lease_grant ────────────────────────────────────────────────
@@ -494,8 +509,11 @@ class TestEventEnded:
         ]
         models.execute_kw.side_effect = [partners, True]
         receiver._do_return_all_leases(uid, models)
-        assert mock_send.call_count == 2
-        assert all(c[0][0] == "wallet_lease_return" for c in mock_send.call_args_list)
+        # Each partner emits wallet_balance_update + wallet_lease_return = 4 total
+        assert mock_send.call_count == 4
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert sent_types.count("wallet_balance_update") == 2
+        assert sent_types.count("wallet_lease_return") == 2
 
     @patch("receiver.send_typed_message")
     def test_single_bulk_write_clears_all_leases(self, mock_send, odoo):
@@ -536,11 +554,28 @@ class TestEventEnded:
         ]
         models.execute_kw.side_effect = [partners, True]
         receiver._do_return_all_leases(uid, models)
-        assert mock_send.call_count == 1  # only the valid partner
+        # The valid partner emits wallet_balance_update + wallet_lease_return; invalid is skipped
+        assert mock_send.call_count == 2
         write_call = models.execute_kw.call_args_list[1]
         cleared_ids = write_call[0][5][0]
         assert 1 not in cleared_ids
         assert 2 in cleared_ids
+
+    @patch("receiver.send_typed_message")
+    def test_sends_wallet_balance_update_per_partner_on_event_ended(self, mock_send, odoo):
+        """Each partner's final balance must be pushed to Frontend when the event ends."""
+        uid, models = odoo
+        partners = [
+            self._partner(1, _UUID, 10.0, "L1", 2),
+            self._partner(2, _UUID2, 5.0, "L2", 1),
+        ]
+        models.execute_kw.side_effect = [partners, True]
+        receiver._do_return_all_leases(uid, models)
+        balance_update_calls = [c for c in mock_send.call_args_list if c[0][0] == "wallet_balance_update"]
+        assert len(balance_update_calls) == 2
+        xmls = [c[0][1] for c in balance_update_calls]
+        assert any("10.00" in x for x in xmls)
+        assert any("5.00" in x for x in xmls)
 
     def test_raises_when_body_missing(self, odoo):
         uid, models = odoo

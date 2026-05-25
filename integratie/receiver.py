@@ -194,13 +194,15 @@ def _publish_partner_bus_event(
 def _ensure_session_product(
     uid: int, models: OdooModelsProxy, session_title: str,
     price: float | None = None, session_id: str | None = None,
-) -> None:
+) -> Optional[int]:
     """Find or create a POS-available product for the given session (idempotent).
 
     Looks up by x_session_id first when provided — this correctly handles title
     renames without creating a duplicate product. Falls back to name lookup for
     products created before x_session_id was introduced.
     If *price* is provided it is always written to list_price.
+    Returns the product.template id so callers can look up product.product ids
+    for the bus notification.
     """
     existing = None
     found_by_session_id = False
@@ -246,7 +248,7 @@ def _ensure_session_product(
             logger.info("[SESSION_PRODUCT] ✓ Updated product id=%s: %s", product_id, write_vals)
         else:
             logger.debug("[SESSION_PRODUCT] Already up to date: '%s'", session_title)
-        return
+        return product_id
 
     # Look up the Sessions POS category created by odoo_setup.
     categ = models.execute_kw(
@@ -268,11 +270,12 @@ def _ensure_session_product(
     if categ_id:
         vals["pos_categ_ids"] = [(6, 0, [categ_id])]
 
-    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "create", [vals])
+    new_tmpl_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "create", [vals])
     logger.info(
         "[SESSION_PRODUCT] ✓ Created POS product: '%s' | price=%.2f",
         session_title, price if price is not None else 0.0,
     )
+    return new_tmpl_id
 
 
 def process_new_registration(root: Element, uid: int, models: OdooModelsProxy) -> None:
@@ -666,6 +669,14 @@ def _return_lease(partner_id: int, uid: int, models: OdooModelsProxy) -> None:
         }],
     )
 
+    update_xml = build_wallet_balance_update_xml(
+        identity_uuid=identity_uuid,
+        new_balance=final_balance,
+    )
+    send_typed_message("wallet_balance_update", update_xml)
+    logger.info("[LEASE_RETURN] wallet_balance_update sent to frontend for %s (balance=%.2f)",
+                identity_uuid, final_balance)
+
     xml = build_wallet_lease_return_xml(
         identity_uuid=identity_uuid,
         final_balance=final_balance,
@@ -937,6 +948,11 @@ def _do_return_all_leases(uid: int, models: OdooModelsProxy) -> None:
             final_balance = float(partner.get("x_wallet_balance") or 0.0)
             lease_id = partner.get("x_lease_id") or ""
             tx_count = int(partner.get("x_lease_transaction_count") or 0)
+            update_xml = build_wallet_balance_update_xml(
+                identity_uuid=identity_uuid,
+                new_balance=final_balance,
+            )
+            send_typed_message("wallet_balance_update", update_xml)
             xml = build_wallet_lease_return_xml(
                 identity_uuid=identity_uuid,
                 final_balance=final_balance,
@@ -1512,7 +1528,7 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
         except (ValueError, TypeError):
             pass
 
-    _ensure_session_product(uid, models, title, price=price, session_id=session_id)
+    tmpl_id = _ensure_session_product(uid, models, title, price=price, session_id=session_id)
     logger.info("[SESSION_UPDATED] ✓ POS product updated for session '%s' (id=%s)", title, session_id)
     monitor.log(
         "info", "session",
@@ -1521,10 +1537,24 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
 
     _sync_partner_session_data(uid, models, session_id, title, price)
 
+    product_ids: List[int] = []
+    if tmpl_id:
+        try:
+            prods = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "product.product", "search_read",
+                [[["product_tmpl_id", "=", tmpl_id]]],
+                {"fields": ["id"], "limit": 20},
+            )
+            product_ids = [p["id"] for p in prods]
+        except Exception as exc:
+            logger.warning("[SESSION_UPDATED] Could not look up product.product ids: %s", exc)
+
     try:
         notified = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "pos.session", "kassa_notify_product_update", [[]],
+            {"product_ids": product_ids},
         )
         logger.info("[SESSION_UPDATED] Bus notification sent to %d open POS session(s)", notified)
     except Exception as exc:

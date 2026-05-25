@@ -655,8 +655,11 @@ class TestEventEndedPipeline:
 
         receiver._do_return_all_leases(uid, models)
 
-        assert mock_send.call_count == 2
-        assert all(c[0][0] == "wallet_lease_return" for c in mock_send.call_args_list)
+        # Each partner emits wallet_balance_update + wallet_lease_return = 4 total
+        assert mock_send.call_count == 4
+        sent_types = [c[0][0] for c in mock_send.call_args_list]
+        assert sent_types.count("wallet_balance_update") == 2
+        assert sent_types.count("wallet_lease_return") == 2
 
         write_call = models.execute_kw.call_args_list[1]
         assert set(write_call[0][5][0]) == {1, 2}

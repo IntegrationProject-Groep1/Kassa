@@ -51,80 +51,78 @@ class PosSession(models.Model):
         ])
         return result
 
-    def kassa_notify_product_update(self):
+    def kassa_notify_product_update(self, product_ids=None):
         """Push updated product catalogue to every open POS session via the bus.
 
         Called via XML-RPC by the integration service after new session products
-        are created by process_session_view_response, so the POS frontend picks
-        up the new products without requiring a manual session reload.
+        are created or updated.  The caller may pass *product_ids* (a list of
+        product.product ids) to guarantee the bus notification fires even when no
+        open POS sessions are found — e.g. if the session search fails due to a
+        company-context mismatch.
 
-        Each POS config (Bar Kassa, Inschrijvingskassa) has its own product domain,
-        so products are fetched separately per config and each session only receives
-        the products that belong to its own config.
-
-        Returns the number of sessions notified.
+        Returns the number of POS sessions notified via _notify.
         """
-        # Widen the company context before searching: .sudo() bypasses record
-        # rules but Odoo 16/17 still applies a company filter derived from
-        # allowed_company_ids in the environment.  The XML-RPC caller
-        # (desiderius) may only have one company in its context, so sessions
-        # belonging to other companies would silently return empty.
-        all_company_ids = self.env['res.company'].sudo().search([]).ids
-        if not all_company_ids:
-            _logger.warning("[KASSA] kassa_notify_product_update: no companies found, aborting")
-            return 0
+        # sudo() bypasses all record rules including multi-company rules, so we
+        # do NOT set allowed_company_ids in context — doing so before sudo() can
+        # add a company-domain filter that overrides the rule bypass and causes
+        # sessions to be silently excluded.
         open_sessions = (
             self.env['pos.session']
-            .with_context(allowed_company_ids=all_company_ids)
             .sudo()
             .search([('state', 'in', ('opened', 'opening_control'))])
         )
-        if not open_sessions:
-            return 0
 
         notified = 0
-        all_product_ids = []
+        all_product_ids = list(product_ids or [])
 
-        for config in open_sessions.mapped('config_id'):
-            sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
-            params = sessions_in_config[0]._loader_params_product_product()
-            search_params = params.get('search_params', {})
-            domain = search_params.get('domain', [])
-            if config.company_id:
-                domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
-            products = (
-                self.env['product.product']
-                .with_context(allowed_company_ids=all_company_ids)
-                .sudo()
-                .search_read(
-                    domain,
-                    fields=search_params.get('fields', []),
-                    limit=search_params.get('limit', False),
-                    order=search_params.get('order', False),
+        if not open_sessions:
+            _logger.info("[KASSA] kassa_notify_product_update: no open POS sessions found")
+        else:
+            for config in open_sessions.mapped('config_id'):
+                sessions_in_config = open_sessions.filtered(lambda s: s.config_id == config)
+                params = sessions_in_config[0]._loader_params_product_product()
+                search_params = params.get('search_params', {})
+                domain = search_params.get('domain', [])
+                if config.company_id:
+                    domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
+                products = (
+                    self.env['product.product']
+                    .sudo()
+                    .search_read(
+                        domain,
+                        fields=search_params.get('fields', []),
+                        limit=search_params.get('limit', False),
+                        order=search_params.get('order', False),
+                    )
                 )
-            )
-            all_product_ids.extend(p['id'] for p in products)
-            for session in sessions_in_config:
-                try:
-                    session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
-                    notified += 1
-                    _logger.info(
-                        "[KASSA] Pushed SYNC_PRODUCT_UPDATED to POS session %s (%d products)",
-                        session.name, len(products),
-                    )
-                except Exception as exc:
-                    _logger.warning(
-                        "[KASSA] Could not notify POS session %s: %s", session.name, exc
-                    )
+                all_product_ids.extend(p['id'] for p in products)
+                for session in sessions_in_config:
+                    try:
+                        session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
+                        notified += 1
+                        _logger.info(
+                            "[KASSA] Pushed SYNC_PRODUCT_UPDATED to POS session %s (%d products)",
+                            session.name, len(products),
+                        )
+                    except Exception as exc:
+                        _logger.warning(
+                            "[KASSA] Could not notify POS session %s: %s", session.name, exc
+                        )
 
         # Publish to the kassa_product_update bus channel so the POS JS handler
-        # can upsert new products into the reactive model and trigger a grid re-render.
+        # can upsert updated products into the reactive model without a reload.
+        # This fires even when no open sessions are found, as long as we know
+        # which product ids changed (passed in by the caller).
         unique_product_ids = list(dict.fromkeys(all_product_ids))
         if unique_product_ids:
             self.env['bus.bus'].sudo()._sendone(
                 'kassa_product_update',
                 'kassa_product_update',
                 {'product_ids': unique_product_ids},
+            )
+            _logger.info(
+                "[KASSA] kassa_product_update bus event sent for %d product(s): %s",
+                len(unique_product_ids), unique_product_ids,
             )
 
         return notified
