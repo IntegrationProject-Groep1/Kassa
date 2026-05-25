@@ -329,7 +329,7 @@ export class QrScanButton extends Component {
                 result.status === "lease_requested" || result.status === "not_found_and_created"
                     ? " | Wallet wordt geactiveerd..."
                     : result.status === "already_active"
-                    ? ` | Wallet: ${this.pos.format_currency(balance)}`
+                    ? ` | Wallet: €${(balance || 0).toFixed(2)}`
                     : "";
 
             const sessionTitles = (result.sessions || []).map((s) => s.title).filter(Boolean);

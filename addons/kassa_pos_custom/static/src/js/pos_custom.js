@@ -23,7 +23,7 @@ import { PosStore } from "@point_of_sale/app/store/pos_store";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { PartnerListScreen } from "@point_of_sale/app/screens/partner_list/partner_list";
-import { Component, useState, effect } from "@odoo/owl";
+import { Component, useState } from "@odoo/owl";
 import { Dialog } from "@web/core/dialog/dialog";
 import { _t } from "@web/core/l10n/translation";
 import { sprintf } from "@web/core/utils/strings";
@@ -69,7 +69,6 @@ patch(PosStore.prototype, {
         await super.setup(...arguments);
         this._kassaScannedPartnerIds = new Set();
         this._subscribeKassaBusEvents();
-        this._watchKassaPartnerSelection();
     },
 
     /**
@@ -103,41 +102,6 @@ patch(PosStore.prototype, {
             this.env.services.bus_service.start();
         } catch (err) {
             console.warn("[Kassa] Could not subscribe to bus_service:", err);
-        }
-    },
-
-    /**
-     * Register a reactive OWL effect that runs whenever the current order's
-     * partner changes.  Accessing selectedOrder and its partner_id inside the
-     * effect function makes OWL track those reactive properties automatically,
-     * so the effect re-executes on every partner-selection change.
-     */
-    _watchKassaPartnerSelection() {
-        try {
-            effect(() => {
-                // Check inside the effect so config is guaranteed loaded when it runs.
-                if (this.config?.name !== "Inschrijvingskassa") return;
-
-                const order = this.selectedOrder;
-                if (!order) return;
-
-                const partner =
-                    order.partner_id ||
-                    (order.get_partner ? order.get_partner() : null);
-
-                // Track both fields so OWL re-fires when sessions arrive
-                // asynchronously OR when a session price changes.
-                void partner?.x_session_title;
-                void partner?.x_outstanding_amount;
-
-                if (partner && partner.x_session_title) {
-                    this._kassaAddSessionProducts(order, partner).catch(
-                        (err) => console.error("[Kassa] Session product auto-add error:", err)
-                    );
-                }
-            });
-        } catch (err) {
-            console.warn("[Kassa] Could not register partner-watch effect:", err);
         }
     },
 
@@ -191,32 +155,20 @@ patch(PosStore.prototype, {
             (p) => p.name === sessionTitle || p.display_name === sessionTitle
         );
 
-        // 2. Fallback: product was created while this POS session was already open.
-        // Trigger kassa_notify_product_update() which sends SYNC_PRODUCT_UPDATED via
-        // the POS session's own loader (_loader_params_product_product). This creates
-        // proper OWL model instances with all class methods (including get_unit()) —
-        // unlike a raw searchRead + insert() which produces a plain POJO that causes
-        // "get_unit is not a function" inside Orderline.setup when add_product is called.
+        // 2. Fallback: product created during this POS session — wait for
+        // SYNC_PRODUCT_UPDATED (triggered by kassa_notify_product_update called
+        // from the QR scan controller) and retry once.
         if (!product) {
-            try {
-                await this.env.services.orm.call(
-                    "pos.session", "kassa_notify_product_update", []
-                );
-                // Give the SYNC_PRODUCT_UPDATED WebSocket event time to be processed.
-                await new Promise((r) => setTimeout(r, 800));
-                // Re-check the store — the product should now be a proper model instance.
-                const refreshed =
-                    this.models?.["product.product"]?.getAll?.() ||
-                    this.products ||
-                    [];
-                product = refreshed.find(
-                    (p) => p.name === sessionTitle || p.display_name === sessionTitle
-                );
-                if (product) {
-                    console.log("[Kassa] Sessieproduct '%s' geladen via SYNC_PRODUCT_UPDATED.", sessionTitle);
-                }
-            } catch (err) {
-                console.warn("[Kassa] Product-sync fallback mislukt:", err);
+            await new Promise((r) => setTimeout(r, 1000));
+            const refreshed =
+                this.models?.["product.product"]?.getAll?.() ||
+                this.products ||
+                [];
+            product = refreshed.find(
+                (p) => p.name === sessionTitle || p.display_name === sessionTitle
+            );
+            if (product) {
+                console.log("[Kassa] Sessieproduct '%s' gevonden na SYNC_PRODUCT_UPDATED.", sessionTitle);
             }
         }
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import models
+from odoo import models, SUPERUSER_ID
 from odoo.osv import expression
 
 _logger = logging.getLogger(__name__)
@@ -62,14 +62,13 @@ class PosSession(models.Model):
 
         Returns the number of POS sessions notified via _notify.
         """
-        # sudo() bypasses all record rules including multi-company rules, so we
-        # do NOT set allowed_company_ids in context — doing so before sudo() can
-        # add a company-domain filter that overrides the rule bypass and causes
-        # sessions to be silently excluded.
-        open_sessions = (
-            self.env['pos.session']
-            .sudo()
-            .search([('state', 'in', ('opened', 'opening_control'))])
+        # Use a superuser environment to bypass any allowed_company_ids restriction
+        # from the calling context. When invoked via XML-RPC from receiver.py, the
+        # integration user's company context persists through sudo() in Odoo 17 and
+        # silently excludes POS sessions from other companies.
+        super_env = self.env(user=SUPERUSER_ID)
+        open_sessions = super_env['pos.session'].search(
+            [('state', 'in', ('opened', 'opening_control'))]
         )
 
         notified = 0
@@ -86,8 +85,7 @@ class PosSession(models.Model):
                 if config.company_id:
                     domain = expression.AND([domain, [('company_id', 'in', (config.company_id.id, False))]])
                 products = (
-                    self.env['product.product']
-                    .sudo()
+                    super_env['product.product']
                     .search_read(
                         domain,
                         fields=search_params.get('fields', []),

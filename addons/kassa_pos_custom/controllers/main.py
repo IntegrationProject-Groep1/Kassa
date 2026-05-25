@@ -403,6 +403,10 @@ class KassaQrController(http.Controller):
                     _logger.warning("[Kassa QR] Could not publish bus event: %s", exc)
 
             _ensure_session_products(env, [s["title"] for s in sessions])
+            try:
+                env["pos.session"].sudo().kassa_notify_product_update()
+            except Exception as exc:
+                _logger.warning("[Kassa QR] Could not sync session products to POS: %s", exc)
         else:
             # Fall back to whatever was stored from prior new_registration messages.
             raw = partner.x_session_title or ""
