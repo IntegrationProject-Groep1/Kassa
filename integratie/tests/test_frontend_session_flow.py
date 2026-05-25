@@ -349,17 +349,18 @@ class TestProcessSessionUpdated:
         assert create_call[0][3] == "product.template"
         assert create_call[0][4] == "create"
 
-    def test_does_not_touch_any_partner(self, odoo):
+    def test_does_not_write_any_partner_when_none_registered(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [
-            [{"id": 7, "list_price": 10.0}],
-            True,
+            [{"id": 7, "list_price": 10.0}],  # product found by x_session_id
+            True,                              # product write
+            [],                                # partner search → no partners registered
         ]
         receiver.process_session_updated(self._root(price=15.0), uid, models)
 
         all_calls = models.execute_kw.call_args_list
-        partner_calls = [c for c in all_calls if c[0][3] == "res.partner"]
-        assert len(partner_calls) == 0
+        partner_writes = [c for c in all_calls if c[0][3] == "res.partner" and c[0][4] == "write"]
+        assert len(partner_writes) == 0
 
     def test_raises_when_session_id_missing(self, odoo):
         uid, models = odoo
