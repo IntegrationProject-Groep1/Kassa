@@ -216,6 +216,7 @@ patch(PosStore.prototype, {
                         "id", "name", "display_name", "list_price", "standard_price",
                         "type", "taxes_id", "barcode", "default_code",
                         "pos_categ_ids", "categ_id", "available_in_pos", "description_sale",
+                        "uom_id",
                     ],
                     { limit: 1 }
                 );
@@ -312,7 +313,7 @@ patch(PosStore.prototype, {
                     "id", "name", "display_name", "list_price", "standard_price",
                     "type", "taxes_id", "barcode", "default_code",
                     "pos_categ_ids", "categ_id", "available_in_pos",
-                    "description_sale", "x_session_id",
+                    "description_sale", "x_session_id", "uom_id",
                 ]
             );
             for (const product of products || []) {
