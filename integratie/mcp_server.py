@@ -7,6 +7,8 @@ Standalone process. Run with:
 Requires env vars: ODOO_URL, ODOO_DB, ODOO_USER, ODOO_PASS
 Optional: PORT (default 8004)
 """
+import logging
+import logging.handlers
 import os
 import xmlrpc.client  # nosec B411
 from typing import Annotated, Any, cast
@@ -16,6 +18,24 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
 from monitoring import monitor
+
+_log = logging.getLogger("kassa-mcp")
+if not _log.handlers:
+    _log.setLevel(logging.DEBUG)
+    _fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(_fmt)
+    _log.addHandler(_sh)
+    if os.path.isdir("/data"):
+        _fh = logging.handlers.RotatingFileHandler(
+            "/data/kassa-mcp.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        _fh.setFormatter(_fmt)
+        _log.addHandler(_fh)
+    _log.propagate = False
 
 defusedxml.xmlrpc.monkey_patch()
 load_dotenv()
@@ -461,12 +481,15 @@ def process_refund(
     """
     if not reason or not reason.strip():
         return {"error": "A reason is required to process a refund.", "success": False}
+    _log.info("process_refund called: order_id=%s reason=%.100s", order_id, reason)
     try:
         ids = _odoo("pos.order", "search", [[["name", "=", order_id]]])
         if not ids:
+            _log.warning("process_refund: order not found: %s", order_id)
             return {"error": f"Order '{order_id}' not found.", "success": False}
         result = _odoo("pos.order", "refund", [ids])
         monitor.log("info", "refund", f"Admin initiated refund for order {order_id}: {reason[:200]}")
+        _log.info("process_refund success: order_id=%s", order_id)
         return {
             "success": True,
             "order_id": order_id,
@@ -476,6 +499,7 @@ def process_refund(
         }
     except Exception as exc:
         monitor.log("error", "refund", f"Admin refund failed for order {order_id}: {str(exc)[:300]}")
+        _log.error("process_refund error: order_id=%s error=%s", order_id, exc)
         return {"error": f"Refund failed: {exc}", "success": False}
 
 
@@ -503,6 +527,7 @@ def topup_wallet(
     import sender  # lazy: requires RABBIT_* env vars — fail before any Odoo writes
     if not reason or not reason.strip():
         return {"error": "A reason is required for a wallet top-up.", "success": False}
+    _log.info("topup_wallet called: master_uuid=%s amount=%.2f reason=%.100s", master_uuid, amount, reason)
     try:
         partners = _odoo(
             "res.partner", "search_read",
@@ -581,6 +606,7 @@ def topup_wallet(
         monitor.log("info", "wallet",
                     f"Admin topped up wallet for {partner['name']} (uuid={master_uuid}): "
                     f"+\u20ac{amount:.2f} \u2192 \u20ac{new_balance:.2f}. Reason: {reason[:200]}")
+        _log.info("topup_wallet success: master_uuid=%s amount=%.2f new_balance=%.2f", master_uuid, amount, new_balance)
         return {
             "success":      True,
             "master_uuid":  master_uuid,
@@ -594,7 +620,170 @@ def topup_wallet(
         }
     except Exception as exc:
         monitor.log("error", "wallet", f"Admin wallet top-up failed for uuid={master_uuid}: {str(exc)[:300]}")
+        _log.error("topup_wallet error: master_uuid=%s error=%s", master_uuid, exc)
         return {"error": f"Wallet top-up failed: {exc}", "success": False}
+
+
+@mcp.tool()
+def set_wallet_balance(
+    master_uuid: Annotated[
+        str,
+        Field(description=(
+            "CRM Master_UUID__c of the member. Get it via crm__search_members — never guess."
+        )),
+    ],
+    amount: Annotated[
+        float,
+        Field(description="New wallet balance in EUR (≥ 0). This replaces the current balance.", ge=0),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for the balance correction (required)."),
+    ],
+) -> dict[str, Any]:
+    """
+    Admin correction: set the absolute wallet balance for a member in Odoo.
+    WRITE OPERATION — confirm with admin before calling.
+
+    Only use for manual corrections when the normal top-up/refund flow is not applicable.
+    The wallet must exist in Odoo (partner with x_user_id matching master_uuid).
+    Returns the old and new balances.
+    """
+    if not reason or not reason.strip():
+        return {"error": "A reason is required for a wallet balance correction.", "success": False}
+    try:
+        partners = _odoo(
+            "res.partner", "search_read",
+            [[["x_user_id", "=", master_uuid]]],
+            {"fields": ["id", "name", "x_wallet_balance"], "limit": 1},
+        )
+        if not partners:
+            return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
+        partner = partners[0]
+        old_balance = float(partner.get("x_wallet_balance") or 0.0)
+        _odoo("res.partner", "write", [[partner["id"]], {"x_wallet_balance": amount}])
+        msg = (
+            f"Admin set wallet balance for {partner['name']} (uuid={master_uuid}): "
+            f"€{old_balance:.2f} → €{amount:.2f}. Reason: {reason[:200]}"
+        )
+        monitor.log("info", "wallet", msg)
+        return {
+            "success":      True,
+            "master_uuid":  master_uuid,
+            "partner_name": partner["name"],
+            "old_balance":  old_balance,
+            "new_balance":  amount,
+            "reason":       reason,
+            "message":      f"Wallet balance set to €{amount:.2f} for {partner['name']}.",
+        }
+    except Exception as exc:
+        monitor.log("error", "wallet", f"Admin set_wallet_balance failed for uuid={master_uuid}: {str(exc)[:300]}")
+        return {"error": f"Set wallet balance failed: {exc}", "success": False}
+
+
+@mcp.tool()
+def cancel_order(
+    order_id: Annotated[
+        str,
+        Field(description=(
+            "The order name/reference from Odoo (e.g. 'POS/2026/0042'). "
+            "Get it via get_recent_orders or get_orders_by_email — never guess."
+        )),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for the cancellation (required)."),
+    ],
+) -> dict[str, Any]:
+    """
+    Cancel a POS order in Odoo. WRITE OPERATION — confirm with admin before calling.
+
+    For posted/paid orders use process_refund instead (this issues a credit note).
+    This tool sets the order state to 'cancel' for orders still in draft/new state.
+    Returns success status and order details.
+    """
+    if not reason or not reason.strip():
+        return {"error": "A reason is required to cancel an order.", "success": False}
+    try:
+        ids = _odoo("pos.order", "search", [[["name", "=", order_id]]])
+        if not ids:
+            return {"error": f"Order '{order_id}' not found.", "success": False}
+        orders = _odoo("pos.order", "read", [ids], {"fields": ["id", "name", "state", "amount_total"]})
+        order = orders[0]
+        if order["state"] in ("done", "invoiced"):
+            return {
+                "error": (
+                    f"Order '{order_id}' is already posted (state='{order['state']}'). "
+                    "Use process_refund to issue a credit note instead."
+                ),
+                "success": False,
+            }
+        _odoo("pos.order", "write", [[order["id"]], {"state": "cancel"}])
+        monitor.log(
+            "info", "cancel_order",
+            f"Admin cancelled order {order_id} (state was '{order['state']}'): {reason[:200]}",
+        )
+        return {
+            "success":     True,
+            "order_id":    order_id,
+            "amount_total": order["amount_total"],
+            "reason":      reason,
+            "message":     f"Order '{order_id}' cancelled.",
+        }
+    except Exception as exc:
+        monitor.log("error", "cancel_order", f"Admin cancel_order failed for {order_id}: {str(exc)[:300]}")
+        return {"error": f"Cancel order failed: {exc}", "success": False}
+
+
+@mcp.tool()
+def delete_partner(
+    master_uuid: Annotated[
+        str,
+        Field(description=(
+            "CRM Master_UUID__c of the member. Get it via crm__search_members — never guess."
+        )),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Written reason for archiving the partner (required)."),
+    ],
+) -> dict[str, Any]:
+    """
+    Archive (soft-delete) an Odoo partner by setting active=False.
+    WRITE OPERATION — confirm with admin before calling.
+
+    This is a soft-delete — the partner record is hidden from normal views but not
+    physically removed. Triggered automatically on UserDeleted cascade; use manually
+    for corrections only.
+    """
+    if not reason or not reason.strip():
+        return {"error": "A reason is required to archive a partner.", "success": False}
+    try:
+        partners = _odoo(
+            "res.partner", "search_read",
+            [[["x_user_id", "=", master_uuid]]],
+            {"fields": ["id", "name", "active"], "limit": 1},
+        )
+        if not partners:
+            return {"error": f"No Odoo partner found for master_uuid '{master_uuid}'.", "success": False}
+        partner = partners[0]
+        if not partner.get("active"):
+            return {"error": f"Partner '{partner['name']}' is already archived.", "success": False}
+        _odoo("res.partner", "write", [[partner["id"]], {"active": False}])
+        monitor.log(
+            "info", "delete_partner",
+            f"Admin archived Odoo partner {partner['name']} (uuid={master_uuid}): {reason[:200]}",
+        )
+        return {
+            "success":      True,
+            "master_uuid":  master_uuid,
+            "partner_name": partner["name"],
+            "reason":       reason,
+            "message":      f"Partner '{partner['name']}' archived (soft-deleted).",
+        }
+    except Exception as exc:
+        monitor.log("error", "delete_partner", f"Admin delete_partner failed for uuid={master_uuid}: {str(exc)[:300]}")
+        return {"error": f"Archive partner failed: {exc}", "success": False}
 
 
 if __name__ == "__main__":
