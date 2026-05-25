@@ -192,35 +192,31 @@ patch(PosStore.prototype, {
         );
 
         // 2. Fallback: product was created while this POS session was already open.
+        // Trigger kassa_notify_product_update() which sends SYNC_PRODUCT_UPDATED via
+        // the POS session's own loader (_loader_params_product_product). This creates
+        // proper OWL model instances with all class methods (including get_unit()) —
+        // unlike a raw searchRead + insert() which produces a plain POJO that causes
+        // "get_unit is not a function" inside Orderline.setup when add_product is called.
         if (!product) {
             try {
-                const results = await this.env.services.orm.searchRead(
-                    "product.product",
-                    [
-                        ["name", "=", sessionTitle],
-                        ["available_in_pos", "=", true],
-                        ["active", "=", true],
-                    ],
-                    [
-                        "id", "name", "display_name", "list_price", "standard_price",
-                        "type", "taxes_id", "barcode", "default_code",
-                        "pos_categ_ids", "categ_id", "available_in_pos", "description_sale",
-                        "uom_id",
-                    ],
-                    { limit: 1 }
+                await this.env.services.orm.call(
+                    "pos.session", "kassa_notify_product_update", []
                 );
-                if (results && results.length > 0) {
-                    const data = results[0];
-                    if (this.models?.["product.product"]?.insert) {
-                        product = this.models["product.product"].insert(data);
-                    } else {
-                        product = data;
-                        if (this.products) this.products.push(product);
-                    }
-                    console.log("[Kassa] Sessieproduct '%s' live geladen vanuit Odoo.", sessionTitle);
+                // Give the SYNC_PRODUCT_UPDATED WebSocket event time to be processed.
+                await new Promise((r) => setTimeout(r, 800));
+                // Re-check the store — the product should now be a proper model instance.
+                const refreshed =
+                    this.models?.["product.product"]?.getAll?.() ||
+                    this.products ||
+                    [];
+                product = refreshed.find(
+                    (p) => p.name === sessionTitle || p.display_name === sessionTitle
+                );
+                if (product) {
+                    console.log("[Kassa] Sessieproduct '%s' geladen via SYNC_PRODUCT_UPDATED.", sessionTitle);
                 }
             } catch (err) {
-                console.warn("[Kassa] RPC-fallback voor sessieproduct mislukt:", err);
+                console.warn("[Kassa] Product-sync fallback mislukt:", err);
             }
         }
 
