@@ -3,9 +3,10 @@
 /**
  * Kassa POS Custom — Story 9 & 21
  *
- * 1. Patches PosStore to subscribe to "kassa_partner_update" bus events.
- *    On event: fetches only that one partner via RPC and upserts it into the
- *    local partners list — no full reload, no transaction interruption.
+ * 1. Patches PosStore to subscribe to KASSA_PARTNER_UPDATE bus notifications
+ *    (sent via session._notify() on the authorized POS session channel).
+ *    On event: fetches only that one partner via RPC, upserts it into the
+ *    local partners list, and directly triggers session product auto-add.
  *
  * 2. Registers a reactive OWL effect that fires whenever the current order's
  *    partner changes.  If x_session_title is set,
@@ -27,11 +28,8 @@ import { Dialog } from "@web/core/dialog/dialog";
 import { _t } from "@web/core/l10n/translation";
 import { sprintf } from "@web/core/utils/strings";
 
-/** Bus channel published by pos.order.send_partner_bus_event. */
-const KASSA_BUS_CHANNEL = "kassa_partner_update";
-
-/** Bus channel published by pos.session.kassa_notify_product_update. */
-const KASSA_PRODUCT_CHANNEL = "kassa_product_update";
+/** Notification type sent by pos.order.send_partner_bus_event via session._notify(). */
+const KASSA_PARTNER_NOTIFICATION = "KASSA_PARTNER_UPDATE";
 
 /**
  * Parse x_session_title into a list of session title strings.
@@ -83,31 +81,22 @@ patch(PosStore.prototype, {
     },
 
     /**
-     * Subscribe to the "kassa_partner_update" Odoo long-polling bus channel.
+     * Subscribe to the KASSA_PARTNER_UPDATE notification type.
      *
-     * In Odoo 17, two calls are required:
-     *   addChannel  — tells the underlying WebSocket to join the channel so
-     *                 the server routes bus.bus messages to this session.
-     *   subscribe   — registers the JavaScript callback for that notification type.
-     *   start()     — activates the connection if not already running.
+     * In Odoo 17, bus.bus._sendone() with a plain string channel is silently
+     * rejected by the server's bus security model for non-whitelisted channels.
+     * The Python side now uses session._notify('KASSA_PARTNER_UPDATE', ...) which
+     * goes through the POS session's own authorized WebSocket channel
+     * ('pos.session', session_id).  The POS core already subscribes to that
+     * channel at startup, so we only need bus_service.subscribe() — no addChannel().
      */
     _subscribeKassaBusEvents() {
         try {
-            this.env.services.bus_service.addChannel(KASSA_BUS_CHANNEL);
             this.env.services.bus_service.subscribe(
-                KASSA_BUS_CHANNEL,
+                KASSA_PARTNER_NOTIFICATION,
                 (payload) => {
                     this._onKassaPartnerUpdate(payload).catch((err) =>
                         console.error("[Kassa] Bus handler error:", err)
-                    );
-                }
-            );
-            this.env.services.bus_service.addChannel(KASSA_PRODUCT_CHANNEL);
-            this.env.services.bus_service.subscribe(
-                KASSA_PRODUCT_CHANNEL,
-                (payload) => {
-                    this._onKassaProductUpdate(payload).catch((err) =>
-                        console.error("[Kassa] Product bus handler error:", err)
                     );
                 }
             );
@@ -270,12 +259,14 @@ patch(PosStore.prototype, {
     },
 
     /**
-     * Triggered by a "kassa_partner_update" bus event from the integration
-     * service.  Fetches only the affected partner via a targeted RPC call and
-     * upserts it into the local in-memory partners list.
+     * Triggered by a KASSA_PARTNER_UPDATE bus notification from send_partner_bus_event.
+     * Fetches only the affected partner via a targeted RPC call, upserts it into
+     * the local in-memory partners list, then directly triggers session product
+     * auto-add if the updated partner is on the current order.
      *
-     * Non-blocking: uses async/await so ongoing POS transactions are never
-     * interrupted.
+     * Directly calling _kassaAddSessionProducts here avoids relying on the OWL
+     * effect re-firing, which is fragile when insert() creates a new reactive proxy
+     * or when effect() is registered outside a component setup context.
      */
     async _onKassaPartnerUpdate(payload) {
         const partnerId = payload && payload.partner_id;
@@ -290,73 +281,38 @@ patch(PosStore.prototype, {
             if (!partners || !partners.length) return;
 
             const updated = partners[0];
+            let posPartner;
             if (this.models?.["res.partner"]?.insert) {
-                this.models["res.partner"].insert(updated);
+                posPartner = this.models["res.partner"].insert(updated);
             } else {
                 const idx = this.partners.findIndex((p) => p.id === partnerId);
                 if (idx !== -1) {
                     Object.assign(this.partners[idx], updated);
+                    posPartner = this.partners[idx];
                 } else {
                     this.partners.push(updated);
+                    posPartner = updated;
                 }
             }
             this.kassaRegisterScannedPartner(partnerId);
             console.log("[Kassa] Partner updated from bus event:", partnerId);
+
+            // Directly trigger session product auto-add instead of relying on the
+            // OWL effect, which may not re-fire if insert() creates a new proxy.
+            if (this.config?.name === "Inschrijvingskassa") {
+                const order = this.selectedOrder;
+                const orderPartnerId =
+                    order?.partner_id?.id ?? order?.partner_id ??
+                    order?.get_partner?.()?.id;
+                if (order && orderPartnerId === partnerId && updated.x_session_title) {
+                    await this._kassaAddSessionProducts(order, posPartner || updated);
+                }
+            }
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
         }
     },
 
-    /**
-     * Triggered by a "kassa_product_update" bus event published by
-     * pos.session.kassa_notify_product_update after new session products are
-     * created or updated.  Fetches the affected products via RPC and upserts
-     * them into the reactive model so the product grid re-renders without a
-     * manual session reload.
-     */
-    async _onKassaProductUpdate(payload) {
-        const productIds = payload && payload.product_ids;
-        if (!productIds || !productIds.length) return;
-
-        try {
-            const products = await this.env.services.orm.read(
-                "product.product",
-                productIds,
-                [
-                    "id", "name", "display_name", "list_price", "standard_price",
-                    "type", "taxes_id", "barcode", "default_code",
-                    "pos_categ_ids", "categ_id", "available_in_pos",
-                    "description_sale", "x_session_id", "uom_id",
-                ]
-            );
-            for (const product of products || []) {
-                if (this.models?.["product.product"]?.insert) {
-                    this.models["product.product"].insert(product);
-                } else if (this.products) {
-                    const idx = this.products.findIndex((p) => p.id === product.id);
-                    if (idx !== -1) Object.assign(this.products[idx], product);
-                    else this.products.push(product);
-                }
-            }
-            console.log("[Kassa] Synced %d product(s) from kassa_product_update bus event", (products || []).length);
-        } catch (err) {
-            console.error("[Kassa] Error syncing products from bus event:", err);
-        }
-
-        // Re-trigger session auto-add: the OWL effect only fires when x_session_title
-        // or x_outstanding_amount changes, so it won't re-run just because new products
-        // arrived.  Explicitly retry here so products created after session open are
-        // picked up immediately.
-        if (this.config?.name === "Inschrijvingskassa") {
-            const order = this.selectedOrder;
-            const partner = order?.partner_id || (order?.get_partner?.() ?? null);
-            if (partner && partner.x_session_title) {
-                this._kassaAddSessionProducts(order, partner).catch(
-                    (err) => console.error("[Kassa] Session re-trigger after product sync error:", err)
-                );
-            }
-        }
-    },
 });
 
 // ── VatPromptDialog ───────────────────────────────────────────────────────────
@@ -667,6 +623,32 @@ patch(PartnerListScreen.prototype, {
             (scanned.has(p.id) ? scannedParties : otherParties).push(p);
         }
         return [...scannedParties, ...otherParties];
+    },
+
+    /**
+     * Called when the cashier confirms a partner selection from the customer tab.
+     * After delegating to super (which sets the partner on the current order and
+     * navigates back), directly trigger session product auto-add for the
+     * Inschrijvingskassa so the cashier doesn't need to scan a QR code.
+     *
+     * _kassaAddSessionProducts is idempotent — already-present lines are skipped
+     * — so duplicate calls from the OWL effect and this hook are safe.
+     */
+    async confirm(partner) {
+        await super.confirm(...arguments);
+        try {
+            if (
+                this.pos?.config?.name === "Inschrijvingskassa" &&
+                partner?.x_session_title
+            ) {
+                const order = this.pos.selectedOrder;
+                if (order) {
+                    await this.pos._kassaAddSessionProducts(order, partner);
+                }
+            }
+        } catch (err) {
+            console.error("[Kassa] Auto-add session products (customer tab) error:", err);
+        }
     },
 });
 
