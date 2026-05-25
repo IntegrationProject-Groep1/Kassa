@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
+import logging
+
 from odoo import fields, models, api
 from odoo.tools import float_compare
+
+_logger = logging.getLogger(__name__)
 
 
 class PosOrder(models.Model):
@@ -128,26 +132,33 @@ class PosOrder(models.Model):
         payment_status: str, name: str,
     ) -> bool:
         """
-        Publish a kassa_partner_update event on the Odoo long-polling bus.
+        Publish a KASSA_PARTNER_UPDATE notification to all open POS sessions.
 
-        Called by the external integration service (receiver.py and
-        order_poller.py) via XML-RPC.  In Odoo 17 the bus.bus._sendone
-        method is private and cannot be invoked from outside; this public
-        wrapper bridges that gap without any privilege escalation — it runs
-        under the same uid used for all other XML-RPC calls.
+        In Odoo 17, bus.bus._sendone() with a plain string channel requires the
+        client to subscribe via addChannel(), which Odoo 17's bus security model
+        silently rejects for non-whitelisted channels.  Using session._notify()
+        instead sends through the POS session's own authorized WebSocket channel
+        ('pos.session', session_id) that the browser is already subscribed to —
+        the same pattern used by kassa_notify_product_update() for products.
 
         Returns True so callers can distinguish success from an exception.
         """
-        # Odoo 17 _sendone signature: (target, notification_type, message)
-        # target is the channel name string for broadcast events.
-        self.env['bus.bus'].sudo()._sendone(
-            'kassa_partner_update',
-            'kassa_partner_update',
-            {
-                'partner_id': partner_id,
-                'x_outstanding_amount': outstanding_amount,
-                'x_payment_status': payment_status,
-                'name': name,
-            },
+        payload = {
+            'partner_id': partner_id,
+            'x_outstanding_amount': outstanding_amount,
+            'x_payment_status': payment_status,
+            'name': name,
+        }
+        open_sessions = (
+            self.env['pos.session']
+            .sudo()
+            .search([('state', 'in', ('opened', 'opening_control'))])
         )
+        for session in open_sessions:
+            try:
+                session._notify('KASSA_PARTNER_UPDATE', payload)
+            except Exception as exc:
+                _logger.warning(
+                    "[Kassa] Could not notify POS session %s: %s", session.name, exc
+                )
         return True

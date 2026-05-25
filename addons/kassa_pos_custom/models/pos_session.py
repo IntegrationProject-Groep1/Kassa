@@ -109,20 +109,4 @@ class PosSession(models.Model):
                             "[KASSA] Could not notify POS session %s: %s", session.name, exc
                         )
 
-        # Publish to the kassa_product_update bus channel so the POS JS handler
-        # can upsert updated products into the reactive model without a reload.
-        # This fires even when no open sessions are found, as long as we know
-        # which product ids changed (passed in by the caller).
-        unique_product_ids = list(dict.fromkeys(all_product_ids))
-        if unique_product_ids:
-            self.env['bus.bus'].sudo()._sendone(
-                'kassa_product_update',
-                'kassa_product_update',
-                {'product_ids': unique_product_ids},
-            )
-            _logger.info(
-                "[KASSA] kassa_product_update bus event sent for %d product(s): %s",
-                len(unique_product_ids), unique_product_ids,
-            )
-
         return notified

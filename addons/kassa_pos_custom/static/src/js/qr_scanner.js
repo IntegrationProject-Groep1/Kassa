@@ -308,6 +308,18 @@ export class QrScanButton extends Component {
                         console.warn("[Kassa] Could not auto-enable invoice for company partner:", err);
                     }
                 }
+
+                // Directly auto-add session products for Inschrijvingskassa.
+                // This is the primary trigger and does not rely on the OWL effect
+                // or bus events — it runs immediately after partner assignment.
+                if (
+                    this.pos.config?.name === "Inschrijvingskassa" &&
+                    partner.x_session_title
+                ) {
+                    this.pos._kassaAddSessionProducts(order, posPartner || partner).catch(
+                        (err) => console.error("[Kassa] Auto-add session products error:", err)
+                    );
+                }
             }
 
             this.state.open = false;
