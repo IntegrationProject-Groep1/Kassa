@@ -45,13 +45,14 @@
 
 
     <!--
-        Wallet strip on the product screen — injected at the top of ActionpadWidget
-        so it sits directly above the Customer / Payment buttons.
-        Renders as a single compact horizontal bar: wallet badge + outstanding badge
-        side by side, instead of the previous full-width vertical block.
+        Wallet strip on the product screen — injected directly above the
+        control-buttons row (Refund / Customer Note / Scan QR) inside
+        ActionpadWidget, so it sits between the Total and the action tabs.
+        Renders as a compact horizontal bar with wallet and outstanding badges
+        side by side.
     -->
-    <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
-        <xpath expr="//ActionpadWidget" position="before">
+    <t t-inherit="point_of_sale.ActionpadWidget" t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('control-buttons')]" position="before">
             <t t-set="kassaPartner" t-value="currentOrder.get_partner()"/>
             <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
             <t t-set="kassaLeaseActivating" t-value="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; !kassaPartner.x_lease_id"/>
