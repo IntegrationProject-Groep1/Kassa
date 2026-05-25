@@ -124,21 +124,20 @@ patch(PosStore.prototype, {
      * so the effect re-executes on every partner-selection change.
      */
     _watchKassaPartnerSelection() {
-        if (this.config?.name !== "Inschrijvingskassa") return;
         try {
             effect(() => {
+                // Check inside the effect so config is guaranteed loaded when it runs.
+                if (this.config?.name !== "Inschrijvingskassa") return;
+
                 const order = this.selectedOrder;
                 if (!order) return;
 
-                // partner_id on the OWL-reactive Order object is the partner record.
-                // Fallback to get_partner() for legacy Order models.
                 const partner =
                     order.partner_id ||
                     (order.get_partner ? order.get_partner() : null);
 
-                // Read x_session_title explicitly so OWL re-fires this effect
-                // when session titles arrive asynchronously via the bus event
-                // (user_sessions_response is resolved after the QR scan returns).
+                // Track x_session_title so OWL re-fires when sessions arrive
+                // asynchronously via bus events after the QR scan returns.
                 void partner?.x_session_title;
 
                 if (partner && partner.x_session_title) {
