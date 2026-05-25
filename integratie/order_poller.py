@@ -456,8 +456,7 @@ class OrderPoller:
                 config_name = self._get_pos_config_name(order.get('session_id'))
                 if config_name == 'Inschrijvingskassa' and customer_info:
                     is_registration = True
-                    all_sent, payment_msg_id = self._process_registration(order, customer_info)
-                    consumption_msg_id = None
+                    all_sent, payment_msg_id, consumption_msg_id = self._process_registration(order, customer_info)
                 else:
                     all_sent, consumption_msg_id, payment_msg_id, _invoice_status, _invoice_payment_method = (
                         self._process_consumption(order, customer_info, is_anonymous)
@@ -1211,12 +1210,14 @@ class OrderPoller:
         ok = ok_consumption and ok_payment and ok_wallet
         return ok, correlation_id, payment_msg_id, invoice_status, payment_method
 
-    def _process_registration(self, order: dict, customer_info: dict) -> tuple[bool, str | None]:
+    def _process_registration(self, order: dict, customer_info: dict) -> tuple[bool, str | None, str | None]:
         """Send registration payment messages for an Inschrijvingskassa order.
 
-        Emits two messages in order:
-          1. ``payment_registered`` (routing key ``kassa.payments.registration``) to CRM
-          2. ``payment_status`` (routing key ``kassa.frontend.payment``) to the POS frontend
+        Emits messages in order:
+          1. ``consumption_order`` (routing key ``kassa.payments.consumption``) so CRM
+             forwards it to facturatie with the correct customer type (private/company).
+          2. ``payment_registered`` (routing key ``kassa.payments.registration``) to CRM
+          3. ``payment_status`` (routing key ``kassa.frontend.payment``) to the POS frontend
 
         Then updates the partner record via ``_update_partner_registration_paid``.
 
@@ -1226,16 +1227,18 @@ class OrderPoller:
         self._last_consumption_has_topup = False
         self._last_consumption_topup_amount = 0.0
 
-        # Check for top-ups even in registration orders (Story 11)
+        items = []
         line_ids = [item[0] if isinstance(item, (list, tuple)) else item for item in (order.get('lines') or [])]
         if line_ids:
             try:
                 line_details = self.models.execute_kw(
                     self.odoo_db, self.odoo_uid, self.odoo_pass,
                     'pos.order.line', 'read',
-                    [line_ids, ['product_id', 'price_subtotal_incl']]
+                    [line_ids, ['id', 'product_id', 'qty', 'price_unit', 'tax_ids', 'price_subtotal_incl']]
                 )
                 product_ids = list(set([line['product_id'][0] for line in line_details]))
+                product_info_map = {}
+                all_cat_ids = set()
                 if product_ids:
                     products = self.models.execute_kw(
                         self.odoo_db, self.odoo_uid, self.odoo_pass,
@@ -1243,27 +1246,114 @@ class OrderPoller:
                         [product_ids, ['id', 'x_is_topup', 'pos_categ_ids']]
                     )
                     product_info_map = {p['id']: p for p in products}
-                    all_cat_ids = set()
                     for p in products:
                         all_cat_ids.update(p.get('pos_categ_ids', []))
-                    cat_map = {}
-                    if all_cat_ids:
-                        categories = self.models.execute_kw(
-                            self.odoo_db, self.odoo_uid, self.odoo_pass,
-                            'pos.category', 'read',
-                            [list(all_cat_ids), ['id', 'name']],
-                            {'context': {}}
-                        )
-                        cat_map = {c['id']: c['name'] for c in categories}
-                    for line in line_details:
-                        if self.is_topup_product(line['product_id'][0], product_info_map, cat_map=cat_map):
-                            self._last_consumption_has_topup = True
-                            self._last_consumption_topup_amount += float(line.get('price_subtotal_incl', 0.0))
+                cat_map = {}
+                if all_cat_ids:
+                    categories = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'pos.category', 'read',
+                        [list(all_cat_ids), ['id', 'name']],
+                        {'context': {}}
+                    )
+                    cat_map = {c['id']: c['name'] for c in categories}
+
+                all_tax_ids = list(set(
+                    [tid for line in line_details for tid in (line.get('tax_ids') or [])]
+                ))
+                tax_map = {}
+                if all_tax_ids:
+                    tax_details = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'account.tax', 'read',
+                        [all_tax_ids, ['id', 'amount']]
+                    )
+                    tax_map = {t['id']: t['amount'] for t in tax_details}
+
+                for line in line_details:
+                    is_topup = self.is_topup_product(line['product_id'][0], product_info_map, cat_map=cat_map)
+                    if is_topup:
+                        self._last_consumption_has_topup = True
+                        self._last_consumption_topup_amount += float(line.get('price_subtotal_incl', 0.0))
+
+                    vat_rate = 0
+                    amounts = [tax_map.get(t_id, 0) for t_id in (line.get('tax_ids') or [])]
+                    if amounts:
+                        vat_rate = int(max(amounts))
+                    if is_topup:
+                        vat_rate = 0
+
+                    total_incl = float(line.get('price_subtotal_incl', line['qty'] * line['price_unit']))
+                    unit_price_incl = (
+                        round(total_incl / line['qty'], 2) if line['qty'] != 0 else float(line['price_unit'])
+                    )
+                    items.append({
+                        'id': f"LINE-{line['id']}",
+                        'sku': str(line['product_id'][0]),
+                        'description': line['product_id'][1],
+                        'quantity': int(line['qty']),
+                        'unit_price': unit_price_incl,
+                        'total_amount': total_incl,
+                        'vat_rate': vat_rate,
+                        'currency': 'eur',
+                        'item_type': 'wallet_topup' if is_topup else None,
+                    })
             except Exception as e:
-                logger.warning(f"[POLLER] Could not check for top-ups in registration order {order['id']}: {e}")
+                logger.warning(f"[POLLER] Could not build items for registration order {order['id']}: {e}")
+
+        # Build customer fields (same logic as _process_consumption)
+        customer_type = customer_info.get('customer_type') or 'private'
+        street_full = customer_info.get('street') or "Onbekend"
+        street_name, house_number = split_street_and_number(street_full)
+        address = {
+            "street": street_name,
+            "number": house_number,
+            "postal_code": customer_info.get('zip') or "0000",
+            "city": customer_info.get('city') or "Onbekend",
+            "country": customer_info.get('country_code') or "be",
+        }
+        company_name_value = None
+        if customer_type == 'company':
+            if customer_info.get('is_company'):
+                company_name_value = customer_info.get('name')
+            elif customer_info.get('parent_id'):
+                try:
+                    pid = customer_info['parent_id']
+                    parent_id = pid[0] if isinstance(pid, (list, tuple)) else pid
+                    parent_record = self.models.execute_kw(
+                        self.odoo_db, self.odoo_uid, self.odoo_pass,
+                        'res.partner', 'read',
+                        [parent_id, ['name']]
+                    )
+                    if parent_record:
+                        company_name_value = parent_record[0].get('name')
+                except Exception as e:
+                    logger.warning(
+                        f"Could not fetch parent company name for contact {customer_info['id']}: {e}"
+                    )
+                    company_name_value = customer_info.get('name')
+            else:
+                company_name_value = customer_info.get('name')
 
         order_id = order['id']
         identity_uuid = customer_info.get('x_user_id')
+
+        # Send consumption_order first so CRM forwards it to facturatie before payment confirmation
+        consumption_xml = sender.build_consumption_order_xml(
+            items=items,
+            customer_id=str(customer_info['id']),
+            identity_uuid=identity_uuid or None,
+            customer_type=customer_type,
+            email=customer_info.get('email') or None,
+            address=address,
+            is_anonymous=False,
+            company_name=company_name_value,
+            vat_number=customer_info.get('vat') if customer_type == 'company' else None,
+        )
+        ok_consumption = sender.send_typed_message('consumption_order', consumption_xml, record_id=order_id)
+        if ok_consumption:
+            monitor.log("info", "payment", f"Published consumption_order for registration order_id={order_id}")
+        consumption_msg_id = self._extract_message_id(consumption_xml)
 
         due_date = (
             order.get('create_date', '').split(' ')[0]
@@ -1280,7 +1370,7 @@ class OrderPoller:
             payment_method='on_site',
             invoice_id=None,
             identity_uuid=identity_uuid,
-            correlation_id=None,
+            correlation_id=consumption_msg_id,
         )
         ok_payment = sender.send_typed_message(
             'payment_registered_registration', payment_xml, record_id=order_id
@@ -1299,7 +1389,7 @@ class OrderPoller:
 
         self._update_partner_registration_paid(customer_info['id'], customer_info.get('name', ''))
 
-        return (ok_payment and ok_status), payment_msg_id
+        return (ok_consumption and ok_payment and ok_status), payment_msg_id, consumption_msg_id
 
     def poll_badge_assignments(self):
         """

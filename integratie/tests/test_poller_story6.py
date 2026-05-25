@@ -81,26 +81,30 @@ def _make_customer_info(user_id: str = 'UUID-001') -> dict:
 
 @patch('order_poller.sender')
 def test_process_registration_sends_correct_message_types(mock_sender, poller):
-    """_process_registration emits payment_registered_registration then payment_status."""
+    """_process_registration emits consumption_order, payment_registered_registration, payment_status."""
     order = _make_registration_order()
     customer = _make_customer_info('UUID-REG-001')
 
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-1</message_id></header></message>'
+    )
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>pay-reg-1</message_id></header></message>'
     )
     mock_sender.build_payment_status_xml.return_value = (
         '<message><header><message_id>status-1</message_id></header></message>'
     )
-    mock_sender.send_typed_message.side_effect = [True, True]
+    mock_sender.send_typed_message.side_effect = [True, True, True]
     poller.models.execute_kw.return_value = True
 
-    all_sent, payment_msg_id = poller._process_registration(order, customer)
+    all_sent, payment_msg_id, consumption_msg_id = poller._process_registration(order, customer)
 
     assert all_sent is True
     assert payment_msg_id == 'pay-reg-1'
+    assert consumption_msg_id == 'cons-1'
 
     types_sent = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
-    assert types_sent == ['payment_registered_registration', 'payment_status']
+    assert types_sent == ['consumption_order', 'payment_registered_registration', 'payment_status']
 
 
 @patch('order_poller.sender')
@@ -109,6 +113,9 @@ def test_process_registration_payment_registered_fields(mock_sender, poller):
     order = _make_registration_order()
     customer = _make_customer_info('UUID-REG-002')
 
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-2</message_id></header></message>'
+    )
     mock_sender.build_payment_registered_xml.return_value = '<message/>'
     mock_sender.build_payment_status_xml.return_value = '<message/>'
     mock_sender.send_typed_message.return_value = True
@@ -125,7 +132,7 @@ def test_process_registration_payment_registered_fields(mock_sender, poller):
     assert kwargs['due_date'] == '2026-05-08'
     assert kwargs['invoice_id'] is None
     assert kwargs['identity_uuid'] == 'UUID-REG-002'
-    assert kwargs['correlation_id'] is None   # non-UUID order name must NOT be passed
+    assert kwargs['correlation_id'] == 'cons-2'  # correlated to the consumption_order message_id
 
 
 @patch('order_poller.sender')
@@ -172,14 +179,18 @@ def test_process_registration_returns_false_when_payment_fails(mock_sender, poll
     order = _make_registration_order()
     customer = _make_customer_info()
 
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-fail</message_id></header></message>'
+    )
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>pay-fail</message_id></header></message>'
     )
     mock_sender.build_payment_status_xml.return_value = '<message/>'
-    mock_sender.send_typed_message.side_effect = [False, True]
+    # consumption_order succeeds, payment_registered fails, payment_status succeeds
+    mock_sender.send_typed_message.side_effect = [True, False, True]
     poller.models.execute_kw.return_value = True
 
-    all_sent, payment_msg_id = poller._process_registration(order, customer)
+    all_sent, payment_msg_id, _ = poller._process_registration(order, customer)
 
     assert all_sent is False
     assert payment_msg_id == 'pay-fail'
@@ -191,14 +202,18 @@ def test_process_registration_returns_false_when_status_fails(mock_sender, polle
     order = _make_registration_order()
     customer = _make_customer_info()
 
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>cons-ok</message_id></header></message>'
+    )
     mock_sender.build_payment_registered_xml.return_value = (
         '<message><header><message_id>pay-ok</message_id></header></message>'
     )
     mock_sender.build_payment_status_xml.return_value = '<message/>'
-    mock_sender.send_typed_message.side_effect = [True, False]
+    # consumption_order succeeds, payment_registered succeeds, payment_status fails
+    mock_sender.send_typed_message.side_effect = [True, True, False]
     poller.models.execute_kw.return_value = True
 
-    all_sent, _ = poller._process_registration(order, customer)
+    all_sent, *_ = poller._process_registration(order, customer)
 
     assert all_sent is False
 
@@ -237,9 +252,9 @@ def test_process_order_routes_inschrijvingskassa_to_registration(mock_sender, po
         mock_consumption.assert_not_called()
 
     types_sent = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
+    assert 'consumption_order' in types_sent
     assert 'payment_registered_registration' in types_sent
     assert 'payment_status' in types_sent
-    assert 'consumption_order' not in types_sent
 
 
 @patch('order_poller.sender')
@@ -345,7 +360,8 @@ def test_process_order_does_not_set_rabbitmq_sent_when_status_fails(mock_sender,
         '<message><header><message_id>pay-88</message_id></header></message>'
     )
     mock_sender.build_payment_status_xml.return_value = '<message/>'
-    mock_sender.send_typed_message.side_effect = [True, False]  # status fails
+    # consumption_order succeeds, payment_registered succeeds, payment_status fails
+    mock_sender.send_typed_message.side_effect = [True, True, False]
 
     poller.process_order(order)
 
