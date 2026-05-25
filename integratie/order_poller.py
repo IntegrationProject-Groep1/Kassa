@@ -1089,7 +1089,8 @@ class OrderPoller:
                 company_name_value = customer_info.get('name')
             elif customer_info.get('parent_id'):
                 pid = customer_info['parent_id']
-                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 else customer_info.get('name')
+                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 \
+                    else customer_info.get('name')
             else:
                 company_name_value = customer_info.get('name')
 
@@ -1310,7 +1311,8 @@ class OrderPoller:
                 company_name_value = customer_info.get('name')
             elif customer_info.get('parent_id'):
                 pid = customer_info['parent_id']
-                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 else customer_info.get('name')
+                company_name_value = pid[1] if isinstance(pid, (list, tuple)) and len(pid) > 1 \
+                    else customer_info.get('name')
             else:
                 company_name_value = customer_info.get('name')
 
