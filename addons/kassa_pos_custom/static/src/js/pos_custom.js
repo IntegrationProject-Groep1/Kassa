@@ -99,6 +99,14 @@ patch(PosStore.prototype, {
                     );
                 }
             );
+            // Log SYNC_PRODUCT_UPDATED arrivals so we can confirm the server pushed them.
+            this.env.services.bus_service.subscribe(
+                "SYNC_PRODUCT_UPDATED",
+                (payload) => {
+                    const count = (payload?.["product.product"] || []).length;
+                    console.log("[Kassa] SYNC_PRODUCT_UPDATED ontvangen: %d product(en)", count);
+                }
+            );
             this.env.services.bus_service.start();
         } catch (err) {
             console.warn("[Kassa] Could not subscribe to bus_service:", err);
@@ -111,6 +119,11 @@ patch(PosStore.prototype, {
      * Idempotent — already-present lines are skipped on re-runs.
      */
     async _kassaAddSessionProducts(order, partner) {
+        console.log(
+            "[Kassa] _kassaAddSessionProducts — partner:", partner?.name,
+            "| x_session_title:", partner?.x_session_title,
+            "| x_outstanding_amount:", partner?.x_outstanding_amount
+        );
         const titles = _parseSessionTitles(partner.x_session_title);
         if (!titles.length) {
             console.warn(
@@ -146,35 +159,56 @@ patch(PosStore.prototype, {
      */
     async _kassaAddSessionProduct(order, sessionTitle, price) {
         // 1. Search the POS in-memory product catalog first (fast path).
-        const allProducts =
+        const _getAll = () =>
             this.models?.["product.product"]?.getAll?.() ||
             this.products ||
             [];
 
-        let product = allProducts.find(
+        let product = _getAll().find(
             (p) => p.name === sessionTitle || p.display_name === sessionTitle
         );
 
         // 2. Fallback: product created during this POS session — wait for
         // SYNC_PRODUCT_UPDATED (triggered by kassa_notify_product_update called
-        // from the QR scan controller) and retry once.
+        // from the QR scan controller) and retry up to 6x (3s total).
         if (!product) {
-            await new Promise((r) => setTimeout(r, 1000));
-            const refreshed =
-                this.models?.["product.product"]?.getAll?.() ||
-                this.products ||
-                [];
-            product = refreshed.find(
-                (p) => p.name === sessionTitle || p.display_name === sessionTitle
+            const all = _getAll();
+            console.log(
+                "[Kassa] DEBUG: product '%s' niet direct gevonden. Store heeft %d producten.",
+                sessionTitle, all.length
             );
-            if (product) {
-                console.log("[Kassa] Sessieproduct '%s' gevonden na SYNC_PRODUCT_UPDATED.", sessionTitle);
+            // Log first 15 product names to spot name mismatches.
+            const sample = all.slice(0, 15).map((p) => `"${p.name}"`);
+            console.log("[Kassa] DEBUG: Eerste producten in store:", sample.join(", "));
+            // Try case-insensitive partial match to spot whitespace / case issues.
+            const lower = sessionTitle.toLowerCase();
+            const partial = all.filter(
+                (p) => (p.name || "").toLowerCase().includes(lower)
+            );
+            if (partial.length) {
+                console.log(
+                    "[Kassa] DEBUG: Gedeeltelijke overeenkomst gevonden:",
+                    partial.map((p) => `"${p.name}"`).join(", ")
+                );
+            }
+
+            for (let attempt = 1; attempt <= 6 && !product; attempt++) {
+                await new Promise((r) => setTimeout(r, 500));
+                product = _getAll().find(
+                    (p) => p.name === sessionTitle || p.display_name === sessionTitle
+                );
+                if (product) {
+                    console.log(
+                        "[Kassa] Sessieproduct '%s' gevonden na poging %d.",
+                        sessionTitle, attempt
+                    );
+                }
             }
         }
 
         if (!product) {
             console.warn(
-                "[Kassa] Sessieproduct '%s' niet gevonden — kassier handelt manueel af.",
+                "[Kassa] Sessieproduct '%s' niet gevonden na 3s wachten — kassier handelt manueel af.",
                 sessionTitle
             );
             return;
@@ -582,7 +616,14 @@ patch(PartnerListScreen.prototype, {
      * _kassaAddSessionProducts is idempotent — already-present lines are skipped
      * — so duplicate calls from the OWL effect and this hook are safe.
      */
-    async confirm(partner) {
+    // Odoo 17: confirm() takes no arguments; partner is in this.state.selectedPartner.
+    async confirm() {
+        const partner = this.state?.selectedPartner;
+        console.log(
+            "[Kassa] PartnerListScreen.confirm() — partner:", partner?.name,
+            "| config:", this.pos?.config?.name,
+            "| session_title:", partner?.x_session_title
+        );
         await super.confirm(...arguments);
         try {
             if (
