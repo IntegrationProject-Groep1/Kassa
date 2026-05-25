@@ -789,8 +789,8 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         f"wallet_lease_grant processed | identity_uuid={identity_uuid} | balance={final_balance:.2f}"
     )
 
-    # When payment_due is absent (Planning was available and CRM didn't send a total),
-    # use the outstanding amount already stored on the partner (set by new_registration).
+    # When payment_due is absent (CRM's Amount__c = 0 because it doesn't track per-session
+    # fees), use the outstanding amount already accumulated by user_registered messages.
     # This ensures the bus event payload reflects the real DB state and the POS OWL
     # effect fires correctly on the refetch.
     effective_outstanding = (
@@ -1197,8 +1197,8 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
 
     Adds the session entry (with price) to the partner's x_session_title list and
     accumulates x_outstanding_amount. If the partner does not exist yet (race with
-    new_registration), logs a warning and does nothing — new_registration will
-    create the record with full profile data.
+    new_registration — this message travels 1 hop while new_registration travels 2),
+    raises ConnectionError so the retry queue re-delivers after 5 s.
     Binding: kassa.incoming ← kassa.exchange ← kassa.incoming.user_registered
     """
     body = root.find("body")
@@ -1235,11 +1235,13 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
     )
 
     if not existing:
-        logger.warning(
-            "[USER_REGISTERED] ⚠ Partner not found for identity_uuid=%s — "
-            "will be handled when new_registration arrives", identity_uuid,
+        # Raise ConnectionError so the retry queue picks this up (5 s TTL, max 3 attempts).
+        # user_registered can arrive before new_registration because it travels one fewer
+        # hop (Frontend → Kassa directly vs. Frontend → CRM → Kassa).
+        raise ConnectionError(
+            f"[USER_REGISTERED] Partner not found for identity_uuid={identity_uuid} — "
+            "new_registration may not have been processed yet; retrying"
         )
-        return
 
     partner_id = existing[0]["id"]
     sessions = _parse_session_list(existing[0].get("x_session_title") or "")
