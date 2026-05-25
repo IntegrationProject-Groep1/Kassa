@@ -647,7 +647,7 @@ patch(PartnerListScreen.prototype, {
 patch(PartnerLine.prototype, {
     /** True when this partner was recently scanned via QR or updated via bus. */
     get kassaIsRecentlyScanned() {
-        return this.env.pos._kassaScannedPartnerIds?.has(this.props.partner.id) ?? false;
+        return this.pos?._kassaScannedPartnerIds?.has(this.props.partner.id) ?? false;
     },
 
     /** True when the partner has an outstanding registration amount. */
