@@ -736,11 +736,13 @@ def test_process_order_topup_parked_when_lease_requested_not_granted(mock_sender
 
 @patch('order_poller.sender')
 def test_process_order_topup_parked_when_no_lease_at_all(mock_sender, poller):
-    """Edge case: top-up without any active lease (visitor never scanned QR).
+    """Pre-scan top-up: visitor buys top-up before scanning QR.
 
-    Top-up is parked in x_pending_topup_balance.
-    wallet_balance_update NOT sent.
-    consumption_order still goes to CRM for financial tracking.
+    CRM owns the wallet (Wallet_Status__c != 'Leased'), so payment_registered
+    credits Wallet_Balance__c directly in Salesforce. Kassa must NOT park in
+    x_pending_topup_balance — that would cause double-counting when
+    wallet_lease_grant arrives (current_balance already includes the top-up).
+    wallet_balance_update NOT sent. Order marked x_wallet_updated to prevent replay.
     """
     customer_info = {
         'id': 92,
@@ -771,8 +773,7 @@ def test_process_order_topup_parked_when_no_lease_at_all(mock_sender, poller):
         [{'id': 304, 'product_id': (71, 'Top-up EUR 10'),
           'qty': 1, 'price_unit': 10.0, 'tax_ids': [], 'price_subtotal_incl': 10.0}],
         [{'id': 71, 'x_is_topup': True, 'pos_categ_ids': []}],
-        True,   # res.partner write x_pending_topup_balance
-        True,   # pos.order write x_wallet_updated
+        True,   # pos.order write x_wallet_updated (no partner write — CRM owns balance)
         True,   # x_payment_message_id
         True,   # x_rabbitmq_sent
     ]
@@ -795,15 +796,14 @@ def test_process_order_topup_parked_when_no_lease_at_all(mock_sender, poller):
     ]
     assert len(wallet_calls) == 0
 
-    # Pending topup written
+    # x_pending_topup_balance must NOT be written — CRM credits Wallet_Balance__c
     pending_writes = [
         c for c in poller.models.execute_kw.call_args_list
         if len(c[0]) > 4 and c[0][4] == 'write'
         and c[0][3] == 'res.partner'
         and 'x_pending_topup_balance' in (c[0][5][1] if len(c[0][5]) > 1 else {})
     ]
-    assert len(pending_writes) == 1
-    assert pending_writes[0][0][5][1]['x_pending_topup_balance'] == 10.0
+    assert len(pending_writes) == 0
 
     # wallet_balance_update not sent
     sent_types = [c[0][0] for c in mock_sender.send_typed_message.call_args_list]
