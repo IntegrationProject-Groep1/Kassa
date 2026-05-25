@@ -1445,10 +1445,11 @@ class TestProcessUserRegistered:
         sessions = json.loads(vals["x_session_title"])
         assert len(sessions) == 1
 
-    def test_partner_not_found_logs_warning_no_write(self, odoo):
+    def test_partner_not_found_raises_for_retry(self, odoo):
         uid, models = odoo
         models.execute_kw.side_effect = [[]]  # not found
-        receiver.process_user_registered(self._root(), uid, models)
+        with pytest.raises(ConnectionError, match="new_registration may not have been processed yet"):
+            receiver.process_user_registered(self._root(), uid, models)
         assert models.execute_kw.call_count == 1  # only the search, no write
 
     def test_raises_without_identity_uuid(self, odoo):

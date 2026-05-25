@@ -73,6 +73,11 @@
                     <t t-if="!kassaSufficient">
                         <span class="d-block small fw-normal">Onvoldoende saldo</span>
                     </t>
+                    <t t-if="(kassaPartner.x_outstanding_amount || 0) > 0">
+                        <span class="d-block small fw-normal">
+                            Openstaand: €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
+                        </span>
+                    </t>
                 </div>
             </t>
         </xpath>
@@ -100,6 +105,11 @@
                     Wallet: €<t t-esc="(kassaBalance || 0).toFixed(2)"/>
                     <t t-if="!kassaSufficient">
                         <span class="d-block small fw-normal">Onvoldoende saldo</span>
+                    </t>
+                    <t t-if="(kassaPartner.x_outstanding_amount || 0) > 0">
+                        <span class="d-block small fw-normal">
+                            Openstaand: €<t t-esc="(kassaPartner.x_outstanding_amount || 0).toFixed(2)"/>
+                        </span>
                     </t>
                 </div>
             </t>

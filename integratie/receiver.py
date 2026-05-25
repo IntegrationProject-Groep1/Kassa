@@ -789,8 +789,8 @@ def process_wallet_lease_grant(root: Element, uid: int, models: OdooModelsProxy)
         f"wallet_lease_grant processed | identity_uuid={identity_uuid} | balance={final_balance:.2f}"
     )
 
-    # When payment_due is absent (Planning was available and CRM didn't send a total),
-    # use the outstanding amount already stored on the partner (set by new_registration).
+    # When payment_due is absent (CRM's Amount__c = 0 because it doesn't track per-session
+    # fees), use the outstanding amount already accumulated by user_registered messages.
     # This ensures the bus event payload reflects the real DB state and the POS OWL
     # effect fires correctly on the refetch.
     effective_outstanding = (
@@ -1197,8 +1197,8 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
 
     Adds the session entry (with price) to the partner's x_session_title list and
     accumulates x_outstanding_amount. If the partner does not exist yet (race with
-    new_registration), logs a warning and does nothing — new_registration will
-    create the record with full profile data.
+    new_registration — this message travels 1 hop while new_registration travels 2),
+    raises ConnectionError so the retry queue re-delivers after 5 s.
     Binding: kassa.incoming ← kassa.exchange ← kassa.incoming.user_registered
     """
     body = root.find("body")
@@ -1235,11 +1235,13 @@ def process_user_registered(root: Element, uid: int, models: OdooModelsProxy) ->
     )
 
     if not existing:
-        logger.warning(
-            "[USER_REGISTERED] ⚠ Partner not found for identity_uuid=%s — "
-            "will be handled when new_registration arrives", identity_uuid,
+        # Raise ConnectionError so the retry queue picks this up (5 s TTL, max 3 attempts).
+        # user_registered can arrive before new_registration because it travels one fewer
+        # hop (Frontend → Kassa directly vs. Frontend → CRM → Kassa).
+        raise ConnectionError(
+            f"[USER_REGISTERED] Partner not found for identity_uuid={identity_uuid} — "
+            "new_registration may not have been processed yet; retrying"
         )
-        return
 
     partner_id = existing[0]["id"]
     sessions = _parse_session_list(existing[0].get("x_session_title") or "")
@@ -1405,6 +1407,86 @@ def process_session_created(root: Element, uid: int, models: OdooModelsProxy) ->
         logger.warning("[SESSION_CREATED] Could not push bus notification: %s", exc)
 
 
+def _sync_partner_session_data(
+    uid: int, models: OdooModelsProxy,
+    session_id: str, new_title: str, new_price: Optional[float],
+) -> None:
+    """Propagate a session title/price change to every registered partner.
+
+    When a session_updated arrives, the POS product is updated by
+    _ensure_session_product.  This function updates each partner's
+    x_session_title JSON (new title and/or price per entry) and
+    recalculates x_outstanding_amount so the POS OWL effect re-fires
+    with the correct values and order line prices update in real time.
+    """
+    try:
+        partners: List[OdooRecord] = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_session_title", "ilike", session_id]]],
+            {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"]},
+        )
+    except Exception as exc:
+        logger.warning("[SESSION_UPDATED] Could not search partners for session %s: %s", session_id, exc)
+        return
+
+    for partner in partners:
+        raw = partner.get("x_session_title") or ""
+        try:
+            sessions = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(sessions, list):
+            continue
+
+        changed = False
+        for entry in sessions:
+            if not isinstance(entry, dict) or entry.get("session_id") != session_id:
+                continue
+            if new_title and entry.get("title") != new_title:
+                entry["title"] = new_title
+                changed = True
+            if new_price is not None and entry.get("price") != new_price:
+                entry["price"] = new_price
+                changed = True
+
+        if not changed:
+            continue
+
+        prices = [
+            e["price"] for e in sessions
+            if isinstance(e, dict) and e.get("price") is not None
+        ]
+        new_outstanding = (
+            round(sum(round(p * 100) for p in prices) / 100, 2)
+            if prices else float(partner.get("x_outstanding_amount") or 0.0)
+        )
+
+        try:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "res.partner", "write",
+                [[partner["id"]], {
+                    "x_session_title": json.dumps(sessions),
+                    "x_outstanding_amount": new_outstanding,
+                }],
+            )
+            _publish_partner_bus_event(
+                uid, models, partner["id"],
+                new_outstanding,
+                partner.get("x_payment_status") or "unpaid",
+                partner.get("name") or "Unknown",
+            )
+            logger.info(
+                "[SESSION_UPDATED] ✓ Partner %s updated for session %s (outstanding=%.2f)",
+                partner["id"], session_id, new_outstanding,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SESSION_UPDATED] Could not update partner %s: %s", partner["id"], exc,
+            )
+
+
 def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_updated from Frontend.
 
@@ -1436,6 +1518,8 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
         "info", "session",
         f"session_updated: POS product updated | session_id={session_id} | title={title}"
     )
+
+    _sync_partner_session_data(uid, models, session_id, title, price)
 
     try:
         notified = models.execute_kw(

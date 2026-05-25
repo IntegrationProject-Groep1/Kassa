@@ -124,22 +124,22 @@ patch(PosStore.prototype, {
      * so the effect re-executes on every partner-selection change.
      */
     _watchKassaPartnerSelection() {
-        if (this.config?.name !== "Inschrijvingskassa") return;
         try {
             effect(() => {
+                // Check inside the effect so config is guaranteed loaded when it runs.
+                if (this.config?.name !== "Inschrijvingskassa") return;
+
                 const order = this.selectedOrder;
                 if (!order) return;
 
-                // partner_id on the OWL-reactive Order object is the partner record.
-                // Fallback to get_partner() for legacy Order models.
                 const partner =
                     order.partner_id ||
                     (order.get_partner ? order.get_partner() : null);
 
-                // Read x_session_title explicitly so OWL re-fires this effect
-                // when session titles arrive asynchronously via the bus event
-                // (user_sessions_response is resolved after the QR scan returns).
+                // Track both fields so OWL re-fires when sessions arrive
+                // asynchronously OR when a session price changes.
                 void partner?.x_session_title;
+                void partner?.x_outstanding_amount;
 
                 if (partner && partner.x_session_title) {
                     this._kassaAddSessionProducts(order, partner).catch(
@@ -243,14 +243,27 @@ patch(PosStore.prototype, {
             return;
         }
 
-        // 3. Skip if already in the order.
+        // 3. If already in the order, update price if it changed; otherwise add.
         const lines =
             order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
-        const alreadyPresent = lines.some((l) => {
+        const existingLine = lines.find((l) => {
             const p = l.get_product ? l.get_product() : l.product;
             return p && p.id === product.id;
         });
-        if (alreadyPresent) return;
+        if (existingLine) {
+            const current = existingLine.get_unit_price
+                ? existingLine.get_unit_price()
+                : existingLine.price;
+            if (Math.round((current || 0) * 100) !== Math.round(price * 100)) {
+                if (existingLine.set_unit_price) {
+                    existingLine.set_unit_price(price);
+                } else {
+                    existingLine.price = price;
+                }
+                console.log("[Kassa] Updated price for '%s': €%s", sessionTitle, price.toFixed(2));
+            }
+            return;
+        }
 
         order.add_product(product, { price });
         console.log("[Kassa] Auto-added '%s' line: €%s", sessionTitle, price.toFixed(2));
