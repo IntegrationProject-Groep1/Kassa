@@ -328,6 +328,20 @@ patch(PosStore.prototype, {
         } catch (err) {
             console.error("[Kassa] Error syncing products from bus event:", err);
         }
+
+        // Re-trigger session auto-add: the OWL effect only fires when x_session_title
+        // or x_outstanding_amount changes, so it won't re-run just because new products
+        // arrived.  Explicitly retry here so products created after session open are
+        // picked up immediately.
+        if (this.config?.name === "Inschrijvingskassa") {
+            const order = this.selectedOrder;
+            const partner = order?.partner_id || (order?.get_partner?.() ?? null);
+            if (partner && (partner.x_outstanding_amount || 0) > 0 && partner.x_session_title) {
+                this._kassaAddSessionProducts(order, partner).catch(
+                    (err) => console.error("[Kassa] Session re-trigger after product sync error:", err)
+                );
+            }
+        }
     },
 });
 

@@ -444,6 +444,18 @@ class KassaQrController(http.Controller):
             "x_lease_transaction_count": 0,
         })
 
+        # Notify any open POS terminal so the "Wallet wordt geactiveerd..." indicator
+        # shows up immediately without waiting for a product/session bus event.
+        try:
+            env["pos.order"].send_partner_bus_event(
+                partner.id,
+                float(partner.x_outstanding_amount or 0.0),
+                partner.x_payment_status or "pending",
+                partner.name or "",
+            )
+        except Exception as exc:
+            _logger.warning("[Kassa QR] Could not publish post-lease bus event: %s", exc)
+
         status = "not_found_and_created" if created else "lease_requested"
         return {
             "status": status,

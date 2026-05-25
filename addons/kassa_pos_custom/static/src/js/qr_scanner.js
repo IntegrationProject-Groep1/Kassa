@@ -272,21 +272,25 @@ export class QrScanButton extends Component {
                 return;
             }
 
+            let posPartner = null;
             if (this.pos.models?.["res.partner"]?.insert) {
-                this.pos.models["res.partner"].insert(partner);
-            } else {
+                posPartner = this.pos.models["res.partner"].insert(partner);
+            } else if (this.pos.partners) {
                 const idx = this.pos.partners.findIndex((p) => p.id === partnerId);
                 if (idx !== -1) {
                     Object.assign(this.pos.partners[idx], partner);
+                    posPartner = this.pos.partners[idx];
                 } else {
                     this.pos.partners.push(partner);
+                    posPartner = partner;
                 }
+            } else {
+                posPartner = partner;
             }
             this.pos.kassaRegisterScannedPartner?.(partnerId);
 
             const order = this.pos.selectedOrder;
             if (order) {
-                const posPartner = this.pos.partners.find((p) => p.id === partnerId);
                 if (order.set_partner) {
                     order.set_partner(posPartner || partner);
                 } else {

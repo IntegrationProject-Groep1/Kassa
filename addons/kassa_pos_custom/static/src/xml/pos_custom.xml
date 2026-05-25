@@ -56,8 +56,16 @@
     -->
     <t t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('payment-buttons')]" position="inside">
-            <t t-set="kassaBalance" t-value="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0)"/>
-            <t t-if="kassaBalance > 0">
+            <t t-set="kassaPartner" t-value="currentOrder.get_partner()"/>
+            <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
+            <t t-set="kassaLeaseActivating" t-value="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; !kassaPartner.x_lease_id"/>
+            <t t-if="kassaLeaseActivating">
+                <div class="kassa-wallet-notification mt-1 p-2 rounded text-center fw-bold bg-warning-subtle text-warning-emphasis border border-warning">
+                    <i class="fa fa-spinner fa-spin me-1"/>
+                    Wallet wordt geactiveerd...
+                </div>
+            </t>
+            <t t-elif="kassaBalance > 0">
                 <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification mt-1 p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>
@@ -76,8 +84,16 @@
     -->
     <t t-inherit="point_of_sale.ProductScreen" t-inherit-mode="extension">
         <xpath expr="//ActionpadWidget" position="before">
-            <t t-set="kassaBalance" t-value="currentOrder.partner_id &amp;&amp; (currentOrder.partner_id.x_wallet_balance || 0)"/>
-            <t t-if="kassaBalance > 0">
+            <t t-set="kassaPartner" t-value="currentOrder.get_partner()"/>
+            <t t-set="kassaBalance" t-value="kassaPartner &amp;&amp; (kassaPartner.x_wallet_balance || 0)"/>
+            <t t-set="kassaLeaseActivating" t-value="kassaPartner &amp;&amp; kassaPartner.x_lease_active &amp;&amp; !kassaPartner.x_lease_id"/>
+            <t t-if="kassaLeaseActivating">
+                <div class="kassa-wallet-notification p-2 rounded text-center fw-bold bg-warning-subtle text-warning-emphasis border border-warning">
+                    <i class="fa fa-spinner fa-spin me-1"/>
+                    Wallet wordt geactiveerd...
+                </div>
+            </t>
+            <t t-elif="kassaBalance > 0">
                 <t t-set="kassaSufficient" t-value="Math.round(kassaBalance * 100) >= Math.round((currentOrder.get_due() || 0) * 100)"/>
                 <div t-att-class="'kassa-wallet-notification p-2 rounded text-center fw-bold ' + (kassaSufficient ? 'bg-success-subtle text-success-emphasis border border-success' : 'bg-danger-subtle text-danger-emphasis border border-danger')">
                     <i class="fa fa-credit-card me-1"/>
@@ -96,7 +112,7 @@
     -->
     <t t-inherit="point_of_sale.PaymentScreenMethods" t-inherit-mode="extension">
         <xpath expr="//div[hasclass('paymentmethod')]" position="attributes">
-            <attribute name="t-if">paymentMethod.name !== 'Badge Wallet' || (currentOrder.partner_id &amp;&amp; currentOrder.partner_id.x_lease_active &amp;&amp; currentOrder.partner_id.x_lease_id &amp;&amp; Math.round((currentOrder.partner_id.x_wallet_balance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100))</attribute>
+            <attribute name="t-if">paymentMethod.name !== 'Badge Wallet' || (currentOrder.get_partner() &amp;&amp; currentOrder.get_partner().x_lease_active &amp;&amp; currentOrder.get_partner().x_lease_id &amp;&amp; Math.round((currentOrder.get_partner().x_wallet_balance || 0) * 100) >= Math.round((currentOrder.get_due() || 0) * 100))</attribute>
         </xpath>
     </t>
 
