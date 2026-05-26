@@ -216,40 +216,21 @@ patch(PosStore.prototype, {
             }
         }
 
-        // Step 5: compute prices and add/update order lines.
-        // A session entry with price===0 (explicitly zero from Planning, not null) is
-        // treated the same as null — it means "no known price" so the distribution
-        // algorithm can share the outstanding amount across all unpriced sessions.
-        // Only a positive price from Planning counts as a "known" price.
-        const totalOutstanding = partner.x_outstanding_amount || 0;
-        const hasKnownPrice = (e) => e.price !== null && e.price > 0;
-        const sumKnownCents = entries.reduce(
-            (s, e) => s + (hasKnownPrice(e) ? Math.round(e.price * 100) : 0), 0
-        );
-        const nullCount = entries.filter((e) => !hasKnownPrice(e)).length;
-        const remainingCents = Math.max(0, Math.round(totalOutstanding * 100) - sumKnownCents);
-        const basePerNull = nullCount > 0 ? Math.floor(remainingCents / nullCount) : 0;
-        let leftoverCents = nullCount > 0 ? remainingCents - basePerNull * nullCount : 0;
-
+        // Step 5: add/update order lines using the product's catalogue price only.
+        // Session prices are set by Planning via session_created/session_updated (lst_price).
+        // Outstanding amount is never used to set order line prices.
         const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
 
         for (const entry of entries) {
             const product = _find(entry.title, entry.session_id);
             if (!product) continue;
 
-            let priceCents;
-            if (hasKnownPrice(entry)) {
-                priceCents = Math.round(entry.price * 100);
-            } else if (nullCount > 0 && totalOutstanding > 0) {
-                // Distribute remaining outstanding evenly across unpriced sessions.
-                priceCents = basePerNull + (leftoverCents > 0 ? 1 : 0);
-                if (leftoverCents > 0) leftoverCents--;
-            } else {
-                // No outstanding amount — fall back to the product's catalogue price.
-                const listPrice = product.lst_price ?? product.list_price ?? 0;
-                priceCents = Math.round(listPrice * 100);
+            // Clear stale taxes from the local POS store — session prices are tax-inclusive.
+            if (Array.isArray(product.taxes_id) && product.taxes_id.length) {
+                product.taxes_id = [];
             }
-            const price = priceCents / 100;
+
+            const price = product.lst_price ?? product.list_price ?? 0;
 
             const existingLine = lines.find((l) => {
                 const p = l.get_product ? l.get_product() : l.product;
