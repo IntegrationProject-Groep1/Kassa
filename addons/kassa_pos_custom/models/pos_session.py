@@ -65,6 +65,33 @@ class PosSession(models.Model):
             fields.append('x_session_id')
         return result
 
+    def kassa_notify_session_deleted(self, session_id):
+        """Notify all open POS sessions that a session was deleted.
+
+        Sends SYNC_SESSION_DELETED so the POS frontend can hide the product tile
+        and remove any open order lines for this session product.
+
+        Returns the number of POS sessions notified.
+        """
+        super_env = self.env(user=SUPERUSER_ID)
+        open_sessions = super_env['pos.session'].search(
+            [('state', 'in', ('opened', 'opening_control'))]
+        )
+        notified = 0
+        for session in open_sessions:
+            try:
+                session._notify('SYNC_SESSION_DELETED', {'session_id': session_id})
+                notified += 1
+                _logger.info(
+                    "[KASSA] Pushed SYNC_SESSION_DELETED to POS session %s (session_id=%s)",
+                    session.name, session_id,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "[KASSA] Could not notify POS session %s: %s", session.name, exc
+                )
+        return notified
+
     def kassa_notify_product_update(self, product_ids=None):
         """Push updated product catalogue to every open POS session via the bus.
 

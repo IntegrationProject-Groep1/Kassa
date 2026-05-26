@@ -1568,9 +1568,16 @@ def process_session_updated(root: Element, uid: int, models: OdooModelsProxy) ->
 def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) -> None:
     """Handle session_deleted from Frontend.
 
-    A session deletion has no user linked — the session itself is gone.
-    Kassa does NOT delete the POS product: visitors who already paid or are
-    mid-transaction may still need it. Log and ack.
+    When a session is deleted:
+    1. The POS product is marked available_in_pos=False so it disappears from
+       the product tiles.  It is NOT deleted — historical orders keep their lines.
+    2. Every partner enrolled in this session has the session entry removed from
+       x_session_title and x_outstanding_amount is decremented by the session price.
+    3. A KASSA_PARTNER_UPDATE bus event is sent per affected partner so the POS
+       partner list badges update live.
+    4. A SYNC_SESSION_DELETED bus event is sent to all open POS sessions so the
+       POS can remove any open order lines for this product and notify the cashier.
+
     Binding: kassa.incoming ← frontend.to.kassa.session.deleted
     """
     body = root.find("body")
@@ -1582,14 +1589,94 @@ def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) ->
         raise ValueError("session_deleted: session_id missing")
 
     reason = (body.findtext("reason") or "").strip()
-    logger.info(
-        "[SESSION_DELETED] Session id=%s removed from system%s — POS product kept.",
-        session_id, f" (reason: {reason})" if reason else "",
+
+    # 1. Mark the POS product unavailable (hidden from tiles; kept for historical orders)
+    existing = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASS,
+        "product.template", "search_read",
+        [[["x_session_id", "=", session_id], ["available_in_pos", "=", True]]],
+        {"fields": ["id", "name"], "limit": 1},
     )
+    if existing:
+        tmpl = existing[0]
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "product.template", "write",
+            [[tmpl["id"]], {"available_in_pos": False}],
+        )
+        logger.info(
+            "[SESSION_DELETED] ✓ POS product marked unavailable: '%s' (session_id=%s)",
+            tmpl.get("name", ""), session_id,
+        )
+    else:
+        logger.info("[SESSION_DELETED] No active POS product found for session_id=%s", session_id)
+
+    # 2. Remove this session from every enrolled partner and adjust outstanding
+    try:
+        partners: List[OdooRecord] = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "res.partner", "search_read",
+            [[["x_session_title", "ilike", session_id]]],
+            {"fields": ["id", "name", "x_session_title", "x_outstanding_amount", "x_payment_status"]},
+        )
+    except Exception as exc:
+        logger.warning("[SESSION_DELETED] Could not search partners for session %s: %s", session_id, exc)
+        partners = []
+
+    for partner in partners:
+        raw = partner.get("x_session_title") or ""
+        try:
+            sessions = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(sessions, list):
+            continue
+
+        removed = next((s for s in sessions if s.get("session_id") == session_id), None)
+        if not removed:
+            continue
+
+        sessions = [s for s in sessions if s.get("session_id") != session_id]
+        current_outstanding = float(partner.get("x_outstanding_amount") or 0.0)
+        removed_price_cents = round((removed.get("price") or 0.0) * 100)
+        new_outstanding = max(0.0, round(current_outstanding * 100 - removed_price_cents) / 100)
+
+        try:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                "res.partner", "write",
+                [[partner["id"]], {
+                    "x_session_title": json.dumps(sessions),
+                    "x_outstanding_amount": new_outstanding,
+                }],
+            )
+            _publish_partner_bus_event(
+                uid, models, partner["id"],
+                new_outstanding,
+                partner.get("x_payment_status") or "unpaid",
+                partner.get("name") or "Unknown",
+            )
+            logger.info(
+                "[SESSION_DELETED] ✓ Partner %s updated (session %s removed, outstanding=%.2f)",
+                partner["id"], session_id, new_outstanding,
+            )
+        except Exception as exc:
+            logger.warning("[SESSION_DELETED] Could not update partner %s: %s", partner["id"], exc)
+
+    # 3. Notify all open POS sessions — removes product tile + open order lines
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_session_deleted", [[session_id]],
+        )
+        logger.info("[SESSION_DELETED] Bus notification sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_DELETED] Could not push bus notification: %s", exc)
+
     reason_suffix = f" | reason={reason}" if reason else ""
     monitor.log(
         "info", "session",
-        f"session_deleted received | session_id={session_id} | POS product kept{reason_suffix}"
+        f"session_deleted processed | session_id={session_id}{reason_suffix}"
     )
 
 

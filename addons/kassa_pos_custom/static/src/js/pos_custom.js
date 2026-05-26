@@ -117,6 +117,16 @@ patch(PosStore.prototype, {
                     }
                 }
             );
+            // Remove deleted session product from tiles and open orders.
+            this.env.services.bus_service.subscribe(
+                "SYNC_SESSION_DELETED",
+                (payload) => {
+                    const session_id = payload?.session_id;
+                    if (!session_id) return;
+                    console.log("[Kassa] SYNC_SESSION_DELETED ontvangen:", session_id);
+                    this._onKassaSessionDeleted(session_id);
+                }
+            );
             this.env.services.bus_service.start();
         } catch (err) {
             console.warn("[Kassa] Could not subscribe to bus_service:", err);
@@ -154,8 +164,8 @@ patch(PosStore.prototype, {
                     entries = parsed
                         .map((e) =>
                             typeof e === "object" && e !== null
-                                ? { title: e.title || "", price: e.price ?? null }
-                                : { title: String(e), price: null }
+                                ? { title: e.title || "", price: e.price ?? null, session_id: e.session_id || null }
+                                : { title: String(e), price: null, session_id: null }
                         )
                         .filter((e) => e.title);
                 } else {
@@ -171,29 +181,36 @@ patch(PosStore.prototype, {
             return;
         }
 
-        const _find = (title) => {
-            // Search legacy PosDB first, fall back to Odoo 17 reactive model store.
+        const _find = (title, session_id = null) => {
+            // Merge legacy PosDB and Odoo 17 reactive model store (deduplicated by id).
             const byDb = Object.values(this.db?.product_by_id || {});
-            const byModel = byDb.length ? [] : (this.models?.["product.product"]?.getAll?.() || []);
-            const all = byDb.length ? byDb : byModel;
+            const byModel = this.models?.["product.product"]?.getAll?.() || [];
+            const dbIds = new Set(byDb.map((p) => p.id));
+            const all = [...byDb, ...byModel.filter((p) => !dbIds.has(p.id))];
+            // Primary: stable Planning session_id (survives title renames).
+            if (session_id) {
+                const bySessionId = all.find((p) => p.x_session_id === session_id);
+                if (bySessionId) return bySessionId;
+            }
+            // Fallback: exact name match.
             return all.find((p) => p.name === title || p.display_name === title);
         };
 
         // Step 2: determine which are missing upfront
-        let missingEntries = entries.filter((e) => !_find(e.title));
+        let missingEntries = entries.filter((e) => !_find(e.title, e.session_id));
 
         // Step 3: single shared wait for SYNC_PRODUCT_UPDATED (avoids N × timeout)
         if (missingEntries.length) {
             console.log("[Kassa] Wachten op SYNC_PRODUCT_UPDATED voor:", missingEntries.map((e) => e.title));
             await new Promise((r) => setTimeout(r, 1500));
-            missingEntries = missingEntries.filter((e) => !_find(e.title));
+            missingEntries = missingEntries.filter((e) => !_find(e.title, e.session_id));
         }
 
         // Step 4: synchronous server fallback — create + return product data
         if (missingEntries.length) {
             console.log("[Kassa] Direct laden vanuit Odoo:", missingEntries.map((e) => e.title));
             await this._kassaLoadMissingProducts(missingEntries);
-            const stillMissing = missingEntries.filter((e) => !_find(e.title));
+            const stillMissing = missingEntries.filter((e) => !_find(e.title, e.session_id));
             if (stillMissing.length) {
                 console.warn("[Kassa] Kon producten niet laden:", stillMissing.map((e) => e.title));
             }
@@ -217,7 +234,7 @@ patch(PosStore.prototype, {
         const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
 
         for (const entry of entries) {
-            const product = _find(entry.title);
+            const product = _find(entry.title, entry.session_id);
             if (!product) continue;
 
             let priceCents;
@@ -340,6 +357,62 @@ patch(PosStore.prototype, {
             }
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
+        }
+    },
+
+    /**
+     * Handle SYNC_SESSION_DELETED bus event.
+     *
+     * Removes the deleted session product from the reactive model store and the
+     * legacy PosDB so the product tile disappears immediately.  Also removes any
+     * open order lines for this product from the current order, then shows a
+     * warning notification to the cashier.
+     */
+    _onKassaSessionDeleted(session_id) {
+        try {
+            // Find the product by its stable Planning ID.
+            const byDb = Object.values(this.db?.product_by_id || {});
+            const byModel = this.models?.["product.product"]?.getAll?.() || [];
+            const product = [...byDb, ...byModel].find((p) => p.x_session_id === session_id);
+
+            if (product) {
+                // Remove from reactive model store (hides product tile in OWL UI).
+                try {
+                    if (this.models?.["product.product"]?.delete) {
+                        this.models["product.product"].delete(product);
+                    }
+                } catch { /* ignore — may not support delete */ }
+                // Remove from legacy PosDB.
+                if (this.db?.product_by_id?.[product.id]) {
+                    delete this.db.product_by_id[product.id];
+                }
+
+                // Remove order lines for this product from the current order.
+                const order = this.selectedOrder;
+                if (order) {
+                    const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
+                    const toRemove = lines.filter((l) => {
+                        const p = l.get_product ? l.get_product() : l.product;
+                        return p && p.id === product.id;
+                    });
+                    for (const line of toRemove) {
+                        if (order.remove_orderline) order.remove_orderline(line);
+                    }
+                    if (toRemove.length) {
+                        console.log("[Kassa] %d orderlijn(en) verwijderd voor sessie %s", toRemove.length, session_id);
+                    }
+                }
+            }
+
+            // Notify cashier — sticky so they don't miss it.
+            try {
+                this.env.services.notification.add(
+                    _t("Sessie verwijderd. Controleer de bestelling."),
+                    { type: "warning", sticky: true }
+                );
+            } catch { /* notification service may not be available */ }
+        } catch (err) {
+            console.error("[Kassa] _onKassaSessionDeleted fout:", err);
         }
     },
 

@@ -381,34 +381,192 @@ class TestProcessSessionUpdated:
 
 class TestProcessSessionDeleted:
     """
-    session_deleted only logs — no partner, no product changes.
-    The POS product is kept because visitors may still pay for it via QR scan.
+    session_deleted marks the POS product unavailable, removes the session from
+    enrolled partners (adjusting x_outstanding_amount), fires KASSA_PARTNER_UPDATE
+    bus events, and sends SYNC_SESSION_DELETED to all open POS sessions.
     """
 
     def _root(self, **kwargs):
         return _root_from_xml(_session_deleted_xml(**kwargs))
 
-    def test_makes_no_odoo_calls(self, odoo):
+    def _effects(self, product=None, partners=None):
+        """Build execute_kw side_effect list for the standard deletion flow.
+
+        Call order:
+          1. product.template search_read  (always)
+          2. product.template write        (only when product found)
+          3. res.partner search_read       (always)
+          4. For each partner:
+               a. res.partner write
+               b. pos.order send_partner_bus_event
+          5. pos.session kassa_notify_session_deleted  (always)
+        """
+        effects = []
+        effects.append([product] if product else [])       # product.template search_read
+        if product:
+            effects.append(True)                            # product.template write
+        effects.append(partners or [])                      # res.partner search_read
+        for _ in (partners or []):
+            effects.append(True)                            # res.partner write
+            effects.append(True)                            # pos.order send_partner_bus_event
+        effects.append(1)                                   # pos.session kassa_notify_session_deleted
+        return effects
+
+    def test_marks_product_unavailable_in_pos(self, odoo):
         uid, models = odoo
+        product = {"id": 10, "name": "Workshop Python"}
+        models.execute_kw.side_effect = self._effects(product=product, partners=[])
+
         receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
-        models.execute_kw.assert_not_called()
+
+        write_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template" and c[0][4] == "write"
+        ]
+        assert len(write_calls) == 1
+        assert write_calls[0][0][5][1] == {"available_in_pos": False}
 
     def test_does_not_delete_pos_product(self, odoo):
         uid, models = odoo
+        product = {"id": 10, "name": "Workshop Python"}
+        models.execute_kw.side_effect = self._effects(product=product, partners=[])
+
         receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
 
-        all_calls = models.execute_kw.call_args_list
-        product_calls = [c for c in all_calls if c[0][3] == "product.template"]
-        assert len(product_calls) == 0
+        unlink_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template" and c[0][4] == "unlink"
+        ]
+        assert len(unlink_calls) == 0
 
-    def test_handles_optional_reason(self, odoo):
+    def test_no_product_found_skips_product_write(self, odoo):
         uid, models = odoo
-        # Should not raise even with reason + deleted_by present
+        models.execute_kw.side_effect = self._effects(product=None, partners=[])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        write_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "product.template" and c[0][4] == "write"
+        ]
+        assert len(write_calls) == 0
+
+    def test_removes_session_from_enrolled_partner(self, odoo):
+        uid, models = odoo
+        import json as _json
+        sessions_json = _json.dumps([
+            {"session_id": "s1", "title": "Workshop", "price": 25.0},
+            {"session_id": "s2", "title": "Other", "price": 10.0},
+        ])
+        partner = {
+            "id": 42, "name": "Alice",
+            "x_session_title": sessions_json,
+            "x_outstanding_amount": 35.0,
+            "x_payment_status": "unpaid",
+        }
+        models.execute_kw.side_effect = self._effects(product=None, partners=[partner])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        partner_writes = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "res.partner" and c[0][4] == "write"
+        ]
+        assert len(partner_writes) == 1
+        written = partner_writes[0][0][5][1]
+        remaining = _json.loads(written["x_session_title"])
+        assert len(remaining) == 1
+        assert remaining[0]["session_id"] == "s2"
+        assert abs(written["x_outstanding_amount"] - 10.0) < 0.01
+
+    def test_adjusts_outstanding_by_deleted_session_price(self, odoo):
+        uid, models = odoo
+        import json as _json
+        sessions_json = _json.dumps([{"session_id": "s1", "title": "Workshop", "price": 30.0}])
+        partner = {
+            "id": 42, "name": "Alice",
+            "x_session_title": sessions_json,
+            "x_outstanding_amount": 50.0,
+            "x_payment_status": "unpaid",
+        }
+        models.execute_kw.side_effect = self._effects(product=None, partners=[partner])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        partner_writes = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "res.partner" and c[0][4] == "write"
+        ]
+        written = partner_writes[0][0][5][1]
+        assert abs(written["x_outstanding_amount"] - 20.0) < 0.01  # 50 - 30
+
+    def test_outstanding_never_goes_negative(self, odoo):
+        uid, models = odoo
+        import json as _json
+        sessions_json = _json.dumps([{"session_id": "s1", "title": "Workshop", "price": 100.0}])
+        partner = {
+            "id": 42, "name": "Alice",
+            "x_session_title": sessions_json,
+            "x_outstanding_amount": 20.0,  # less than session price
+            "x_payment_status": "unpaid",
+        }
+        models.execute_kw.side_effect = self._effects(product=None, partners=[partner])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        partner_writes = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "res.partner" and c[0][4] == "write"
+        ]
+        written = partner_writes[0][0][5][1]
+        assert written["x_outstanding_amount"] == 0.0
+
+    def test_fires_partner_bus_event_for_enrolled_partner(self, odoo):
+        uid, models = odoo
+        import json as _json
+        sessions_json = _json.dumps([{"session_id": "s1", "title": "Workshop", "price": 20.0}])
+        partner = {
+            "id": 42, "name": "Alice",
+            "x_session_title": sessions_json,
+            "x_outstanding_amount": 20.0,
+            "x_payment_status": "unpaid",
+        }
+        models.execute_kw.side_effect = self._effects(product=None, partners=[partner])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        bus_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "pos.order" and c[0][4] == "send_partner_bus_event"
+        ]
+        assert len(bus_calls) == 1
+
+    def test_fires_sync_session_deleted_bus_event(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = self._effects(product=None, partners=[])
+
+        receiver.process_session_deleted(self._root(session_id="s1"), uid, models)
+
+        session_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "pos.session"
+        ]
+        assert len(session_calls) == 1
+        assert session_calls[0][0][4] == "kassa_notify_session_deleted"
+
+    def test_handles_optional_reason_and_deleted_by(self, odoo):
+        uid, models = odoo
+        models.execute_kw.side_effect = self._effects(product=None, partners=[])
+
         receiver.process_session_deleted(
             self._root(session_id="s1", reason="Event cancelled", deleted_by="admin"),
             uid, models,
         )
-        models.execute_kw.assert_not_called()
+        session_calls = [
+            c for c in models.execute_kw.call_args_list
+            if c[0][3] == "pos.session"
+        ]
+        assert len(session_calls) == 1
 
     def test_raises_when_session_id_missing(self, odoo):
         uid, models = odoo
@@ -583,4 +741,5 @@ class TestProcessMessageSessionTypes:
 
         ch.basic_ack.assert_called_once_with(delivery_tag=42)
         ch.basic_nack.assert_not_called()
-        models.execute_kw.assert_not_called()
+        # process_session_deleted now makes Odoo calls (product + partner + bus notification)
+        assert models.execute_kw.called
