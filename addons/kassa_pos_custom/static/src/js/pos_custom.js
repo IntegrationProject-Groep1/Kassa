@@ -20,6 +20,7 @@
 
 import { patch } from "@web/core/utils/patch";
 import { PosStore } from "@point_of_sale/app/store/pos_store";
+import { ProductScreen } from "@point_of_sale/app/screens/product_screen/product_screen";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
 import { PartnerLine } from "@point_of_sale/app/screens/partner_list/partner_line/partner_line";
 import { PartnerListScreen } from "@point_of_sale/app/screens/partner_list/partner_list";
@@ -99,12 +100,21 @@ patch(PosStore.prototype, {
                     );
                 }
             );
-            // Log SYNC_PRODUCT_UPDATED arrivals so we can confirm the server pushed them.
+            // Load products from SYNC_PRODUCT_UPDATED into this.db so the 1.5s
+            // wait in _kassaAddSessionProducts can find them without a fallback RPC.
             this.env.services.bus_service.subscribe(
                 "SYNC_PRODUCT_UPDATED",
                 (payload) => {
-                    const count = (payload?.["product.product"] || []).length;
+                    const products = payload?.["product.product"];
+                    const count = Array.isArray(products) ? products.length : 0;
                     console.log("[Kassa] SYNC_PRODUCT_UPDATED ontvangen: %d product(en)", count);
+                    if (count && typeof this._loadProductProduct === "function") {
+                        try {
+                            this._loadProductProduct(products);
+                        } catch (err) {
+                            console.warn("[Kassa] SYNC_PRODUCT_UPDATED load error:", err);
+                        }
+                    }
                 }
             );
             this.env.services.bus_service.start();
@@ -162,7 +172,10 @@ patch(PosStore.prototype, {
         }
 
         const _find = (title) => {
-            const all = Object.values(this.db?.product_by_id || {});
+            // Search legacy PosDB first, fall back to Odoo 17 reactive model store.
+            const byDb = Object.values(this.db?.product_by_id || {});
+            const byModel = byDb.length ? [] : (this.models?.["product.product"]?.getAll?.() || []);
+            const all = byDb.length ? byDb : byModel;
             return all.find((p) => p.name === title || p.display_name === title);
         };
 
@@ -186,12 +199,17 @@ patch(PosStore.prototype, {
             }
         }
 
-        // Step 5: compute prices and add/update order lines
+        // Step 5: compute prices and add/update order lines.
+        // A session entry with price===0 (explicitly zero from Planning, not null) is
+        // treated the same as null — it means "no known price" so the distribution
+        // algorithm can share the outstanding amount across all unpriced sessions.
+        // Only a positive price from Planning counts as a "known" price.
         const totalOutstanding = partner.x_outstanding_amount || 0;
+        const hasKnownPrice = (e) => e.price !== null && e.price > 0;
         const sumKnownCents = entries.reduce(
-            (s, e) => s + (e.price !== null ? Math.round(e.price * 100) : 0), 0
+            (s, e) => s + (hasKnownPrice(e) ? Math.round(e.price * 100) : 0), 0
         );
-        const nullCount = entries.filter((e) => e.price === null).length;
+        const nullCount = entries.filter((e) => !hasKnownPrice(e)).length;
         const remainingCents = Math.max(0, Math.round(totalOutstanding * 100) - sumKnownCents);
         const basePerNull = nullCount > 0 ? Math.floor(remainingCents / nullCount) : 0;
         let leftoverCents = nullCount > 0 ? remainingCents - basePerNull * nullCount : 0;
@@ -203,11 +221,16 @@ patch(PosStore.prototype, {
             if (!product) continue;
 
             let priceCents;
-            if (entry.price !== null) {
+            if (hasKnownPrice(entry)) {
                 priceCents = Math.round(entry.price * 100);
-            } else {
+            } else if (nullCount > 0 && totalOutstanding > 0) {
+                // Distribute remaining outstanding evenly across unpriced sessions.
                 priceCents = basePerNull + (leftoverCents > 0 ? 1 : 0);
                 if (leftoverCents > 0) leftoverCents--;
+            } else {
+                // No outstanding amount — fall back to the product's catalogue price.
+                const listPrice = product.lst_price ?? product.list_price ?? 0;
+                priceCents = Math.round(listPrice * 100);
             }
             const price = priceCents / 100;
 
@@ -388,6 +411,143 @@ class VatPromptDialog extends Component {
         this.props.close();
     }
 }
+
+// ── WalkinEmailDialog ─────────────────────────────────────────────────────────
+
+/**
+ * Shown when a session product is tapped without a customer on the order.
+ * Collects an email address, calls /kassa/register_walkin to find-or-create the
+ * partner, then sets it on the order so the session sale is tracked correctly.
+ */
+class WalkinEmailDialog extends Component {
+    static template = "kassa_pos_custom.WalkinEmailDialog";
+    static components = { Dialog };
+    static props = {
+        productName: String,
+        onConfirm: Function,
+        onCancel: Function,
+        close: Function,
+    };
+
+    setup() {
+        this.state = useState({ email: "", error: "", loading: false });
+    }
+
+    _isValidEmail(val) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
+    }
+
+    async confirm() {
+        const email = this.state.email.trim().toLowerCase();
+        if (!this._isValidEmail(email)) {
+            this.state.error = _t("Ongeldig e-mailadres.");
+            return;
+        }
+        this.state.error = "";
+        this.state.loading = true;
+        try {
+            await this.props.onConfirm(email);
+            this.props.close();
+        } catch {
+            this.state.loading = false;
+            this.state.error = _t("Kon geen account aanmaken. Probeer opnieuw.");
+        }
+    }
+
+    cancel() {
+        this.props.onCancel();
+        this.props.close();
+    }
+}
+
+// ── ProductScreen patch ───────────────────────────────────────────────────────
+
+/**
+ * Intercept product additions to detect session products clicked without a
+ * customer.  Shows WalkinEmailDialog to collect an email, find-or-create the
+ * Odoo partner, and set it on the order before the product line is added.
+ */
+patch(ProductScreen.prototype, {
+    /**
+     * True when the product belongs to the "Sessions" POS category.
+     * Uses the Odoo 17 model registry; returns false gracefully on any error.
+     */
+    _kassaIsSessionProduct(product) {
+        try {
+            const ids = product?.pos_categ_ids;
+            if (!ids || !ids.length) return false;
+            const allCateg = this.pos.models?.["pos.category"]?.getAll?.() || [];
+            const sessionIds = new Set(
+                allCateg.filter((c) => c.name === "Sessions").map((c) => c.id)
+            );
+            return ids.some((id) => sessionIds.has(id));
+        } catch {
+            return false;
+        }
+    },
+
+    /**
+     * Open WalkinEmailDialog and wait for the cashier to enter an email.
+     * Resolves true if a partner was successfully created and set on the order,
+     * false if the cashier cancelled.
+     * _kassaRegisterWalkin throws on failure so the dialog can show the error.
+     */
+    async _kassaPromptWalkinEmail(product) {
+        return new Promise((resolve) => {
+            this.env.services.dialog.add(WalkinEmailDialog, {
+                productName: product.display_name || product.name,
+                onConfirm: async (email) => {
+                    const partner = await this._kassaRegisterWalkin(email);
+                    if (this.currentOrder?.set_partner) {
+                        this.currentOrder.set_partner(partner);
+                    } else if (this.currentOrder) {
+                        this.currentOrder.partner_id = partner;
+                    }
+                    this.pos.kassaRegisterScannedPartner?.(partner.id);
+                    resolve(true);
+                    // WalkinEmailDialog.confirm() calls this.props.close() after this returns
+                },
+                onCancel: () => resolve(false),
+            });
+        });
+    },
+
+    /**
+     * Call /kassa/register_walkin, load the full partner record, insert it into
+     * the POS store, and return the POS partner object.
+     * Throws so the dialog can display the error and stay open for retry.
+     */
+    async _kassaRegisterWalkin(email) {
+        const result = await this.env.services.rpc("/kassa/register_walkin", { email });
+        if (!result || result.status === "error") {
+            throw new Error(result?.message || "registration failed");
+        }
+        const [partner] = await this.env.services.orm.read(
+            "res.partner", [result.partner_id], KASSA_PARTNER_FIELDS
+        );
+        if (!partner) throw new Error("partner read failed");
+        if (this.pos.models?.["res.partner"]?.insert) {
+            return this.pos.models["res.partner"].insert(partner);
+        }
+        return partner;
+    },
+
+    /**
+     * Override the core product-add handler to intercept session products when
+     * no customer is on the order.  Cancelling the dialog aborts the add.
+     */
+    async addProductToOrder(product) {
+        if (this._kassaIsSessionProduct(product) && !this.currentOrder?.get_partner?.()) {
+            console.log("[Kassa] Sessieproduct zonder klant — e-maildialoog openen:", product.name);
+            const ok = await this._kassaPromptWalkinEmail(product);
+            if (!ok) {
+                console.log("[Kassa] Walk-in registratie geannuleerd.");
+                return;
+            }
+        }
+        return super.addProductToOrder(...arguments);
+    },
+});
 
 // ── PaymentScreen patch ───────────────────────────────────────────────────────
 
