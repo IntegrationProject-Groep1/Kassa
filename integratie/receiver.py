@@ -1905,7 +1905,8 @@ def start_listening():
                                     [_partner_vals],
                                 )
                                 logger.info(
-                                    "[USER_EVENTS] UserCreated: Odoo partner created for email=%s, Odoo ID=%s, master_uuid=%s",
+                                    "[USER_EVENTS] UserCreated: Odoo partner created for email=%s, "
+                                    "Odoo ID=%s, master_uuid=%s",
                                     email, _pid, master_uuid,
                                 )
                                 _publish_partner_bus_event(
@@ -1914,7 +1915,8 @@ def start_listening():
                                 )
                             else:
                                 logger.info(
-                                    "[USER_EVENTS] UserCreated: Odoo partner already exists for master_uuid=%s — skipped",
+                                    "[USER_EVENTS] UserCreated: Odoo partner already exists for "
+                                    "master_uuid=%s — skipped",
                                     master_uuid,
                                 )
                         elif event_type == "UserDeleted" and master_uuid:
