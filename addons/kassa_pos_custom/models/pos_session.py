@@ -65,6 +65,20 @@ class PosSession(models.Model):
             fields.append('x_session_id')
         return result
 
+    def _kassa_bus_notify(self, message_type, data):
+        """Send a bus notification to this POS session.
+
+        Uses pos.session._notify() when available (standard Odoo 17).
+        Falls back to bus.bus._sendone with the session's access-token channel
+        for Odoo builds where _notify is not present.
+        """
+        self.ensure_one()
+        try:
+            self._notify(message_type, data)
+        except AttributeError:
+            channel = f"pos_session-{self.id}-{self.access_token}"
+            self.env['bus.bus']._sendone(channel, message_type, data)
+
     def kassa_notify_session_deleted(self, session_id):
         """Notify all open POS sessions that a session was deleted.
 
@@ -80,7 +94,7 @@ class PosSession(models.Model):
         notified = 0
         for session in open_sessions:
             try:
-                session._notify('SYNC_SESSION_DELETED', {'session_id': session_id})
+                session._kassa_bus_notify('SYNC_SESSION_DELETED', {'session_id': session_id})
                 notified += 1
                 _logger.info(
                     "[KASSA] Pushed SYNC_SESSION_DELETED to POS session %s (session_id=%s)",
@@ -137,7 +151,7 @@ class PosSession(models.Model):
                 all_product_ids.extend(p['id'] for p in products)
                 for session in sessions_in_config:
                     try:
-                        session._notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
+                        session._kassa_bus_notify('SYNC_PRODUCT_UPDATED', {'product.product': products})
                         notified += 1
                         _logger.info(
                             "[KASSA] Pushed SYNC_PRODUCT_UPDATED to POS session %s (%d products)",
