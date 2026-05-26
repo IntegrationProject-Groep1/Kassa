@@ -337,9 +337,16 @@ class TestEnsureSessionProductEdgeCases:
 
     def test_skips_create_when_product_exists(self, odoo):
         uid, models = odoo
-        models.execute_kw.side_effect = [[{"id": 5, "list_price": 0.0}]]  # found, no price change
+        # found, no price change → write still fires to clear taxes_id
+        models.execute_kw.side_effect = [
+            [{"id": 5, "list_price": 0.0}],  # found
+            True,                             # write (taxes_id clear)
+        ]
         receiver._ensure_session_product(uid, models, "Existing Workshop")
-        assert models.execute_kw.call_count == 1
+        creates = [c for c in models.execute_kw.call_args_list if c[0][4] == "create"]
+        assert len(creates) == 0
+        writes = [c for c in models.execute_kw.call_args_list if c[0][4] == "write"]
+        assert len(writes) == 1
 
     def test_product_type_is_consu(self, odoo):
         uid, models = odoo
@@ -367,16 +374,20 @@ class TestEnsureSessionProductEdgeCases:
 
     def test_idempotent_second_call_does_nothing(self, odoo):
         uid, models = odoo
-        # First call: create; second call: already exists, no price change
+        # No session_id → x_session_id lookup is skipped.
+        # First call (3 ops): name search → not found, category → none, create.
+        # Second call (2 ops): name search → found, write to clear taxes_id.
         models.execute_kw.side_effect = [
-            [],                    # first: not found
-            [],                    # first: no category
-            44,                    # first: created
-            [{"id": 44, "list_price": 0.0}],  # second: found, same price
+            [],                               # first: name search → not found
+            [],                               # first: no category
+            44,                               # first: created
+            [{"id": 44, "list_price": 0.0}],  # second: name search → found
+            True,                             # second: write (taxes_id clear)
         ]
         receiver._ensure_session_product(uid, models, "Workshop X")
         receiver._ensure_session_product(uid, models, "Workshop X")
-        assert models.execute_kw.call_count == 4  # 3 for first call, 1 for second
+        creates = [c for c in models.execute_kw.call_args_list if c[0][4] == "create"]
+        assert len(creates) == 1  # only on first call
 
 
 # ── TestWalletLeaseGrantAmountDueUnit ─────────────────────────────────────────

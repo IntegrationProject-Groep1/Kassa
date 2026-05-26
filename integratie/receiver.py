@@ -239,15 +239,14 @@ def _ensure_session_product(
         # Backfill x_session_id on products created before this field existed
         if session_id and not existing[0].get("x_session_id"):
             write_vals["x_session_id"] = session_id
-        if write_vals:
-            models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS,
-                "product.template", "write",
-                [[product_id], write_vals],
-            )
-            logger.info("[SESSION_PRODUCT] ✓ Updated product id=%s: %s", product_id, write_vals)
-        else:
-            logger.debug("[SESSION_PRODUCT] Already up to date: '%s'", session_title)
+        # Always clear default taxes — session prices are inclusive, taxes must not be added on top.
+        write_vals["taxes_id"] = [(5, 0, 0)]
+        models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "product.template", "write",
+            [[product_id], write_vals],
+        )
+        logger.info("[SESSION_PRODUCT] ✓ Updated product id=%s: %s", product_id, write_vals)
         return product_id
 
     # Look up the Sessions POS category created by odoo_setup.
@@ -264,6 +263,7 @@ def _ensure_session_product(
         "type": "consu",
         "list_price": price if price is not None else 0.0,
         "available_in_pos": True,
+        "taxes_id": [(5, 0, 0)],  # no taxes — session prices are inclusive
     }
     if session_id:
         vals["x_session_id"] = session_id
@@ -1456,9 +1456,11 @@ def _sync_partner_session_data(
             continue
 
         changed = False
+        old_entry_price: Optional[float] = None
         for entry in sessions:
             if not isinstance(entry, dict) or entry.get("session_id") != session_id:
                 continue
+            old_entry_price = entry.get("price")
             if new_title and entry.get("title") != new_title:
                 entry["title"] = new_title
                 changed = True
@@ -1469,14 +1471,16 @@ def _sync_partner_session_data(
         if not changed:
             continue
 
-        prices = [
-            e["price"] for e in sessions
-            if isinstance(e, dict) and e.get("price") is not None
-        ]
-        new_outstanding = (
-            round(sum(round(p * 100) for p in prices) / 100, 2)
-            if prices else float(partner.get("x_outstanding_amount") or 0.0)
-        )
+        # Delta approach: adjust the stored outstanding by the price change for this
+        # specific session only. This preserves the contribution of null-price sessions
+        # to the total (recalculating from priced sessions alone would zero them out).
+        current_outstanding = float(partner.get("x_outstanding_amount") or 0.0)
+        if new_price is not None and old_entry_price != new_price:
+            old_cents = round((old_entry_price or 0.0) * 100)
+            new_cents = round(new_price * 100)
+            new_outstanding = max(0.0, round(current_outstanding * 100 - old_cents + new_cents) / 100)
+        else:
+            new_outstanding = current_outstanding
 
         try:
             models.execute_kw(

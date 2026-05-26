@@ -229,51 +229,74 @@ def _publish_lease_request(identity_uuid: str) -> None:
 def _ensure_session_products(env, sessions: List[Dict]) -> None:
     """Find or create POS-available session products and keep their price in sync.
 
-    sessions: list of {"title": str, "price": float|None}
+    sessions: list of {"title": str, "price": float|None, "session_id": str|None}
+
+    Uses x_session_id as the primary lookup key (mirrors receiver.py's
+    _ensure_session_product) so that session renames update the existing product
+    instead of creating a duplicate.  Falls back to name lookup when session_id
+    is absent (legacy / walk-in flows).
 
     - Creates products that don't exist yet.
-    - Updates list_price on existing products when Planning provides a new price,
-      so cashiers clicking the tile directly see the correct price.
+    - Updates list_price on existing products when Planning provides a new price.
+    - Always clears taxes_id so prices are inclusive (no tax added on top).
     - Idempotent — safe to call on every QR scan.
     """
     if not sessions:
         return
 
-    titles = [s["title"] for s in sessions if s.get("title")]
-    price_by_title: Dict[str, float | None] = {
-        s["title"]: s.get("price") for s in sessions if s.get("title")
-    }
+    categ = None  # loaded lazily if needed
 
-    if not titles:
-        return
+    for s in sessions:
+        title = (s.get("title") or "").strip()
+        if not title:
+            continue
+        price = s.get("price")
+        session_id = (s.get("session_id") or "").strip()
 
-    existing = env["product.template"].sudo().search([
-        ("name", "in", titles),
-        ("available_in_pos", "=", True),
-    ])
-    existing_by_name = {tmpl.name: tmpl for tmpl in existing}
+        # 1. Primary lookup by x_session_id (survives title renames).
+        tmpl = None
+        if session_id:
+            found = env["product.template"].sudo().search(
+                [("x_session_id", "=", session_id), ("available_in_pos", "=", True)],
+                limit=1,
+            )
+            if found:
+                tmpl = found
 
-    # Sync price on existing products when Planning provided a value.
-    for title, price in price_by_title.items():
-        if title in existing_by_name and price is not None:
-            tmpl = existing_by_name[title]
-            if round(float(tmpl.list_price or 0), 2) != round(float(price), 2):
-                tmpl.write({"list_price": float(price)})
+        # 2. Fallback to name lookup.
+        if not tmpl:
+            found = env["product.template"].sudo().search(
+                [("name", "=", title), ("available_in_pos", "=", True)],
+                limit=1,
+            )
+            if found:
+                tmpl = found
+
+        if tmpl:
+            write_vals: Dict = {"taxes_id": [(5, 0, 0)]}  # always clear taxes
+            if session_id and not tmpl.x_session_id:
+                write_vals["x_session_id"] = session_id   # backfill
+            if tmpl.name != title:
+                write_vals["name"] = title                 # apply rename
+                _logger.info("[Kassa QR] Sessie hernoemd '%s' → '%s'", tmpl.name, title)
+            if price is not None and round(float(tmpl.list_price or 0), 2) != round(float(price), 2):
+                write_vals["list_price"] = float(price)
                 _logger.info("[Kassa QR] Prijs bijgewerkt '%s': %.2f", title, price)
+            tmpl.write(write_vals)
+            continue
 
-    titles_to_create = [t for t in titles if t not in existing_by_name]
-    if not titles_to_create:
-        return
-
-    categ = env["pos.category"].sudo().search([("name", "=", "Sessions")], limit=1)
-    for title in titles_to_create:
-        price = price_by_title.get(title)
+        # 3. Create new product.
+        if categ is None:
+            categ = env["pos.category"].sudo().search([("name", "=", "Sessions")], limit=1)
         vals: Dict = {
             "name": title,
             "type": "consu",
             "list_price": float(price) if price is not None else 0.0,
             "available_in_pos": True,
+            "taxes_id": [(5, 0, 0)],  # no taxes — session prices are inclusive
         }
+        if session_id:
+            vals["x_session_id"] = session_id
         if categ:
             vals["pos_categ_ids"] = [(6, 0, [categ.id])]
         env["product.template"].sudo().create(vals)
@@ -483,12 +506,14 @@ class KassaQrController(http.Controller):
                 for s in sessions
             ])
 
-            # Compute total outstanding from session prices when Planning provides them.
-            # Uses cent-based math to avoid floating-point drift across multiple sessions.
+            # Only overwrite x_outstanding_amount when ALL sessions have prices from
+            # Planning. If any price is null, Planning doesn't know the full total,
+            # so we preserve the authoritative amount set by CRM via new_registration.
             prices = [s["price"] for s in sessions if s.get("price") is not None]
+            all_priced = len(prices) == len(sessions) and len(sessions) > 0
             total_from_planning = (
                 round(sum(round(p * 100) for p in prices) / 100, 2)
-                if prices else None
+                if all_priced else None
             )
 
             write_vals: Dict = {}

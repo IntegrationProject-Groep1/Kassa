@@ -326,11 +326,15 @@ class TestEnsureSessionProduct:
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 7, "list_price": 0.0}],  # search_read product.template → found, same price
+            True,                             # write to clear taxes_id (always executed)
         ]
         receiver._ensure_session_product(uid, models, "Workshop: IoT met Python")
 
-        # Only one XML-RPC call (the search); no create, no price write
-        assert models.execute_kw.call_count == 1
+        creates = [c for c in models.execute_kw.call_args_list if c[0][4] == "create"]
+        assert len(creates) == 0
+        writes = [c for c in models.execute_kw.call_args_list if c[0][4] == "write"]
+        assert len(writes) == 1
+        assert (5, 0, 0) in writes[0][0][5][1].get("taxes_id", [])
 
     def test_creates_product_with_price(self, odoo):
         uid, models = odoo
@@ -360,10 +364,16 @@ class TestEnsureSessionProduct:
         uid, models = odoo
         models.execute_kw.side_effect = [
             [{"id": 7, "list_price": 25.0}],  # found, same price
+            True,                             # write (taxes_id clear, always runs)
         ]
         receiver._ensure_session_product(uid, models, "Keynote", price=25.0)
 
-        assert models.execute_kw.call_count == 1
+        creates = [c for c in models.execute_kw.call_args_list if c[0][4] == "create"]
+        assert len(creates) == 0
+        writes = [c for c in models.execute_kw.call_args_list if c[0][4] == "write"]
+        assert len(writes) == 1
+        # list_price must NOT be in write_vals (no price change)
+        assert "list_price" not in writes[0][0][5][1]
 
     def test_new_registration_with_session_title_calls_ensure_product(self, odoo):
         uid, models = odoo
@@ -517,13 +527,14 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         root = self._make_root(self._session_xml())
         models.execute_kw.side_effect = [
-            # found by x_session_id with all fields in sync → no write
+            # found by x_session_id — write fires to clear taxes_id
             [{"id": 7, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
-            1,  # notify
+            True,  # write (taxes_id clear)
+            1,     # notify
         ]
         receiver.process_user_sessions_response(root, uid, models)
 
-        notify_call = models.execute_kw.call_args_list[1]
+        notify_call = models.execute_kw.call_args_list[2]
         assert notify_call[0][3] == "pos.session"
         assert notify_call[0][4] == "kassa_notify_product_update"
 
@@ -531,12 +542,13 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         root = self._make_root(self._session_xml())
         models.execute_kw.side_effect = [
-            # found by x_session_id with all fields in sync → no write
+            # found by x_session_id — write fires to clear taxes_id
             [{"id": 7, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
-            Exception("Odoo unavailable"),  # notify fails
+            True,                          # write (taxes_id clear)
+            Exception("Odoo unavailable"),  # notify fails — must not raise
         ]
         receiver.process_user_sessions_response(root, uid, models)  # must not raise
-        assert models.execute_kw.call_count == 2
+        assert models.execute_kw.call_count == 3
 
     def test_multiple_sessions_each_ensured_then_single_notify(self, odoo):
         """Two sessions → two _ensure_session_product calls → one kassa_notify_product_update."""
@@ -578,13 +590,14 @@ class TestProcessUserSessionsResponse:
         uid, models = odoo
         custom_corr = "660e8400-e29b-41d4-a716-446655440099"
         root = self._make_root(self._session_xml(), correlation_id=custom_corr)
-        # found by x_session_id with all fields in sync → no write
+        # found by x_session_id — write fires to clear taxes_id, then notify
         models.execute_kw.side_effect = [
             [{"id": 3, "name": "Workshop A", "list_price": 20.0, "x_session_id": "sess-001"}],
-            1,
+            True,  # write (taxes_id clear)
+            1,     # notify
         ]
         receiver.process_user_sessions_response(root, uid, models)
-        assert models.execute_kw.call_count == 2
+        assert models.execute_kw.call_count == 3
 
 
 # ── process_profile_update ─────────────────────────────────────────────────────

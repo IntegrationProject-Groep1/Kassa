@@ -100,12 +100,21 @@ patch(PosStore.prototype, {
                     );
                 }
             );
-            // Log SYNC_PRODUCT_UPDATED arrivals so we can confirm the server pushed them.
+            // Load products from SYNC_PRODUCT_UPDATED into this.db so the 1.5s
+            // wait in _kassaAddSessionProducts can find them without a fallback RPC.
             this.env.services.bus_service.subscribe(
                 "SYNC_PRODUCT_UPDATED",
                 (payload) => {
-                    const count = (payload?.["product.product"] || []).length;
+                    const products = payload?.["product.product"];
+                    const count = Array.isArray(products) ? products.length : 0;
                     console.log("[Kassa] SYNC_PRODUCT_UPDATED ontvangen: %d product(en)", count);
+                    if (count && typeof this._loadProductProduct === "function") {
+                        try {
+                            this._loadProductProduct(products);
+                        } catch (err) {
+                            console.warn("[Kassa] SYNC_PRODUCT_UPDATED load error:", err);
+                        }
+                    }
                 }
             );
             this.env.services.bus_service.start();
@@ -163,7 +172,10 @@ patch(PosStore.prototype, {
         }
 
         const _find = (title) => {
-            const all = Object.values(this.db?.product_by_id || {});
+            // Search legacy PosDB first, fall back to Odoo 17 reactive model store.
+            const byDb = Object.values(this.db?.product_by_id || {});
+            const byModel = byDb.length ? [] : (this.models?.["product.product"]?.getAll?.() || []);
+            const all = byDb.length ? byDb : byModel;
             return all.find((p) => p.name === title || p.display_name === title);
         };
 
@@ -187,12 +199,17 @@ patch(PosStore.prototype, {
             }
         }
 
-        // Step 5: compute prices and add/update order lines
+        // Step 5: compute prices and add/update order lines.
+        // A session entry with price===0 (explicitly zero from Planning, not null) is
+        // treated the same as null — it means "no known price" so the distribution
+        // algorithm can share the outstanding amount across all unpriced sessions.
+        // Only a positive price from Planning counts as a "known" price.
         const totalOutstanding = partner.x_outstanding_amount || 0;
+        const hasKnownPrice = (e) => e.price !== null && e.price > 0;
         const sumKnownCents = entries.reduce(
-            (s, e) => s + (e.price !== null ? Math.round(e.price * 100) : 0), 0
+            (s, e) => s + (hasKnownPrice(e) ? Math.round(e.price * 100) : 0), 0
         );
-        const nullCount = entries.filter((e) => e.price === null).length;
+        const nullCount = entries.filter((e) => !hasKnownPrice(e)).length;
         const remainingCents = Math.max(0, Math.round(totalOutstanding * 100) - sumKnownCents);
         const basePerNull = nullCount > 0 ? Math.floor(remainingCents / nullCount) : 0;
         let leftoverCents = nullCount > 0 ? remainingCents - basePerNull * nullCount : 0;
@@ -204,11 +221,16 @@ patch(PosStore.prototype, {
             if (!product) continue;
 
             let priceCents;
-            if (entry.price !== null) {
+            if (hasKnownPrice(entry)) {
                 priceCents = Math.round(entry.price * 100);
-            } else {
+            } else if (nullCount > 0 && totalOutstanding > 0) {
+                // Distribute remaining outstanding evenly across unpriced sessions.
                 priceCents = basePerNull + (leftoverCents > 0 ? 1 : 0);
                 if (leftoverCents > 0) leftoverCents--;
+            } else {
+                // No outstanding amount — fall back to the product's catalogue price.
+                const listPrice = product.lst_price ?? product.list_price ?? 0;
+                priceCents = Math.round(listPrice * 100);
             }
             const price = priceCents / 100;
 

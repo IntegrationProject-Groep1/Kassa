@@ -256,15 +256,20 @@ class TestProcessSessionCreated:
 
     def test_skips_create_when_product_already_exists(self, odoo):
         uid, models = odoo
-        # found by x_session_id with all fields in sync → no write, no create
+        # found by x_session_id — no create; write still fires to clear taxes_id
         models.execute_kw.side_effect = [
             [{"id": 7, "name": "Workshop Python", "list_price": 25.0, "x_session_id": "sess-0001"}],
+            True,   # product.template write (taxes_id clear)
         ]
         receiver.process_session_created(self._root(price=25.0), uid, models)
 
         all_calls = models.execute_kw.call_args_list
         creates = [c for c in all_calls if c[0][4] == "create"]
         assert len(creates) == 0
+        # Verify taxes were cleared
+        writes = [c for c in all_calls if c[0][4] == "write" and c[0][3] == "product.template"]
+        assert len(writes) == 1
+        assert (5, 0, 0) in writes[0][0][5][1].get("taxes_id", [])
 
     def test_updates_product_price_when_different(self, odoo):
         uid, models = odoo
