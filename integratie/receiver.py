@@ -1880,7 +1880,44 @@ def start_listening():
                         _root = _ET.fromstring(txt)
                         event_type = (_root.findtext("event") or "").strip()
                         master_uuid = (_root.findtext("master_uuid") or "").strip()
-                        if event_type == "UserDeleted" and master_uuid:
+                        email = (_root.findtext("email") or "").strip()
+                        if event_type == "UserCreated" and master_uuid:
+                            _uid2, _models2 = get_odoo_connection()
+                            _existing = _models2.execute_kw(
+                                ODOO_DB, _uid2, ODOO_PASS,
+                                "res.partner", "search_read",
+                                [[[["x_user_id", "=", master_uuid]]]],
+                                {"fields": ["id", "name"], "limit": 1},
+                            )
+                            if not _existing:
+                                _name = email.split("@")[0].replace(".", " ").title() if email else "New User"
+                                _partner_vals = {
+                                    "name": _name,
+                                    "email": email,
+                                    "x_user_id": master_uuid,
+                                    "customer_rank": 1,
+                                    "x_payment_status": "unpaid",
+                                    "x_outstanding_amount": 0.0,
+                                }
+                                _pid = _models2.execute_kw(
+                                    ODOO_DB, _uid2, ODOO_PASS,
+                                    "res.partner", "create",
+                                    [_partner_vals],
+                                )
+                                logger.info(
+                                    "[USER_EVENTS] UserCreated: Odoo partner created for email=%s, Odoo ID=%s, master_uuid=%s",
+                                    email, _pid, master_uuid,
+                                )
+                                _publish_partner_bus_event(
+                                    _uid2, _models2, _pid,
+                                    0.0, "unpaid", _name,
+                                )
+                            else:
+                                logger.info(
+                                    "[USER_EVENTS] UserCreated: Odoo partner already exists for master_uuid=%s — skipped",
+                                    master_uuid,
+                                )
+                        elif event_type == "UserDeleted" and master_uuid:
                             _uid2, _models2 = get_odoo_connection()
                             _existing = _models2.execute_kw(
                                 ODOO_DB, _uid2, ODOO_PASS,
