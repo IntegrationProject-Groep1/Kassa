@@ -469,18 +469,32 @@ class WalkinEmailDialog extends Component {
  */
 patch(ProductScreen.prototype, {
     /**
-     * True when the product belongs to the "Sessions" POS category.
-     * Uses the Odoo 17 model registry; returns false gracefully on any error.
+     * True when the product is a Planning session product.
+     *
+     * Primary check: x_session_id (loaded via _loader_params_product_product
+     * override — set by receiver.py and controllers/main.py on every session product).
+     * Fallback: pos_categ_ids membership in the "Sessions" POS category.
+     * The fallback normalises entries as both raw IDs (integers) and objects
+     * with an .id property are valid in Odoo 17's reactive model store.
      */
     _kassaIsSessionProduct(product) {
         try {
-            const ids = product?.pos_categ_ids;
-            if (!ids || !ids.length) return false;
+            // Primary: stable Planning ID — most reliable, no category dependency.
+            if (product?.x_session_id) return true;
+
+            // Fallback: POS category membership (handles products without x_session_id).
+            const rawIds = product?.pos_categ_ids;
+            if (!rawIds || !rawIds.length) return false;
             const allCateg = this.pos.models?.["pos.category"]?.getAll?.() || [];
             const sessionIds = new Set(
                 allCateg.filter((c) => c.name === "Sessions").map((c) => c.id)
             );
-            return ids.some((id) => sessionIds.has(id));
+            if (!sessionIds.size) return false;
+            // Normalize: Odoo 17 may store many2many as raw ints or as objects.
+            return rawIds.some((entry) => {
+                const id = typeof entry === "object" && entry !== null ? entry.id : entry;
+                return sessionIds.has(id);
+            });
         } catch {
             return false;
         }
@@ -504,6 +518,12 @@ patch(ProductScreen.prototype, {
                         this.currentOrder.partner_id = partner;
                     }
                     this.pos.kassaRegisterScannedPartner?.(partner.id);
+                    // Auto-add existing sessions for returning visitors.
+                    if (partner.x_session_title) {
+                        this.pos._kassaAddSessionProducts(this.currentOrder, partner).catch((e) =>
+                            console.warn("[Kassa] Walk-in _kassaAddSessionProducts:", e)
+                        );
+                    }
                     resolve(true);
                     // WalkinEmailDialog.confirm() calls this.props.close() after this returns
                 },

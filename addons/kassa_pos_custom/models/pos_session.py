@@ -51,6 +51,20 @@ class PosSession(models.Model):
         ])
         return result
 
+    def _loader_params_product_product(self):
+        """Add x_session_id to product data sent to the POS frontend.
+
+        x_session_id is the stable Planning identifier on session products.
+        The POS JS uses it as the primary key in _kassaIsSessionProduct() to
+        reliably detect session products without depending on category names.
+        """
+        result = super()._loader_params_product_product()
+        search_params = result.get('search_params', {})
+        fields = search_params.get('fields', [])
+        if 'x_session_id' not in fields:
+            fields.append('x_session_id')
+        return result
+
     def kassa_notify_product_update(self, product_ids=None):
         """Push updated product catalogue to every open POS session via the bus.
 
