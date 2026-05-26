@@ -1663,15 +1663,27 @@ def process_session_deleted(root: Element, uid: int, models: OdooModelsProxy) ->
         except Exception as exc:
             logger.warning("[SESSION_DELETED] Could not update partner %s: %s", partner["id"], exc)
 
-    # 3. Notify all open POS sessions — removes product tile + open order lines
+    # 3a. SYNC_SESSION_DELETED — POS removes open order lines + notifies cashier
     try:
         notified = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             "pos.session", "kassa_notify_session_deleted", [[session_id]],
         )
-        logger.info("[SESSION_DELETED] Bus notification sent to %d open POS session(s)", notified)
+        logger.info("[SESSION_DELETED] SYNC_SESSION_DELETED sent to %d open POS session(s)", notified)
     except Exception as exc:
-        logger.warning("[SESSION_DELETED] Could not push bus notification: %s", exc)
+        logger.warning("[SESSION_DELETED] Could not push SYNC_SESSION_DELETED: %s", exc)
+
+    # 3b. SYNC_PRODUCT_UPDATED — triggers the built-in updateModelsData() diff which
+    # calls db.remove_products() for any product no longer in available_in_pos list.
+    # This is the reliable way to remove the product tile from the POS UI.
+    try:
+        notified = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            "pos.session", "kassa_notify_product_update", [[]],
+        )
+        logger.info("[SESSION_DELETED] SYNC_PRODUCT_UPDATED sent to %d open POS session(s)", notified)
+    except Exception as exc:
+        logger.warning("[SESSION_DELETED] Could not push SYNC_PRODUCT_UPDATED: %s", exc)
 
     reason_suffix = f" | reason={reason}" if reason else ""
     monitor.log(

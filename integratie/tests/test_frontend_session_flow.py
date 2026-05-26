@@ -410,6 +410,7 @@ class TestProcessSessionDeleted:
             effects.append(True)                            # res.partner write
             effects.append(True)                            # pos.order send_partner_bus_event
         effects.append(1)                                   # pos.session kassa_notify_session_deleted
+        effects.append(1)                                   # pos.session kassa_notify_product_update
         return effects
 
     def test_marks_product_unavailable_in_pos(self, odoo):
@@ -551,8 +552,10 @@ class TestProcessSessionDeleted:
             c for c in models.execute_kw.call_args_list
             if c[0][3] == "pos.session"
         ]
-        assert len(session_calls) == 1
+        # Expects kassa_notify_session_deleted + kassa_notify_product_update
+        assert len(session_calls) == 2
         assert session_calls[0][0][4] == "kassa_notify_session_deleted"
+        assert session_calls[1][0][4] == "kassa_notify_product_update"
 
     def test_handles_optional_reason_and_deleted_by(self, odoo):
         uid, models = odoo
@@ -566,7 +569,7 @@ class TestProcessSessionDeleted:
             c for c in models.execute_kw.call_args_list
             if c[0][3] == "pos.session"
         ]
-        assert len(session_calls) == 1
+        assert len(session_calls) == 2
 
     def test_raises_when_session_id_missing(self, odoo):
         uid, models = odoo

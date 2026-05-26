@@ -369,25 +369,20 @@ patch(PosStore.prototype, {
      * warning notification to the cashier.
      */
     _onKassaSessionDeleted(session_id) {
+        // Product tile removal is handled by the built-in SYNC_PRODUCT_UPDATED
+        // mechanism: the server also calls kassa_notify_product_update after
+        // marking the product available_in_pos=False.  updateModelsData() diffs
+        // the incoming list against db.product_by_id and calls remove_products()
+        // for any product no longer present — so we don't need to touch the store.
         try {
-            // Find the product by its stable Planning ID.
+            // Find the product by its stable Planning ID (for order line cleanup).
             const byDb = Object.values(this.db?.product_by_id || {});
             const byModel = this.models?.["product.product"]?.getAll?.() || [];
             const product = [...byDb, ...byModel].find((p) => p.x_session_id === session_id);
 
             if (product) {
-                // Remove from reactive model store (hides product tile in OWL UI).
-                try {
-                    if (this.models?.["product.product"]?.delete) {
-                        this.models["product.product"].delete(product);
-                    }
-                } catch { /* ignore — may not support delete */ }
-                // Remove from legacy PosDB.
-                if (this.db?.product_by_id?.[product.id]) {
-                    delete this.db.product_by_id[product.id];
-                }
-
                 // Remove order lines for this product from the current order.
+                // Odoo 17 API: removeOrderline (camelCase).
                 const order = this.selectedOrder;
                 if (order) {
                     const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
@@ -396,7 +391,11 @@ patch(PosStore.prototype, {
                         return p && p.id === product.id;
                     });
                     for (const line of toRemove) {
-                        if (order.remove_orderline) order.remove_orderline(line);
+                        if (typeof order.removeOrderline === "function") {
+                            order.removeOrderline(line);
+                        } else if (typeof order.remove_orderline === "function") {
+                            order.remove_orderline(line);
+                        }
                     }
                     if (toRemove.length) {
                         console.log("[Kassa] %d orderlijn(en) verwijderd voor sessie %s", toRemove.length, session_id);
