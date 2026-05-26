@@ -345,6 +345,41 @@ class KassaQrController(http.Controller):
         )
         return {"products": products}
 
+    @http.route("/kassa/register_walkin", type="json", auth="user", methods=["POST"],
+                csrf=False, groups="point_of_sale.group_pos_user")
+    def register_walkin(self, email=None, **kwargs):
+        """Find or create a minimal Odoo partner for a walk-in visitor.
+
+        Called by the POS when a session product is tapped without a customer on
+        the order.  The cashier enters an email; this endpoint returns a partner
+        that can be set on the order immediately.
+
+        The identity UUID is resolved asynchronously: order_poller.get_customer_info
+        already calls identity_client.create_user(email) as a fallback whenever a
+        partner has no x_user_id, so the UUID is written to Odoo (and downstream
+        messages are enriched) within a few seconds of the order being validated.
+        """
+        if not email or "@" not in email:
+            return {"status": "error", "message": "Ongeldig e-mailadres."}
+
+        env = request.env
+        email = email.strip().lower()
+
+        partner = env["res.partner"].sudo().search([("email", "=", email)], limit=1)
+        if partner:
+            if not partner.customer_rank:
+                partner.sudo().write({"customer_rank": 1})
+            _logger.info("[Kassa] Walk-in: bestaande partner %s gevonden voor %s", partner.id, email)
+        else:
+            partner = env["res.partner"].sudo().create({
+                "name": email,
+                "email": email,
+                "customer_rank": 1,
+            })
+            _logger.info("[Kassa] Walk-in: partner %s aangemaakt voor %s", partner.id, email)
+
+        return {"status": "ok", "partner_id": partner.id, "partner_name": partner.name}
+
     @http.route('/web/service-worker.js', type='http', auth='none', csrf=False)
     def service_worker(self, **kwargs):
         # Replace Odoo's default service worker with a no-op that clears all

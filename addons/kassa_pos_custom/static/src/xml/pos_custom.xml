@@ -136,6 +136,44 @@
     </t>
 
     <!--
+        Walk-in email dialog — shown when a session product is tapped without
+        a customer on the order.  Collects an email so a minimal partner record
+        can be created and linked to the sale for downstream reporting.
+    -->
+    <t t-name="kassa_pos_custom.WalkinEmailDialog">
+        <Dialog title="'Klant registreren'">
+            <p>
+                Sessie <b t-esc="props.productName"/> vereist een klantaccount.<br/>
+                Voer het e-mailadres van de bezoeker in.
+            </p>
+            <div class="mb-3">
+                <input
+                    type="email"
+                    class="form-control"
+                    placeholder="bezoeker@example.com"
+                    t-model="state.email"
+                    t-on-keyup.enter="confirm"
+                    autofocus="autofocus"
+                />
+                <t t-if="state.error">
+                    <div class="text-danger small mt-1" t-esc="state.error"/>
+                </t>
+            </div>
+            <t t-set-slot="footer">
+                <button class="btn btn-primary" t-on-click="confirm" t-att-disabled="state.loading">
+                    <t t-if="state.loading">
+                        <i class="fa fa-spinner fa-spin me-1"/>
+                    </t>
+                    Registreren
+                </button>
+                <button class="btn btn-secondary ms-2" t-on-click="cancel" t-att-disabled="state.loading">
+                    Annuleren
+                </button>
+            </t>
+        </Dialog>
+    </t>
+
+    <!--
         VAT prompt dialog — shown when a private customer enables invoice
         without having a VAT number on file.
         Cashier enters the number to proceed, or clicks "Factuur annuleren" to
