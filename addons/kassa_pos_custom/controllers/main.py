@@ -226,38 +226,58 @@ def _publish_lease_request(identity_uuid: str) -> None:
 
 # ── Odoo helpers ──────────────────────────────────────────────────────────────
 
-def _ensure_session_products(env, session_titles: List[str]) -> None:
-    """Find or create POS-available session products in bulk (idempotent).
+def _ensure_session_products(env, sessions: List[Dict]) -> None:
+    """Find or create POS-available session products and keep their price in sync.
 
-    One search for all existing products, one category fetch — then only
-    create what is missing.  pos.category has no company_id in Odoo 17,
-    so no company filter is applied.
+    sessions: list of {"title": str, "price": float|None}
+
+    - Creates products that don't exist yet.
+    - Updates list_price on existing products when Planning provides a new price,
+      so cashiers clicking the tile directly see the correct price.
+    - Idempotent — safe to call on every QR scan.
     """
-    if not session_titles:
+    if not sessions:
+        return
+
+    titles = [s["title"] for s in sessions if s.get("title")]
+    price_by_title: Dict[str, float | None] = {
+        s["title"]: s.get("price") for s in sessions if s.get("title")
+    }
+
+    if not titles:
         return
 
     existing = env["product.template"].sudo().search([
-        ("name", "in", session_titles),
+        ("name", "in", titles),
         ("available_in_pos", "=", True),
     ])
-    existing_names = set(existing.mapped("name"))
-    titles_to_create = [t for t in session_titles if t not in existing_names]
+    existing_by_name = {tmpl.name: tmpl for tmpl in existing}
 
+    # Sync price on existing products when Planning provided a value.
+    for title, price in price_by_title.items():
+        if title in existing_by_name and price is not None:
+            tmpl = existing_by_name[title]
+            if round(float(tmpl.list_price or 0), 2) != round(float(price), 2):
+                tmpl.write({"list_price": float(price)})
+                _logger.info("[Kassa QR] Prijs bijgewerkt '%s': %.2f", title, price)
+
+    titles_to_create = [t for t in titles if t not in existing_by_name]
     if not titles_to_create:
         return
 
     categ = env["pos.category"].sudo().search([("name", "=", "Sessions")], limit=1)
     for title in titles_to_create:
+        price = price_by_title.get(title)
         vals: Dict = {
             "name": title,
             "type": "consu",
-            "list_price": 0.0,
+            "list_price": float(price) if price is not None else 0.0,
             "available_in_pos": True,
         }
         if categ:
             vals["pos_categ_ids"] = [(6, 0, [categ.id])]
         env["product.template"].sudo().create(vals)
-        _logger.info("[Kassa QR] Created session product: '%s'", title)
+        _logger.info("[Kassa QR] Sessieproduct aangemaakt: '%s' @ %.2f", title, price or 0.0)
 
 
 # ── Controller ────────────────────────────────────────────────────────────────
@@ -269,6 +289,61 @@ class KassaQrController(http.Controller):
     user session (``auth='user'``) except the service-worker route which serves
     anonymous requests (``auth='none'``).
     """
+
+    @http.route("/kassa/load_session_products", type="json", auth="user", methods=["POST"],
+                csrf=False, groups="point_of_sale.group_pos_user")
+    def load_session_products(self, titles=None, sessions=None, **kwargs):
+        """Ensure session products exist in Odoo and return them for direct POS db insertion.
+
+        Accepts either:
+          sessions: [{"title": str, "price": float|None}, ...]  — preferred, syncs prices
+          titles:   [str, ...]  — legacy, no price update
+
+        Creates missing products (idempotent), syncs list_price from Planning, and
+        returns them with the full POS loader field set so the caller can pass them
+        to _loadProductProduct() to create proper Product instances in this.db.
+        """
+        env = request.env
+        if sessions:
+            _ensure_session_products(env, sessions)
+            effective_titles = [s["title"] for s in sessions if s.get("title")]
+        elif titles:
+            _ensure_session_products(env, [{"title": t, "price": None} for t in titles])
+            effective_titles = titles
+        else:
+            return {"products": []}
+
+        # Use the same fields as _loader_params_product_product for compatibility
+        # with PosStore._loadProductProduct().
+        fields = []
+        try:
+            open_session = env["pos.session"].sudo().search(
+                [("state", "in", ("opened", "opening_control"))], limit=1
+            )
+            if open_session:
+                params = open_session._loader_params_product_product()
+                fields = params.get("search_params", {}).get("fields", [])
+        except Exception as exc:
+            _logger.warning("[Kassa] Could not fetch product loader fields: %s", exc)
+
+        if not fields:
+            fields = [
+                "id", "name", "display_name", "type", "lst_price", "standard_price",
+                "uom_id", "uom_po_id", "taxes_id", "supplier_taxes_id", "pos_categ_ids",
+                "available_in_pos", "tracking", "active", "write_date", "to_weight",
+                "description_sale", "barcode", "default_code", "product_tmpl_id", "sale_ok",
+                "categ_id", "image_128",
+            ]
+
+        products = env["product.product"].sudo().search_read(
+            [("name", "in", effective_titles), ("available_in_pos", "=", True)],
+            fields,
+        )
+        _logger.info(
+            "[Kassa] load_session_products: %d product(en) teruggegeven voor %s",
+            len(products), effective_titles,
+        )
+        return {"products": products}
 
     @http.route('/web/service-worker.js', type='http', auth='none', csrf=False)
     def service_worker(self, **kwargs):
@@ -402,7 +477,7 @@ class KassaQrController(http.Controller):
                 except Exception as exc:
                     _logger.warning("[Kassa QR] Could not publish bus event: %s", exc)
 
-            _ensure_session_products(env, [s["title"] for s in sessions])
+            _ensure_session_products(env, sessions)
             try:
                 env["pos.session"].sudo().kassa_notify_product_update()
             except Exception as exc:

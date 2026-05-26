@@ -1706,6 +1706,117 @@ def test_bar_kassa_consumption_never_calls_update_partner_paid(mock_sender, poll
 
 
 # ---------------------------------------------------------------------------
+# _process_registration — payment method handling
+# ---------------------------------------------------------------------------
+
+@patch('order_poller.sender')
+def test_registration_badge_wallet_deducts_balance(mock_sender, poller):
+    """Badge Wallet payment on Inschrijvingskassa deducts the session fee from x_wallet_balance."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>reg-c-1</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>reg-p-1</message_id></header></message>'
+    )
+    mock_sender.build_payment_status_xml.return_value = (
+        '<message><header><message_id>reg-s-1</message_id></header></message>'
+    )
+    mock_sender.build_wallet_balance_update_xml.return_value = (
+        '<message><header><message_id>reg-w-1</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 80, 'amount_total': 23.0, 'create_date': '2026-05-26 10:00:00',
+        'lines': [(11,)], 'payment_ids': [5], 'x_wallet_updated': False,
+    }
+    customer_info = {
+        'id': 10, 'name': 'Alice', 'x_user_id': 'uuid-alice',
+        'x_wallet_balance': 23.0, 'x_lease_active': True, 'x_lease_id': 'lease-1',
+        'x_outstanding_amount': 23.0, 'x_payment_status': 'unpaid',
+        'customer_type': 'private', 'email': 'alice@example.com',
+        'street': None, 'zip': None, 'city': None, 'country_code': 'be',
+        'is_company': False, 'parent_id': None, 'vat': None,
+    }
+
+    poller.models.execute_kw.side_effect = [
+        # line details
+        [{'id': 11, 'product_id': (1, 'Introduction to AI'), 'qty': 1,
+          'price_unit': 23.0, 'price_subtotal_incl': 23.0, 'tax_ids': []}],
+        # product info (x_is_topup, pos_categ_ids)
+        [{'id': 1, 'x_is_topup': False, 'pos_categ_ids': []}],
+        # payment method info
+        [{'payment_method_id': (3, 'Badge Wallet'), 'amount': 23.0}],
+        # action_process_wallet_payment → returns new balance
+        0.0,
+        # partner write (mark paid)
+        True,
+        # bus event
+        True,
+    ]
+
+    ok, _, _ = poller._process_registration(order, customer_info)
+
+    assert ok
+    # action_process_wallet_payment must have been called
+    wallet_call = [
+        c for c in poller.models.execute_kw.call_args_list
+        if c[0][3] == 'pos.order' and c[0][4] == 'action_process_wallet_payment'
+    ]
+    assert len(wallet_call) == 1, "action_process_wallet_payment should be called once"
+    # wallet_balance_update must be published
+    wallet_update_calls = [
+        c for c in mock_sender.send_typed_message.call_args_list
+        if c[0][0] == 'wallet_balance_update'
+    ]
+    assert len(wallet_update_calls) == 1, "wallet_balance_update should be published"
+
+
+@patch('order_poller.sender')
+def test_registration_customer_account_uses_company_link(mock_sender, poller):
+    """Customer Account payment on Inschrijvingskassa uses payment_method='company_link'."""
+    mock_sender.build_consumption_order_xml.return_value = (
+        '<message><header><message_id>reg-c-2</message_id></header></message>'
+    )
+    mock_sender.build_payment_registered_xml.return_value = (
+        '<message><header><message_id>reg-p-2</message_id></header></message>'
+    )
+    mock_sender.build_payment_status_xml.return_value = (
+        '<message><header><message_id>reg-s-2</message_id></header></message>'
+    )
+    mock_sender.send_typed_message.return_value = True
+
+    order = {
+        'id': 81, 'amount_total': 23.0, 'create_date': '2026-05-26 10:00:00',
+        'lines': [(12,)], 'payment_ids': [6], 'x_wallet_updated': False,
+    }
+    customer_info = {
+        'id': 11, 'name': 'Corp BV', 'x_user_id': 'uuid-corp',
+        'x_wallet_balance': 0.0, 'x_lease_active': False, 'x_lease_id': '',
+        'x_outstanding_amount': 23.0, 'x_payment_status': 'unpaid',
+        'customer_type': 'company', 'email': 'corp@example.com',
+        'street': None, 'zip': None, 'city': None, 'country_code': 'be',
+        'is_company': True, 'parent_id': None, 'vat': 'BE0123456789',
+    }
+
+    poller.models.execute_kw.side_effect = [
+        [{'id': 12, 'product_id': (2, 'Session A'), 'qty': 1,
+          'price_unit': 23.0, 'price_subtotal_incl': 23.0, 'tax_ids': []}],
+        [{'id': 2, 'x_is_topup': False, 'pos_categ_ids': []}],
+        [{'payment_method_id': (4, 'Customer Account'), 'amount': 23.0}],
+        True,  # partner write
+        True,  # bus event
+    ]
+
+    poller._process_registration(order, customer_info)
+
+    pay_reg_kwargs = mock_sender.build_payment_registered_xml.call_args[1]
+    assert pay_reg_kwargs['payment_method'] == 'company_link'
+    assert pay_reg_kwargs['invoice_status'] == 'pending'
+    assert pay_reg_kwargs['amount_paid'] == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Story 19: anonymous Badge Wallet blocked — correct error code
 # ---------------------------------------------------------------------------
 

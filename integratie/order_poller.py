@@ -1214,6 +1214,12 @@ class OrderPoller:
 
         Then updates the partner record via ``_update_partner_registration_paid``.
 
+        Payment method handling:
+          - Badge Wallet: wallet balance is deducted atomically and a wallet_balance_update
+            is published to CRM so the visitor's balance stays in sync.
+          - Customer Account: payment_method='company_link', invoice_status='pending'.
+          - Cash / Card: payment_method='on_site', invoice_status='paid'.
+
         If top-up products are found in the lines, it also enables the wallet
         update flow handled in ``process_order``.
         """
@@ -1319,6 +1325,44 @@ class OrderPoller:
         order_id = order['id']
         identity_uuid = customer_info.get('x_user_id')
 
+        # Detect payment method so wallet deduction and payment_registered are correct.
+        pay_info = self._get_special_payment_info(order.get('payment_ids', []))
+        is_pay_later = pay_info["is_customer_account"]
+        invoice_status = "pending" if is_pay_later else "paid"
+        payment_method = "company_link" if is_pay_later else "on_site"
+        amount_paid = 0.0 if is_pay_later else float(order.get('amount_total', 0.0))
+
+        # Badge Wallet: atomically deduct the session fee from the visitor's wallet
+        # and publish wallet_balance_update so CRM stays in sync.
+        ok_wallet = True
+        if pay_info["is_badge_wallet"] and not order.get('x_wallet_updated'):
+            try:
+                new_balance = self.models.execute_kw(
+                    self.odoo_db, self.odoo_uid, self.odoo_pass,
+                    'pos.order', 'action_process_wallet_payment',
+                    [order_id, customer_info['id'], pay_info["wallet_amount"]]
+                )
+                lease_active = customer_info.get('x_lease_active')
+                wallet_xml = sender.build_wallet_balance_update_xml(
+                    identity_uuid=identity_uuid,
+                    new_balance=new_balance,
+                    authority="kassa" if lease_active else None,
+                    status="active" if lease_active else None,
+                )
+                ok_wallet = sender.send_typed_message('wallet_balance_update', wallet_xml, record_id=order_id)
+                if ok_wallet:
+                    monitor.log("info", "wallet",
+                                f"Published wallet_balance_update for registration order_id={order_id}")
+                if lease_active:
+                    self._increment_lease_tx_count(customer_info)
+            except Exception as e:
+                logger.error(
+                    "❌ Badge Wallet deduction failed for registration order %s: %s", order_id, e
+                )
+                monitor.log("error", "wallet",
+                            f"Badge Wallet deduction failed for registration order {order_id}: {str(e)[:300]}")
+                ok_wallet = False
+
         # Send consumption_order first so CRM forwards it to facturatie before payment confirmation
         consumption_xml = sender.build_consumption_order_xml(
             items=items,
@@ -1344,11 +1388,11 @@ class OrderPoller:
 
         payment_xml = sender.build_payment_registered_xml(
             payment_context='registration',
-            invoice_status='paid',
-            amount_paid=float(order.get('amount_total', 0.0)),
+            invoice_status=invoice_status,
+            amount_paid=amount_paid,
             due_date=due_date,
             trx_id=str(order_id),
-            payment_method='on_site',
+            payment_method=payment_method,
             invoice_id=None,
             identity_uuid=identity_uuid,
             correlation_id=consumption_msg_id,
@@ -1370,7 +1414,7 @@ class OrderPoller:
 
         self._update_partner_registration_paid(customer_info['id'], customer_info.get('name', ''))
 
-        return (ok_consumption and ok_payment and ok_status), payment_msg_id, consumption_msg_id
+        return (ok_consumption and ok_payment and ok_status and ok_wallet), payment_msg_id, consumption_msg_id
 
     def poll_badge_assignments(self):
         """
