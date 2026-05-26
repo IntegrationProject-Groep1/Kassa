@@ -156,7 +156,7 @@ class PosOrder(models.Model):
         )
         for session in open_sessions:
             try:
-                session._notify('KASSA_PARTNER_UPDATE', payload)
+                session._kassa_bus_notify('KASSA_PARTNER_UPDATE', payload)
             except Exception as exc:
                 _logger.warning(
                     "[Kassa] Could not notify POS session %s: %s", session.name, exc
