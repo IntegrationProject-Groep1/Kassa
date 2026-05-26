@@ -124,24 +124,58 @@ patch(PosStore.prototype, {
             "| x_session_title:", partner?.x_session_title,
             "| x_outstanding_amount:", partner?.x_outstanding_amount
         );
-        const titles = _parseSessionTitles(partner.x_session_title);
-        if (!titles.length) {
+
+        // Parse session entries, preserving individual prices from the JSON.
+        // x_session_title: [{title, price}, ...] or plain string (legacy).
+        let entries = [];
+        const raw = partner.x_session_title;
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    entries = parsed
+                        .map((e) =>
+                            typeof e === "object" && e !== null
+                                ? { title: e.title || "", price: e.price ?? null }
+                                : { title: String(e), price: null }
+                        )
+                        .filter((e) => e.title);
+                } else {
+                    entries = [{ title: String(parsed), price: null }];
+                }
+            } catch {
+                entries = [{ title: raw, price: null }];
+            }
+        }
+
+        if (!entries.length) {
             console.warn(
                 "[Kassa] Geen sessietitels op partner %s — geen product auto-toegevoegd.",
                 partner.id
             );
             return;
         }
+
+        // Use individual prices from Planning when available.
+        // For sessions without a price, distribute the remaining outstanding amount.
         const totalOutstanding = partner.x_outstanding_amount || 0;
-        // Cent-based distribution: floor each line, give remainder to the last
-        // so the sum always equals the exact outstanding amount (no rounding drift).
-        const basePerSession = Math.floor((totalOutstanding * 100) / titles.length);
-        let remainingCents = Math.round(totalOutstanding * 100);
-        for (let i = 0; i < titles.length; i++) {
-            const isLast = i === titles.length - 1;
-            const priceCents = isLast ? remainingCents : basePerSession;
-            await this._kassaAddSessionProduct(order, titles[i], priceCents / 100);
-            remainingCents -= priceCents;
+        const sumKnownCents = entries.reduce(
+            (s, e) => s + (e.price !== null ? Math.round(e.price * 100) : 0), 0
+        );
+        const nullCount = entries.filter((e) => e.price === null).length;
+        const remainingCents = Math.max(0, Math.round(totalOutstanding * 100) - sumKnownCents);
+        const basePerNull = nullCount > 0 ? Math.floor(remainingCents / nullCount) : 0;
+        let leftoverCents = nullCount > 0 ? remainingCents - basePerNull * nullCount : 0;
+
+        for (const entry of entries) {
+            let priceCents;
+            if (entry.price !== null) {
+                priceCents = Math.round(entry.price * 100);
+            } else {
+                priceCents = basePerNull + (leftoverCents > 0 ? 1 : 0);
+                if (leftoverCents > 0) leftoverCents--;
+            }
+            await this._kassaAddSessionProduct(order, entry.title, priceCents / 100);
         }
     },
 
@@ -158,37 +192,26 @@ patch(PosStore.prototype, {
      *   - Line already present → skip (idempotent; safe for effect re-runs).
      */
     async _kassaAddSessionProduct(order, sessionTitle, price) {
-        // 1. Search the POS in-memory product catalog first (fast path).
-        const _getAll = () =>
-            this.models?.["product.product"]?.getAll?.() ||
-            this.products ||
-            [];
+        // In Odoo 17 POS, products live in this.db.product_by_id (PosDB),
+        // not in this.models["product.product"] (new OWL model registry, empty here).
+        const _getAll = () => Object.values(this.db?.product_by_id || {});
 
         let product = _getAll().find(
             (p) => p.name === sessionTitle || p.display_name === sessionTitle
         );
 
-        // 2. Fallback: product created during this POS session — wait for
-        // SYNC_PRODUCT_UPDATED (triggered by kassa_notify_product_update called
-        // from the QR scan controller) and retry up to 6x (3s total).
+        // Fallback: product was created after POS session started — wait for
+        // SYNC_PRODUCT_UPDATED to populate this.db.product_by_id, retry up to 6x (3s).
         if (!product) {
             const all = _getAll();
             console.log(
-                "[Kassa] DEBUG: product '%s' niet direct gevonden. Store heeft %d producten.",
+                "[Kassa] DEBUG: '%s' niet direct gevonden. db.product_by_id heeft %d producten.",
                 sessionTitle, all.length
             );
-            // Log first 15 product names to spot name mismatches.
-            const sample = all.slice(0, 15).map((p) => `"${p.name}"`);
-            console.log("[Kassa] DEBUG: Eerste producten in store:", sample.join(", "));
-            // Try case-insensitive partial match to spot whitespace / case issues.
-            const lower = sessionTitle.toLowerCase();
-            const partial = all.filter(
-                (p) => (p.name || "").toLowerCase().includes(lower)
-            );
-            if (partial.length) {
+            if (all.length > 0) {
                 console.log(
-                    "[Kassa] DEBUG: Gedeeltelijke overeenkomst gevonden:",
-                    partial.map((p) => `"${p.name}"`).join(", ")
+                    "[Kassa] DEBUG: Eerste producten:",
+                    all.slice(0, 10).map((p) => `"${p.name}"`).join(", ")
                 );
             }
 
@@ -198,17 +221,14 @@ patch(PosStore.prototype, {
                     (p) => p.name === sessionTitle || p.display_name === sessionTitle
                 );
                 if (product) {
-                    console.log(
-                        "[Kassa] Sessieproduct '%s' gevonden na poging %d.",
-                        sessionTitle, attempt
-                    );
+                    console.log("[Kassa] Sessieproduct '%s' gevonden na poging %d.", sessionTitle, attempt);
                 }
             }
         }
 
         if (!product) {
             console.warn(
-                "[Kassa] Sessieproduct '%s' niet gevonden na 3s wachten — kassier handelt manueel af.",
+                "[Kassa] Sessieproduct '%s' niet gevonden na 3s — kassier handelt manueel af.",
                 sessionTitle
             );
             return;
