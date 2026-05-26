@@ -167,22 +167,22 @@ patch(PosStore.prototype, {
         };
 
         // Step 2: determine which are missing upfront
-        let missingTitles = entries.map((e) => e.title).filter((t) => !_find(t));
+        let missingEntries = entries.filter((e) => !_find(e.title));
 
         // Step 3: single shared wait for SYNC_PRODUCT_UPDATED (avoids N × timeout)
-        if (missingTitles.length) {
-            console.log("[Kassa] Wachten op SYNC_PRODUCT_UPDATED voor:", missingTitles);
+        if (missingEntries.length) {
+            console.log("[Kassa] Wachten op SYNC_PRODUCT_UPDATED voor:", missingEntries.map((e) => e.title));
             await new Promise((r) => setTimeout(r, 1500));
-            missingTitles = missingTitles.filter((t) => !_find(t));
+            missingEntries = missingEntries.filter((e) => !_find(e.title));
         }
 
         // Step 4: synchronous server fallback — create + return product data
-        if (missingTitles.length) {
-            console.log("[Kassa] Direct laden vanuit Odoo:", missingTitles);
-            await this._kassaLoadMissingProducts(missingTitles);
-            missingTitles = missingTitles.filter((t) => !_find(t));
-            if (missingTitles.length) {
-                console.warn("[Kassa] Kon producten niet laden:", missingTitles);
+        if (missingEntries.length) {
+            console.log("[Kassa] Direct laden vanuit Odoo:", missingEntries.map((e) => e.title));
+            await this._kassaLoadMissingProducts(missingEntries);
+            const stillMissing = missingEntries.filter((e) => !_find(e.title));
+            if (stillMissing.length) {
+                console.warn("[Kassa] Kon producten niet laden:", stillMissing.map((e) => e.title));
             }
         }
 
@@ -239,10 +239,10 @@ patch(PosStore.prototype, {
      * the same internal method used by the POS startup loader — it wraps each
      * product dict in a proper Product class instance and adds it to this.db.
      */
-    async _kassaLoadMissingProducts(titles) {
+    async _kassaLoadMissingProducts(entries) {
         try {
             const result = await this.env.services.rpc(
-                "/kassa/load_session_products", { titles }
+                "/kassa/load_session_products", { sessions: entries }
             );
             const products = result?.products || [];
             if (!products.length) return;
