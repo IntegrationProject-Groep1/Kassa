@@ -270,6 +270,54 @@ class KassaQrController(http.Controller):
     anonymous requests (``auth='none'``).
     """
 
+    @http.route("/kassa/load_session_products", type="json", auth="user", methods=["POST"],
+                csrf=False, groups="point_of_sale.group_pos_user")
+    def load_session_products(self, titles=None, **kwargs):
+        """Ensure session products exist and return them for direct POS db insertion.
+
+        Called by the POS frontend when a session product is not in this.db after
+        waiting for SYNC_PRODUCT_UPDATED.  Creates missing products (idempotent) and
+        returns them with all fields expected by the POS loader so the caller can pass
+        them to _loadProductProduct() and insert them as proper Product instances.
+        """
+        if not titles:
+            return {"products": []}
+
+        env = request.env
+        _ensure_session_products(env, titles)
+
+        # Use the same fields that _loader_params_product_product provides so the
+        # returned dicts are compatible with PosStore._loadProductProduct().
+        fields = []
+        try:
+            open_session = env["pos.session"].sudo().search(
+                [("state", "in", ("opened", "opening_control"))], limit=1
+            )
+            if open_session:
+                params = open_session._loader_params_product_product()
+                fields = params.get("search_params", {}).get("fields", [])
+        except Exception as exc:
+            _logger.warning("[Kassa] Could not fetch product loader fields: %s", exc)
+
+        if not fields:
+            fields = [
+                "id", "name", "display_name", "type", "lst_price", "standard_price",
+                "uom_id", "uom_po_id", "taxes_id", "supplier_taxes_id", "pos_categ_ids",
+                "available_in_pos", "tracking", "active", "write_date", "to_weight",
+                "description_sale", "barcode", "default_code", "product_tmpl_id", "sale_ok",
+                "categ_id", "image_128",
+            ]
+
+        products = env["product.product"].sudo().search_read(
+            [("name", "in", titles), ("available_in_pos", "=", True)],
+            fields,
+        )
+        _logger.info(
+            "[Kassa] load_session_products: %d product(en) teruggegeven voor %s",
+            len(products), titles,
+        )
+        return {"products": products}
+
     @http.route('/web/service-worker.js', type='http', auth='none', csrf=False)
     def service_worker(self, **kwargs):
         # Replace Odoo's default service worker with a no-op that clears all

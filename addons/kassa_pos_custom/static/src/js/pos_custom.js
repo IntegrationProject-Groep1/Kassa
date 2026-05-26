@@ -114,19 +114,27 @@ patch(PosStore.prototype, {
     },
 
     /**
-     * Orchestrator: adds one order line per registered session.
-     * The total outstanding amount is split equally across all sessions.
-     * Idempotent — already-present lines are skipped on re-runs.
+     * Orchestrator: ensures all session products are in the POS db, then adds
+     * one order line per registered session.  Idempotent — existing lines are
+     * skipped or price-updated rather than duplicated.
+     *
+     * Flow:
+     *  1. Parse session entries from x_session_title JSON (with individual prices).
+     *  2. Detect which products are missing from this.db.product_by_id.
+     *  3. If any missing: wait 1.5 s for a SYNC_PRODUCT_UPDATED bus event.
+     *  4. For still-missing products: call /kassa/load_session_products which
+     *     creates them in Odoo (if needed) and returns the product data so we
+     *     can insert them directly into this.db via this._loadProductProduct().
+     *  5. Add/update order lines.
      */
     async _kassaAddSessionProducts(order, partner) {
         console.log(
             "[Kassa] _kassaAddSessionProducts — partner:", partner?.name,
-            "| x_session_title:", partner?.x_session_title,
-            "| x_outstanding_amount:", partner?.x_outstanding_amount
+            "| sessions:", partner?.x_session_title,
+            "| outstanding:", partner?.x_outstanding_amount
         );
 
-        // Parse session entries, preserving individual prices from the JSON.
-        // x_session_title: [{title, price}, ...] or plain string (legacy).
+        // Parse entries, preserving individual prices from Planning.
         let entries = [];
         const raw = partner.x_session_title;
         if (raw) {
@@ -149,15 +157,36 @@ patch(PosStore.prototype, {
         }
 
         if (!entries.length) {
-            console.warn(
-                "[Kassa] Geen sessietitels op partner %s — geen product auto-toegevoegd.",
-                partner.id
-            );
+            console.warn("[Kassa] Geen sessietitels op partner %s.", partner.id);
             return;
         }
 
-        // Use individual prices from Planning when available.
-        // For sessions without a price, distribute the remaining outstanding amount.
+        const _find = (title) => {
+            const all = Object.values(this.db?.product_by_id || {});
+            return all.find((p) => p.name === title || p.display_name === title);
+        };
+
+        // Step 2: determine which are missing upfront
+        let missingTitles = entries.map((e) => e.title).filter((t) => !_find(t));
+
+        // Step 3: single shared wait for SYNC_PRODUCT_UPDATED (avoids N × timeout)
+        if (missingTitles.length) {
+            console.log("[Kassa] Wachten op SYNC_PRODUCT_UPDATED voor:", missingTitles);
+            await new Promise((r) => setTimeout(r, 1500));
+            missingTitles = missingTitles.filter((t) => !_find(t));
+        }
+
+        // Step 4: synchronous server fallback — create + return product data
+        if (missingTitles.length) {
+            console.log("[Kassa] Direct laden vanuit Odoo:", missingTitles);
+            await this._kassaLoadMissingProducts(missingTitles);
+            missingTitles = missingTitles.filter((t) => !_find(t));
+            if (missingTitles.length) {
+                console.warn("[Kassa] Kon producten niet laden:", missingTitles);
+            }
+        }
+
+        // Step 5: compute prices and add/update order lines
         const totalOutstanding = partner.x_outstanding_amount || 0;
         const sumKnownCents = entries.reduce(
             (s, e) => s + (e.price !== null ? Math.round(e.price * 100) : 0), 0
@@ -167,7 +196,12 @@ patch(PosStore.prototype, {
         const basePerNull = nullCount > 0 ? Math.floor(remainingCents / nullCount) : 0;
         let leftoverCents = nullCount > 0 ? remainingCents - basePerNull * nullCount : 0;
 
+        const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
+
         for (const entry of entries) {
+            const product = _find(entry.title);
+            if (!product) continue;
+
             let priceCents;
             if (entry.price !== null) {
                 priceCents = Math.round(entry.price * 100);
@@ -175,89 +209,60 @@ patch(PosStore.prototype, {
                 priceCents = basePerNull + (leftoverCents > 0 ? 1 : 0);
                 if (leftoverCents > 0) leftoverCents--;
             }
-            await this._kassaAddSessionProduct(order, entry.title, priceCents / 100);
+            const price = priceCents / 100;
+
+            const existingLine = lines.find((l) => {
+                const p = l.get_product ? l.get_product() : l.product;
+                return p && p.id === product.id;
+            });
+
+            if (existingLine) {
+                const current = existingLine.get_unit_price
+                    ? existingLine.get_unit_price()
+                    : existingLine.price;
+                if (Math.round((current || 0) * 100) !== Math.round(price * 100)) {
+                    if (existingLine.set_unit_price) existingLine.set_unit_price(price);
+                    else existingLine.price = price;
+                    console.log("[Kassa] Prijs bijgewerkt '%s': €%s", entry.title, price.toFixed(2));
+                }
+            } else {
+                order.add_product(product, { price });
+                console.log("[Kassa] Auto-added '%s': €%s", entry.title, price.toFixed(2));
+            }
         }
     },
 
     /**
-     * Adds a single session product to the order at the given unit price.
-     *
-     * If the product is not in the POS in-memory catalog (e.g. created by
-     * receiver.py after the POS session was already opened), it is fetched
-     * from Odoo via a targeted RPC and inserted into the local cache so
-     * subsequent scans of the same session don't need another round-trip.
-     *
-     * Guards:
-     *   - Product not found locally nor in Odoo → warn and skip.
-     *   - Line already present → skip (idempotent; safe for effect re-runs).
+     * Fetches missing session products from Odoo via /kassa/load_session_products.
+     * The endpoint creates products that don't exist yet (idempotent) and returns
+     * their full POS field set.  We then call this._loadProductProduct() which is
+     * the same internal method used by the POS startup loader — it wraps each
+     * product dict in a proper Product class instance and adds it to this.db.
      */
-    async _kassaAddSessionProduct(order, sessionTitle, price) {
-        // In Odoo 17 POS, products live in this.db.product_by_id (PosDB),
-        // not in this.models["product.product"] (new OWL model registry, empty here).
-        const _getAll = () => Object.values(this.db?.product_by_id || {});
-
-        let product = _getAll().find(
-            (p) => p.name === sessionTitle || p.display_name === sessionTitle
-        );
-
-        // Fallback: product was created after POS session started — wait for
-        // SYNC_PRODUCT_UPDATED to populate this.db.product_by_id, retry up to 6x (3s).
-        if (!product) {
-            const all = _getAll();
-            console.log(
-                "[Kassa] DEBUG: '%s' niet direct gevonden. db.product_by_id heeft %d producten.",
-                sessionTitle, all.length
+    async _kassaLoadMissingProducts(titles) {
+        try {
+            const result = await this.env.services.rpc(
+                "/kassa/load_session_products", { titles }
             );
-            if (all.length > 0) {
-                console.log(
-                    "[Kassa] DEBUG: Eerste producten:",
-                    all.slice(0, 10).map((p) => `"${p.name}"`).join(", ")
-                );
-            }
+            const products = result?.products || [];
+            if (!products.length) return;
 
-            for (let attempt = 1; attempt <= 6 && !product; attempt++) {
-                await new Promise((r) => setTimeout(r, 500));
-                product = _getAll().find(
-                    (p) => p.name === sessionTitle || p.display_name === sessionTitle
-                );
-                if (product) {
-                    console.log("[Kassa] Sessieproduct '%s' gevonden na poging %d.", sessionTitle, attempt);
+            if (typeof this._loadProductProduct === "function") {
+                this._loadProductProduct(products);
+                console.log("[Kassa] %d product(en) geladen via _loadProductProduct.", products.length);
+            } else {
+                // Fallback: insert raw data; product will lack class methods but is findable.
+                for (const p of products) {
+                    p.pos = this;
+                    p.env = this.env;
+                    p.applicablePricelistItems = {};
+                    this.db.product_by_id[p.id] = p;
                 }
+                console.log("[Kassa] %d product(en) rechtstreeks in db ingevoegd.", products.length);
             }
+        } catch (err) {
+            console.warn("[Kassa] _kassaLoadMissingProducts mislukt:", err);
         }
-
-        if (!product) {
-            console.warn(
-                "[Kassa] Sessieproduct '%s' niet gevonden na 3s — kassier handelt manueel af.",
-                sessionTitle
-            );
-            return;
-        }
-
-        // 3. If already in the order, update price if it changed; otherwise add.
-        const lines =
-            order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
-        const existingLine = lines.find((l) => {
-            const p = l.get_product ? l.get_product() : l.product;
-            return p && p.id === product.id;
-        });
-        if (existingLine) {
-            const current = existingLine.get_unit_price
-                ? existingLine.get_unit_price()
-                : existingLine.price;
-            if (Math.round((current || 0) * 100) !== Math.round(price * 100)) {
-                if (existingLine.set_unit_price) {
-                    existingLine.set_unit_price(price);
-                } else {
-                    existingLine.price = price;
-                }
-                console.log("[Kassa] Updated price for '%s': €%s", sessionTitle, price.toFixed(2));
-            }
-            return;
-        }
-
-        order.add_product(product, { price });
-        console.log("[Kassa] Auto-added '%s' line: €%s", sessionTitle, price.toFixed(2));
     },
 
     /**
