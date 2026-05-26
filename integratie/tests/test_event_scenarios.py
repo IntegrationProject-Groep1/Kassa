@@ -114,6 +114,7 @@ class TestStory6LeaseIntegration:
             [{'id': 1200, 'product_id': [5, 'Topup 15'],        # order line details
               'price_subtotal_incl': 15.0}],
             [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],  # product check
+            [{'payment_method_id': [1, 'Cash'], 'amount': 35.0}],  # _get_special_payment_info → cash
             True,                                               # res.partner write (x_outstanding_amount)
             True,                                               # pos.order send_partner_bus_event
             35.0,                                               # action_add_wallet_amount → new balance
@@ -165,6 +166,7 @@ class TestStory6LeaseIntegration:
             [{'name': 'Inschrijvingskassa'}],
             [{'id': 1201, 'product_id': [5, 'Topup 10'], 'price_subtotal_incl': 10.0}],
             [{'id': 5, 'x_is_topup': True, 'pos_categ_ids': []}],
+            [{'payment_method_id': [1, 'Cash'], 'amount': 30.0}],  # _get_special_payment_info → cash
             True,   # res.partner write x_outstanding_amount
             True,   # pos.order send_partner_bus_event
             True,   # pos.order write x_wallet_updated  ← order marked, no partner write
@@ -210,6 +212,7 @@ class TestStory6LeaseIntegration:
             [{'name': 'Inschrijvingskassa'}],
             [{'id': 1202, 'product_id': [3, 'Ticket'], 'price_subtotal_incl': 25.0}],
             [{'id': 3, 'x_is_topup': False, 'pos_categ_ids': []}],
+            [{'payment_method_id': [1, 'Cash'], 'amount': 25.0}],  # _get_special_payment_info → cash
             True,
             True,
             True,
@@ -278,7 +281,8 @@ class TestStory6LeaseIntegration:
             [customer],
             [{'config_id': [1, 'Inschrijvingskassa']}],
             [{'name': 'Inschrijvingskassa'}],
-            [],   # no order lines (no topup check needed)
+            [],   # no order lines
+            [{'payment_method_id': [1, 'Cash'], 'amount': 50.0}],  # _get_special_payment_info → cash
             True, True, True, True,
         ]
 
@@ -320,6 +324,7 @@ class TestComplexEventScenarios:
                 [{'name': 'Inschrijvingskassa'}],
                 [{'id': 1042, 'product_id': [9, 'Ticket'], 'price_subtotal_incl': 25.0}],
                 [{'id': 9, 'x_is_topup': True, 'pos_categ_ids': []}],
+                [{'payment_method_id': [1, 'Cash'], 'amount': 25.0}],  # _get_special_payment_info → cash
                 True,
                 True,
                 50.0,
