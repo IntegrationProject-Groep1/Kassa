@@ -117,6 +117,16 @@ patch(PosStore.prototype, {
                     }
                 }
             );
+            // Remove deleted session product from tiles and open orders.
+            this.env.services.bus_service.subscribe(
+                "SYNC_SESSION_DELETED",
+                (payload) => {
+                    const session_id = payload?.session_id;
+                    if (!session_id) return;
+                    console.log("[Kassa] SYNC_SESSION_DELETED ontvangen:", session_id);
+                    this._onKassaSessionDeleted(session_id);
+                }
+            );
             this.env.services.bus_service.start();
         } catch (err) {
             console.warn("[Kassa] Could not subscribe to bus_service:", err);
@@ -154,8 +164,8 @@ patch(PosStore.prototype, {
                     entries = parsed
                         .map((e) =>
                             typeof e === "object" && e !== null
-                                ? { title: e.title || "", price: e.price ?? null }
-                                : { title: String(e), price: null }
+                                ? { title: e.title || "", price: e.price ?? null, session_id: e.session_id || null }
+                                : { title: String(e), price: null, session_id: null }
                         )
                         .filter((e) => e.title);
                 } else {
@@ -171,29 +181,36 @@ patch(PosStore.prototype, {
             return;
         }
 
-        const _find = (title) => {
-            // Search legacy PosDB first, fall back to Odoo 17 reactive model store.
+        const _find = (title, session_id = null) => {
+            // Merge legacy PosDB and Odoo 17 reactive model store (deduplicated by id).
             const byDb = Object.values(this.db?.product_by_id || {});
-            const byModel = byDb.length ? [] : (this.models?.["product.product"]?.getAll?.() || []);
-            const all = byDb.length ? byDb : byModel;
+            const byModel = this.models?.["product.product"]?.getAll?.() || [];
+            const dbIds = new Set(byDb.map((p) => p.id));
+            const all = [...byDb, ...byModel.filter((p) => !dbIds.has(p.id))];
+            // Primary: stable Planning session_id (survives title renames).
+            if (session_id) {
+                const bySessionId = all.find((p) => p.x_session_id === session_id);
+                if (bySessionId) return bySessionId;
+            }
+            // Fallback: exact name match.
             return all.find((p) => p.name === title || p.display_name === title);
         };
 
         // Step 2: determine which are missing upfront
-        let missingEntries = entries.filter((e) => !_find(e.title));
+        let missingEntries = entries.filter((e) => !_find(e.title, e.session_id));
 
         // Step 3: single shared wait for SYNC_PRODUCT_UPDATED (avoids N × timeout)
         if (missingEntries.length) {
             console.log("[Kassa] Wachten op SYNC_PRODUCT_UPDATED voor:", missingEntries.map((e) => e.title));
             await new Promise((r) => setTimeout(r, 1500));
-            missingEntries = missingEntries.filter((e) => !_find(e.title));
+            missingEntries = missingEntries.filter((e) => !_find(e.title, e.session_id));
         }
 
         // Step 4: synchronous server fallback — create + return product data
         if (missingEntries.length) {
             console.log("[Kassa] Direct laden vanuit Odoo:", missingEntries.map((e) => e.title));
             await this._kassaLoadMissingProducts(missingEntries);
-            const stillMissing = missingEntries.filter((e) => !_find(e.title));
+            const stillMissing = missingEntries.filter((e) => !_find(e.title, e.session_id));
             if (stillMissing.length) {
                 console.warn("[Kassa] Kon producten niet laden:", stillMissing.map((e) => e.title));
             }
@@ -217,7 +234,7 @@ patch(PosStore.prototype, {
         const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
 
         for (const entry of entries) {
-            const product = _find(entry.title);
+            const product = _find(entry.title, entry.session_id);
             if (!product) continue;
 
             let priceCents;
@@ -340,6 +357,61 @@ patch(PosStore.prototype, {
             }
         } catch (err) {
             console.error("[Kassa] Error fetching partner", partnerId, err);
+        }
+    },
+
+    /**
+     * Handle SYNC_SESSION_DELETED bus event.
+     *
+     * Removes the deleted session product from the reactive model store and the
+     * legacy PosDB so the product tile disappears immediately.  Also removes any
+     * open order lines for this product from the current order, then shows a
+     * warning notification to the cashier.
+     */
+    _onKassaSessionDeleted(session_id) {
+        // Product tile removal is handled by the built-in SYNC_PRODUCT_UPDATED
+        // mechanism: the server also calls kassa_notify_product_update after
+        // marking the product available_in_pos=False.  updateModelsData() diffs
+        // the incoming list against db.product_by_id and calls remove_products()
+        // for any product no longer present — so we don't need to touch the store.
+        try {
+            // Find the product by its stable Planning ID (for order line cleanup).
+            const byDb = Object.values(this.db?.product_by_id || {});
+            const byModel = this.models?.["product.product"]?.getAll?.() || [];
+            const product = [...byDb, ...byModel].find((p) => p.x_session_id === session_id);
+
+            if (product) {
+                // Remove order lines for this product from the current order.
+                // Odoo 17 API: removeOrderline (camelCase).
+                const order = this.selectedOrder;
+                if (order) {
+                    const lines = order.get_orderlines ? order.get_orderlines() : order.orderlines || [];
+                    const toRemove = lines.filter((l) => {
+                        const p = l.get_product ? l.get_product() : l.product;
+                        return p && p.id === product.id;
+                    });
+                    for (const line of toRemove) {
+                        if (typeof order.removeOrderline === "function") {
+                            order.removeOrderline(line);
+                        } else if (typeof order.remove_orderline === "function") {
+                            order.remove_orderline(line);
+                        }
+                    }
+                    if (toRemove.length) {
+                        console.log("[Kassa] %d orderlijn(en) verwijderd voor sessie %s", toRemove.length, session_id);
+                    }
+                }
+            }
+
+            // Notify cashier — sticky so they don't miss it.
+            try {
+                this.env.services.notification.add(
+                    _t("Sessie verwijderd. Controleer de bestelling."),
+                    { type: "warning", sticky: true }
+                );
+            } catch { /* notification service may not be available */ }
+        } catch (err) {
+            console.error("[Kassa] _onKassaSessionDeleted fout:", err);
         }
     },
 
@@ -469,18 +541,32 @@ class WalkinEmailDialog extends Component {
  */
 patch(ProductScreen.prototype, {
     /**
-     * True when the product belongs to the "Sessions" POS category.
-     * Uses the Odoo 17 model registry; returns false gracefully on any error.
+     * True when the product is a Planning session product.
+     *
+     * Primary check: x_session_id (loaded via _loader_params_product_product
+     * override — set by receiver.py and controllers/main.py on every session product).
+     * Fallback: pos_categ_ids membership in the "Sessions" POS category.
+     * The fallback normalises entries as both raw IDs (integers) and objects
+     * with an .id property are valid in Odoo 17's reactive model store.
      */
     _kassaIsSessionProduct(product) {
         try {
-            const ids = product?.pos_categ_ids;
-            if (!ids || !ids.length) return false;
+            // Primary: stable Planning ID — most reliable, no category dependency.
+            if (product?.x_session_id) return true;
+
+            // Fallback: POS category membership (handles products without x_session_id).
+            const rawIds = product?.pos_categ_ids;
+            if (!rawIds || !rawIds.length) return false;
             const allCateg = this.pos.models?.["pos.category"]?.getAll?.() || [];
             const sessionIds = new Set(
                 allCateg.filter((c) => c.name === "Sessions").map((c) => c.id)
             );
-            return ids.some((id) => sessionIds.has(id));
+            if (!sessionIds.size) return false;
+            // Normalize: Odoo 17 may store many2many as raw ints or as objects.
+            return rawIds.some((entry) => {
+                const id = typeof entry === "object" && entry !== null ? entry.id : entry;
+                return sessionIds.has(id);
+            });
         } catch {
             return false;
         }
@@ -504,6 +590,12 @@ patch(ProductScreen.prototype, {
                         this.currentOrder.partner_id = partner;
                     }
                     this.pos.kassaRegisterScannedPartner?.(partner.id);
+                    // Auto-add existing sessions for returning visitors.
+                    if (partner.x_session_title) {
+                        this.pos._kassaAddSessionProducts(this.currentOrder, partner).catch((e) =>
+                            console.warn("[Kassa] Walk-in _kassaAddSessionProducts:", e)
+                        );
+                    }
                     resolve(true);
                     // WalkinEmailDialog.confirm() calls this.props.close() after this returns
                 },

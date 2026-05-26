@@ -1169,8 +1169,9 @@ def test_session_updated_changes_pos_product_price():
 
 
 def test_session_deleted_preserves_pos_product():
-    """session_deleted must NOT remove the matching POS product — Kassa intentionally keeps it."""
-    section("TEST 22: session_deleted → POS product preserved")
+    """session_deleted marks the POS product available_in_pos=False (hides from tiles)
+    but does NOT delete the record — historical orders must still reference it."""
+    section("TEST 22: session_deleted → product hidden (available_in_pos=False), record kept")
     uid, models = get_rpc()
 
     session_title = f"Delete Test Session {TEST_ID}"
@@ -1214,25 +1215,28 @@ def test_session_deleted_preserves_pos_product():
     publish(delete_xml, "kassa.incoming")
     wait(6, "receiver processing session_deleted")
 
-    products = models.execute_kw(
+    # Product record must still exist in the DB (for historical orders)
+    all_products = models.execute_kw(
         ODOO_DB, uid, ODOO_PASS, "product.template", "search_read",
-        [[["name", "=", session_title], ["available_in_pos", "=", True]]],
-        {"fields": ["name"]},
+        [[["name", "=", session_title]]],
+        {"fields": ["name", "available_in_pos"]},
     )
-    ok = len(products) == 1
+    # Must be preserved (not unlinked) AND must be hidden from POS tiles
+    record_exists = len(all_products) == 1
+    hidden_from_pos = record_exists and not all_products[0]["available_in_pos"]
+    ok = record_exists and hidden_from_pos
     report_result(
-        "Session: deleted session keeps POS product",
+        "Session: deleted session hidden from POS, record preserved",
         ok,
-        f"found={len(products)} (expected 1 — product must be preserved)",
+        f"record_exists={record_exists}, available_in_pos=False: {hidden_from_pos}",
     )
 
     # Cleanup
-    if products:
-        pt_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "search",
-                                   [[["name", "=", session_title]]])
-        if pt_ids:
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "write",
-                              [pt_ids, {"active": False}])
+    pt_ids = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "search",
+                               [[["name", "=", session_title]]])
+    if pt_ids:
+        models.execute_kw(ODOO_DB, uid, ODOO_PASS, "product.template", "write",
+                          [pt_ids, {"active": False}])
 
 
 # ── TEST CATEGORY: EDGE CASES ─────────────────────────────────────────────────
